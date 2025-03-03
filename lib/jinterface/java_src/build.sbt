@@ -2,7 +2,7 @@ organization := "com.socrata"
 
 name := "jinterface"
 
-version := "23.0"
+version := "26.2.5.9"
 
 autoScalaLibrary := false
 
