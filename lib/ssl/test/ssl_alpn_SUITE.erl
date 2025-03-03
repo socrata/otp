@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,9 +21,48 @@
 %%
 -module(ssl_alpn_SUITE).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-behaviour(ct_suite).
+
+-include("ssl_test_lib.hrl").
 -include_lib("common_test/include/ct.hrl").
+
+%% Callback functions
+-export([all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2]).
+
+%% Testcases
+-export([empty_protocols_are_not_allowed/1,
+         protocols_must_be_a_binary_list/1,
+         empty_client/1,
+         empty_server/1,
+         empty_client_empty_server/1,
+         no_matching_protocol/1,
+         client_alpn_and_server_alpn/1,
+         client_alpn_and_server_no_support/1,
+         client_no_support_and_server_alpn/1,
+         client_renegotiate/1,
+         session_reused/1,
+         client_alpn_npn_and_server_alpn_npn/1,
+         client_alpn_and_server_alpn_npn/1,
+         client_alpn_npn_and_server_alpn/1
+        ]).
+
+%% Apply export
+
+-export([assert_alpn/2,
+         assert_alpn_and_renegotiate_and_send_data/3,
+         ssl_send_and_assert_alpn/3,
+         ssl_receive_and_assert_alpn/3,
+         ssl_send/2,
+         ssl_receive/2,
+         connection_info_result/1
+        ]).
 
 -define(SLEEP, 500).
 
@@ -90,26 +129,10 @@ end_per_suite(_Config) ->
 
 
 init_per_group(GroupName, Config) ->
-    case ssl_test_lib:is_tls_version(GroupName) of
-	true ->
-	    case ssl_test_lib:sufficient_crypto_support(GroupName) of
-		true ->
-		    ssl_test_lib:init_tls_version(GroupName, Config);
-		false ->
-		    {skip, "Missing crypto support"}
-	    end;
-	_ ->
-	    ssl:start(),
-	    Config
-    end.
+    ssl_test_lib:init_per_group(GroupName, Config). 
 
 end_per_group(GroupName, Config) ->
-    case ssl_test_lib:is_tls_version(GroupName) of
-        true ->
-            ssl_test_lib:clean_tls_version(Config);
-        false ->
-            Config
-    end.
+  ssl_test_lib:end_per_group(GroupName, Config).
 
 
 init_per_testcase(_TestCase, Config) ->
@@ -270,6 +293,62 @@ session_reused(Config) when  is_list(Config)->
     ssl_test_lib:reuse_session(ClientOpts, ServerOpts, Config).
 
 %%--------------------------------------------------------------------
+%% callback functions ------------------------------------------------
+%%--------------------------------------------------------------------
+
+assert_alpn(Socket, Protocol) ->
+    ?CT_LOG("Negotiated Protocol ~p, Expecting: ~p ~n",
+		       [ssl:negotiated_protocol(Socket), Protocol]),
+    Protocol = ssl:negotiated_protocol(Socket).
+
+assert_alpn_and_renegotiate_and_send_data(Socket, Protocol, Data) ->
+    assert_alpn(Socket, Protocol),
+    ?CT_LOG("Renegotiating ~n", []),
+    ok = ssl:renegotiate(Socket),
+    ssl:send(Socket, Data),
+    assert_alpn(Socket, Protocol),
+    ok.
+
+ssl_send_and_assert_alpn(Socket, Protocol, Data) ->
+    assert_alpn(Socket, Protocol),
+    ssl_send(Socket, Data).
+
+ssl_receive_and_assert_alpn(Socket, Protocol, Data) ->
+    assert_alpn(Socket, Protocol),
+    ssl_receive(Socket, Data).
+
+ssl_send(Socket, Data) ->
+    ?CT_LOG("Connection info: ~p~n",
+               [ssl:connection_information(Socket)]),
+    ssl:send(Socket, Data).
+
+ssl_receive(Socket, Data) ->
+    ssl_receive(Socket, Data, []).
+
+ssl_receive(Socket, Data, Buffer) ->
+    ?CT_LOG("Connection info: ~p~n",
+           [ssl:connection_information(Socket)]),
+    receive
+    {ssl, Socket, MoreData} ->
+        ?CT_LOG("Received ~p~n",[MoreData]),
+        NewBuffer = Buffer ++ MoreData,
+        case NewBuffer of
+            Data ->
+                ssl:send(Socket, "Got it"),
+                ok;
+            _ ->
+                ssl_receive(Socket, Data, NewBuffer)
+        end;
+    Other ->
+        ct:fail({unexpected_message, Other})
+    after 4000 ->
+        ct:fail({did_not_get, Data})
+    end.
+
+connection_info_result(Socket) ->
+    ssl:connection_information(Socket).
+
+%%--------------------------------------------------------------------
 %% Internal functions ------------------------------------------------
 %%--------------------------------------------------------------------
 
@@ -313,55 +392,3 @@ run_handshake(Config, ClientExtraOpts, ServerExtraOpts, ExpectedProtocol) ->
                {options, ClientOpts}]),
 
     ssl_test_lib:check_result(Server, ok, Client, ok).
-
-assert_alpn(Socket, Protocol) ->
-    ct:log("Negotiated Protocol ~p, Expecting: ~p ~n",
-		       [ssl:negotiated_protocol(Socket), Protocol]),
-    Protocol = ssl:negotiated_protocol(Socket).
-
-assert_alpn_and_renegotiate_and_send_data(Socket, Protocol, Data) ->
-    assert_alpn(Socket, Protocol),
-    ct:log("Renegotiating ~n", []),
-    ok = ssl:renegotiate(Socket),
-    ssl:send(Socket, Data),
-    assert_alpn(Socket, Protocol),
-    ok.
-
-ssl_send_and_assert_alpn(Socket, Protocol, Data) ->
-    assert_alpn(Socket, Protocol),
-    ssl_send(Socket, Data).
-
-ssl_receive_and_assert_alpn(Socket, Protocol, Data) ->
-    assert_alpn(Socket, Protocol),
-    ssl_receive(Socket, Data).
-
-ssl_send(Socket, Data) ->
-    ct:log("Connection info: ~p~n",
-               [ssl:connection_information(Socket)]),
-    ssl:send(Socket, Data).
-
-ssl_receive(Socket, Data) ->
-    ssl_receive(Socket, Data, []).
-
-ssl_receive(Socket, Data, Buffer) ->
-    ct:log("Connection info: ~p~n",
-               [ssl:connection_information(Socket)]),
-    receive
-    {ssl, Socket, MoreData} ->
-        ct:log("Received ~p~n",[MoreData]),
-        NewBuffer = Buffer ++ MoreData,
-        case NewBuffer of
-            Data ->
-                ssl:send(Socket, "Got it"),
-                ok;
-            _ ->
-                ssl_receive(Socket, Data, NewBuffer)
-        end;
-    Other ->
-        ct:fail({unexpected_message, Other})
-    after 4000 ->
-        ct:fail({did_not_get, Data})
-    end.
-
-connection_info_result(Socket) ->
-    ssl:connection_information(Socket).

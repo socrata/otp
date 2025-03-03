@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
 %%% The option key_cb_private is to pass options needed by other
 %%% callback modules than the default ssh_file.erl
 %%%
-%%% If ssh:deamon(n, [ {key_cb_private, {hi,{there}}} ]
+%%% If ssh:daemon(n, [ {key_cb_private, {hi,{there}}} ]
 %%% is called, the term() will be {hi,{there}}
 
 -type daemon_key_cb_options(T) :: [{key_cb_private,[T]} | ssh:daemon_option()].

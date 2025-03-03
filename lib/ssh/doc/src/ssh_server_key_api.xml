@@ -5,7 +5,7 @@
   <header>
     <copyright>
       <year>2012</year>
-      <year>2018</year>
+      <year>2021</year>
       <holder>Ericsson AB, All Rights Reserved</holder>
     </copyright>
     <legalnotice>
@@ -88,7 +88,7 @@
   <funcs>
     <func>
       <name since="OTP R16B">Module:host_key(Algorithm, DaemonOptions) ->
-      {ok, Key} | {error, Reason}</name>
+      {ok, PrivateKey} | {error, Reason}</name>
       <fsummary>Fetches the host’s private key.</fsummary>
       <type>
 	<v>Algorithm = <seetype marker="ssh#pubkey_alg">ssh:pubkey_alg()</seetype></v>

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -149,7 +149,7 @@ get_public_key(SigAlg, #ssh{opts = Opts}) ->
             try
                 %% Check the key - the KeyCb may be a buggy plugin
                 true = ssh_transport:valid_key_sha_alg(private, PrivKey, KeyAlg),
-                Key = ssh_transport:extract_public_key(PrivKey),
+                Key = ssh_file:extract_public_key(PrivKey),
                 ssh_message:ssh2_pubkey_encode(Key)
             of
                 PubKeyBlob -> {ok, {PrivKey, PubKeyBlob}}
@@ -172,26 +172,28 @@ publickey_msg([SigAlg, #ssh{user = User,
             SigAlgStr = atom_to_list(SigAlg),
             SigData = build_sig_data(SessionId, User, Service, PubKeyBlob, SigAlgStr),
 
-            Sig = case Key of
-                {ssh2_pubkey, PubKeyBlob} ->
-                  ssh_transport:call_KeyCb(sign, [PubKeyBlob, SigData], Opts);
+            SigRes = case Key of
+                         {ssh2_pubkey, PubKeyBlob} ->
+                             {ok, ssh_transport:call_KeyCb(sign, [PubKeyBlob, SigData], Opts)};
+                         {PrivKey, PubKeyBlob} ->
+                             ssh_transport:sign(SigData, SigAlg, PrivKey, Ssh)
+                     end,
+            case SigRes of
+                {ok,Sig} ->
+                    SigBlob = list_to_binary([?string(SigAlgStr),
+                                              ?binary(Sig)]),
 
-                {PrivKey, PubKeyBlob} ->
-                  Hash = ssh_transport:sha(SigAlg),
-                  ssh_transport:sign(SigData, Hash, PrivKey)
-              end,
-
-            SigBlob = list_to_binary([?string(SigAlgStr),
-                                      ?binary(Sig)]),
-
-            {#ssh_msg_userauth_request{user = User,
-                                       service = Service,
-                                       method = "publickey",
-                                       data = [?TRUE,
-                                               ?string(SigAlgStr),
-                                               ?binary(PubKeyBlob),
-                                               ?binary(SigBlob)]},
-             Ssh};
+                    {#ssh_msg_userauth_request{user = User,
+                                               service = Service,
+                                               method = "publickey",
+                                               data = [?TRUE,
+                                                       ?string(SigAlgStr),
+                                                       ?binary(PubKeyBlob),
+                                                       ?binary(SigBlob)]},
+                     Ssh};
+                {error,_} ->
+                    {not_ok, Ssh}
+            end;
 
         _ ->
             {not_ok, Ssh}
@@ -232,10 +234,9 @@ handle_userauth_request(#ssh_msg_userauth_request{user = User,
 						  service = "ssh-connection",
 						  method = "password",
 						  data = <<?FALSE, ?UINT32(Sz), BinPwd:Sz/binary>>}, _, 
-			#ssh{opts = Opts,
-			     userauth_supported_methods = Methods} = Ssh) ->
+			#ssh{userauth_supported_methods = Methods} = Ssh) ->
     Password = unicode:characters_to_list(BinPwd),
-    case check_password(User, Password, Opts, Ssh) of
+    case check_password(User, Password, Ssh) of
 	{true,Ssh1} ->
 	    {authorized, User,
 	     {#ssh_msg_userauth_success{}, Ssh1}
@@ -271,11 +272,21 @@ handle_userauth_request(#ssh_msg_userauth_request{user = User,
 handle_userauth_request(#ssh_msg_userauth_request{user = User,
 						  service = "ssh-connection",
 						  method = "none"}, _,
-			#ssh{userauth_supported_methods = Methods} = Ssh) ->
-    {not_authorized, {User, undefined},
-     {#ssh_msg_userauth_failure{authentications = Methods,
-                                partial_success = false}, Ssh}
-    };
+			#ssh{userauth_supported_methods = Methods,
+                             opts = Opts} = Ssh) ->
+    case ?GET_OPT(no_auth_needed, Opts) of
+        false ->
+            %% The normal case
+            {not_authorized, {User, undefined},
+             {#ssh_msg_userauth_failure{authentications = Methods,
+                                        partial_success = false}, Ssh}
+            };
+        true ->
+            %% RFC 4252  5.2
+	    {authorized, User,
+             {#ssh_msg_userauth_success{}, Ssh}
+            }
+    end;
 
 handle_userauth_request(#ssh_msg_userauth_request{user = User,
 						  service = "ssh-connection",
@@ -287,10 +298,16 @@ handle_userauth_request(#ssh_msg_userauth_request{user = User,
 							 >>
 						 }, 
 			_SessionId, 
-			#ssh{opts = Opts,
-			     userauth_supported_methods = Methods} = Ssh) ->
+			#ssh{userauth_supported_methods = Methods} = Ssh0) ->
+    Ssh =
+        case check_user(User, Ssh0) of
+            {true,Ssh01} -> Ssh01#ssh{user=User};
+            {false,Ssh01} -> Ssh01#ssh{user=false}
+        end,
 
-    case pre_verify_sig(User, KeyBlob, Opts) of
+    case
+        pre_verify_sig(User, KeyBlob, Ssh)
+    of
 	true ->
 	    {not_authorized, {User, undefined},
              {#ssh_msg_userauth_pk_ok{algorithm_name = binary_to_list(BAlg),
@@ -312,10 +329,15 @@ handle_userauth_request(#ssh_msg_userauth_request{user = User,
 							   SigWLen/binary>>
 						 }, 
 			SessionId, 
-			#ssh{userauth_supported_methods = Methods} = Ssh) ->
+			#ssh{user = PreVerifyUser,
+                             userauth_supported_methods = Methods} = Ssh0) ->
     
-    case verify_sig(SessionId, User, "ssh-connection", 
-		    BAlg, KeyBlob, SigWLen, Ssh) of
+    {UserOk,Ssh} = check_user(User, Ssh0),
+    case
+        ((PreVerifyUser == User) orelse (PreVerifyUser == undefined)) andalso
+        UserOk andalso
+        verify_sig(SessionId, User, "ssh-connection", BAlg, KeyBlob, SigWLen, Ssh)
+    of
 	true ->
 	    {authorized, User, 
              {#ssh_msg_userauth_success{}, Ssh}
@@ -429,7 +451,7 @@ handle_userauth_info_response(#ssh_msg_userauth_info_response{num_responses = 1,
 	orelse 
 	proplists:get_value(one_empty, ?GET_OPT(tstflg,Opts), false),
 
-    case check_password(User, unicode:characters_to_list(Password), Opts, Ssh) of
+    case check_password(User, unicode:characters_to_list(Password), Ssh) of
 	{true,Ssh1} when SendOneEmpty==true ->
 	    {authorized_but_one_more, User,
              {#ssh_msg_userauth_info_request{name = "",
@@ -473,11 +495,26 @@ method_preference(SigKeyAlgs) ->
                    ],
     PubKeyDefs ++ NonPKmethods.
 
-check_password(User, Password, Opts, Ssh) ->
+check_user(User, Ssh) ->
+    case ?GET_OPT(pk_check_user, Ssh#ssh.opts) of
+        true ->
+            check_password(User, pubkey, Ssh);
+        _ ->
+            {true, Ssh} % i.e, skip the test
+    end.
+
+check_password(User, Password, #ssh{opts=Opts} = Ssh) ->
     case ?GET_OPT(pwdfun, Opts) of
+        undefined when Password==pubkey ->
+            %% Just check the User name
+            case lists:keysearch(User, 1, ?GET_OPT(user_passwords,Opts)) of
+                {value, {User, _}} -> {true, Ssh};
+                false -> {false, Ssh}
+            end;
+
 	undefined ->
 	    Static = get_password_option(Opts, User),
-	    {crypto:equal_const_time(Password,Static), Ssh};
+	    {ssh_lib:comp(Password,Static), Ssh};
 
 	Checker when is_function(Checker,2) ->
 	    {Checker(User, Password), Ssh};
@@ -508,7 +545,7 @@ get_password_option(Opts, User) ->
 	false -> ?GET_OPT(password, Opts)
     end.
 	    
-pre_verify_sig(User, KeyBlob, Opts) ->
+pre_verify_sig(User, KeyBlob,  #ssh{opts=Opts}) ->
     try
 	Key = ssh_message:ssh2_pubkey_decode(KeyBlob), % or exception
         ssh_transport:call_KeyCb(is_auth_key, [Key, User], Opts)
@@ -517,16 +554,19 @@ pre_verify_sig(User, KeyBlob, Opts) ->
 	    false
     end.
 
-verify_sig(SessionId, User, Service, AlgBin, KeyBlob, SigWLen, #ssh{opts = Opts} = Ssh) ->
+verify_sig(SessionId, User, Service, AlgBin, KeyBlob, SigWLen, #ssh{opts=Opts} = Ssh) ->
     try
         Alg = binary_to_list(AlgBin),
+        true = lists:member(list_to_existing_atom(Alg), 
+                            proplists:get_value(public_key,
+                                                ?GET_OPT(preferred_algorithms,Opts))),
         Key = ssh_message:ssh2_pubkey_decode(KeyBlob), % or exception
         true = ssh_transport:call_KeyCb(is_auth_key, [Key, User], Opts),
         PlainText = build_sig_data(SessionId, User, Service, KeyBlob, Alg),
         <<?UINT32(AlgSigLen), AlgSig:AlgSigLen/binary>> = SigWLen,
         <<?UINT32(AlgLen), _Alg:AlgLen/binary,
           ?UINT32(SigLen), Sig:SigLen/binary>> = AlgSig,
-        ssh_transport:verify(PlainText, ssh_transport:sha(Alg), Sig, Key, Ssh)
+        ssh_transport:verify(PlainText, list_to_existing_atom(Alg), Sig, Key, Ssh)
     catch
 	_:_ ->
 	    false
@@ -691,6 +731,16 @@ ssh_dbg_format(authentication, {return_from, {?MODULE,handle_userauth_request,3}
       end
      ++ [io_lib:format("user = ~p~n", [User]),
          fmt_req(Req, Ssh)],
+     Stack};
+
+ssh_dbg_format(authentication, {return_from, {?MODULE,handle_userauth_request,3},
+                                {not_authorized,{User,_X},
+                                 {#ssh_msg_userauth_info_request{},_Ssh}}},
+               [{#ssh_msg_userauth_request{method="keyboard-interactive"
+                                          } = Req,Ssh}|Stack]) ->
+    {["AUTH srvr: Ask peer client for password\n",
+      io_lib:format("user = ~p~n", [User]),
+      fmt_req(Req, Ssh)],
      Stack};
 
 

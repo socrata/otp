@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -68,7 +68,10 @@ incr_log_writes() ->
     Left = mnesia_lib:incr_counter(trans_log_writes_left, -1),
     if
 	Left =:= 0 ->
-	    adjust_log_writes(true);
+	    %% It doesn't matter which process adjusts counters and sends
+	    %% cast to a dumper so to avoid potential lag on global:set_lock
+	    %% we delegate it to new process
+	    spawn(fun() -> adjust_log_writes(true) end);
 	true ->
 	    ignore
     end.
@@ -83,7 +86,7 @@ adjust_log_writes(DoCast) ->
 		false ->
 		    ignore;
 		true ->
-		    mnesia_controller:async_dump_log(write_threshold)
+		    ?CATCH(mnesia_controller:async_dump_log(write_threshold))
 	    end,
 	    Max = mnesia_monitor:get_env(dump_log_write_threshold),
 	    Left = mnesia_lib:read_counter(trans_log_writes_left),
@@ -523,8 +526,8 @@ disc_delete_table(Tab, Storage) ->
 disc_delete_indecies(Tab, Cs, Storage) ->
     case storage_semantics(Storage) of
 	disc_only_copies ->
-	    Indecies = Cs#cstruct.index,
-	    mnesia_index:del_transient(Tab, Indecies, Storage);
+	    Indices = Cs#cstruct.index,
+	    mnesia_index:del_transient(Tab, Indices, Storage);
 	_ ->
 	    ok
     end.
@@ -708,7 +711,6 @@ insert_op(Tid, _, {op, restore_recreate, TabDef}, InPlace, InitBy) ->
 		end,
     %% Delete all possibly existing files and tables
     disc_delete_table(Tab, Storage),
-    disc_delete_indecies(Tab, Cs, Storage),
     case InitBy of
 	startup ->
 	    ignore;
@@ -812,7 +814,7 @@ insert_op(Tid, _, {op, create_table, TabDef}, InPlace, InitBy) ->
 			ram_copies ->
 			    ignore;
 			_ ->
-			    %% Indecies are still created by loader
+			    %% Indices are still created by loader
 			    disc_delete_indecies(Tab, Cs, Storage)
 			    %% disc_delete_table(Tab, Storage)
 		    end,
@@ -1430,10 +1432,10 @@ chunk_from_log(eof, _, _, _) ->
 %%
 %% This is a poor mans substitute for a fair scheduler algorithm
 %% in the Erlang emulator. The mnesia_dumper process performs many
-%% costly BIF invokations and must pay for this. But since the
+%% costly BIF invocations and must pay for this. But since the
 %% Emulator does not handle this properly we must compensate for
 %% this with some form of load regulation of ourselves in order to
-%% not steal all computation power in the Erlang Emulator ans make
+%% not steal all computation power in the Erlang Emulator and make
 %% other processes starve. Hopefully this is a temporary solution.
 
 start_regulator() ->

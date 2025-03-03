@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,10 +21,23 @@
 
 -module(openssl_session_SUITE).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
-
 -include_lib("common_test/include/ct.hrl").
+%% Callback functions
+-export([all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2]).
+
+%% Testcases
+-export([reuse_session_erlang_server/0,
+         reuse_session_erlang_server/1,
+         reuse_session_erlang_client/0,
+         reuse_session_erlang_client/1
+         ]).
 
 -define(SLEEP, 1000).
 -define(EXPIRE, 10).
@@ -73,25 +86,15 @@ tests() ->
 
 
 init_per_suite(Config0) ->
-    case os:find_executable("openssl") of
-        false ->
-            {skip, "Openssl not found"};
-        _ ->
-            ct:pal("Version: ~p", [os:cmd("openssl version")]),
-            catch crypto:stop(),
-            try crypto:start() of
-                ok ->
-                    ssl_test_lib:clean_start(),
-                    ssl_test_lib:make_rsa_cert(Config0)
-            catch _:_  ->
-                    {skip, "Crypto did not start"}
-            end
-    end.
+    Config = ssl_test_lib:init_per_suite(Config0, openssl),
+    {ClientOpts, ServerOpts} = ssl_test_lib:make_rsa_cert_chains(
+                                 [{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+                                 Config, "openssl_session_SUITE"),
+    [{client_opts, ClientOpts}, {server_opts, ServerOpts} | Config].
 
-end_per_suite(_Config) ->
-    ssl:stop(),
-    application:stop(crypto),
-    ssl_test_lib:kill_openssl().
+end_per_suite(Config) ->
+    ssl_test_lib:end_per_suite(Config).
 
 init_per_group(GroupName, Config) ->
     ssl_test_lib:init_per_group_openssl(GroupName, Config).
@@ -107,19 +110,24 @@ init_per_testcase(reuse_session_erlang_client, Config) ->
     ssl:start(),
     Config;
 init_per_testcase(reuse_session_erlang_server, Config) ->
-    Version = ssl_test_lib:protocol_version(Config),
-    case ssl_test_lib:is_dtls_version(Version) of
+    case ssl_test_lib:working_openssl_client(Config) of
         true ->
-            case ssl_test_lib:openssl_sane_dtls_session_reuse() of
+            Version = ssl_test_lib:protocol_version(Config),
+            case ssl_test_lib:is_dtls_version(Version) of
                 true ->
-                    ct:timetrap(?TIMEOUT),
-                    Config;
+                    case ssl_test_lib:openssl_sane_dtls_session_reuse() of
+                        true ->
+                            ct:timetrap(?TIMEOUT),
+                            Config;
+                        false ->
+                            {skip, "Broken OpenSSL DTLS session reuse"}
+                    end;
                 false ->
-                    {skip, "Broken OpenSSL DTLS session reuse"}
+                    ct:timetrap(?TIMEOUT),
+                    Config
             end;
-        false ->
-            ct:timetrap(?TIMEOUT),
-            Config
+        false  ->
+            {skip, "Broken OpenSSL s_client"}
     end;
 init_per_testcase(_TestCase, Config) ->
     ct:timetrap(?TIMEOUT),
@@ -140,66 +148,54 @@ reuse_session_erlang_server() ->
     [{doc, "Test erlang server with openssl client that reconnects with the"
       "same session id, to test reusing of sessions."}].
 reuse_session_erlang_server(Config) when is_list(Config) ->
-    process_flag(trap_exit, true),
-    ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),
+    ClientOpts = proplists:get_value(client_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_opts, Config),
+    Version = ssl_test_lib:protocol_version(Config),
     
-    {_, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    {_, ServerNode, _} = ssl_test_lib:run_where(Config),
     
+
     Data = "From openssl to erlang",
     
     Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0}, 
                                         {from, self()},
                                         {mfa, {ssl_test_lib, active_recv, [length(Data)]}},
                                         {reconnect_times, 5},
-                                        {options, ServerOpts}]),
+                                        {options, [{versions, [Version]}| ServerOpts]}]),
     Port = ssl_test_lib:inet_port(Server),
-    Version = ssl_test_lib:protocol_version(Config),
+
     
-    Exe = "openssl",
-    Args = ["s_client", "-connect", ssl_test_lib:hostname_format(Hostname)
-            ++ ":" ++ integer_to_list(Port),
-            ssl_test_lib:version_flag(Version),
-            "-reconnect"],
-    
-    OpenSslPort =  ssl_test_lib:portable_open_port(Exe, Args),
-    
-    true = port_command(OpenSslPort, Data),
+    {_Client, OpenSSLPort} = ssl_test_lib:start_client(openssl, [{port, Port}, 
+                                                                 {reconnect, true},
+                                                                 {options, ClientOpts}, 
+                                                                 return_port], Config),
+    true = port_command(OpenSSLPort, Data),
     
     ssl_test_lib:check_result(Server, Data),
-    
-    %% Clean close down!   Server needs to be closed first !!
-    ssl_test_lib:close(Server),
-    ssl_test_lib:close_port(OpenSslPort).
+    ssl_test_lib:close(Server).
 
 %%--------------------------------------------------------------------
 
 reuse_session_erlang_client() ->
     [{doc, "Test erlang ssl client that wants to reuse sessions"}].
 reuse_session_erlang_client(Config) when is_list(Config) -> 
-    process_flag(trap_exit, true),
-    ClientOpts = ssl_test_lib:ssl_options(client_rsa_opts, Config),
-    ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),
+    ClientOpts = ssl_test_lib:ssl_options(client_opts, Config),
+    ServerOpts = proplists:get_value(server_opts, Config),
+    Version = ssl_test_lib:protocol_version(Config),
+
     {ClientNode, _, Hostname} = ssl_test_lib:run_where(Config),
-
-    Version = ssl_test_lib:protocol_version(Config),    
-    Port = ssl_test_lib:inet_port(node()),
-    CertFile = proplists:get_value(certfile, ServerOpts),
-    CACertFile = proplists:get_value(cacertfile, ServerOpts),
-    KeyFile = proplists:get_value(keyfile, ServerOpts),
-
-    Exe = "openssl",
-    Args = ["s_server", "-accept", integer_to_list(Port), ssl_test_lib:version_flag(Version),
-            "-cert", CertFile,"-key", KeyFile, "-CAfile", CACertFile],
-
-    OpensslPort = ssl_test_lib:portable_open_port(Exe, Args), 
-
-    ssl_test_lib:wait_for_openssl_server(Port,  proplists:get_value(protocol, Config)),
+    Server = ssl_test_lib:start_server(openssl, [], 
+                                       [{server_opts, ServerOpts} | Config]),
+    Port = ssl_test_lib:inet_port(Server),    
     
     Client0 =
         ssl_test_lib:start_client([{node, ClientNode},
                                    {port, Port}, {host, Hostname},
                                    {mfa, {ssl_test_lib, session_id, []}},
-                                   {from, self()},  {options, [{reuse_sessions, save}, {verify, verify_peer}| ClientOpts]}]),
+                                   {from, self()}, 
+                                   {options, [{reuse_sessions, save}, 
+                                              {verify, verify_peer},
+                                              {versions, [Version]} | ClientOpts]}]),
     
     SID = receive
               {Client0, Id0} ->
@@ -212,7 +208,8 @@ reuse_session_erlang_client(Config) when is_list(Config) ->
         ssl_test_lib:start_client([{node, ClientNode},
                                    {port, Port}, {host, Hostname},
                                    {mfa, {ssl_test_lib, session_id, []}},
-                                   {from, self()},  {options, [{reuse_session, SID} | ClientOpts]}]),                              
+                                   {from, self()},  {options, [{versions, [Version]},
+                                                               {reuse_session, SID} | ClientOpts]}]),
     receive
         {Client1, SID} ->
             ok
@@ -229,7 +226,7 @@ reuse_session_erlang_client(Config) when is_list(Config) ->
         ssl_test_lib:start_client([{node, ClientNode},
                                    {port, Port}, {host, Hostname},
                                    {mfa, {ssl_test_lib, session_id, []}},
-                                   {from, self()},  {options, ClientOpts}]),
+                                   {from, self()},  {options, [{versions, [Version]} | ClientOpts]}]),
     receive
         {Client2, ID} ->
             case ID of
@@ -239,12 +236,5 @@ reuse_session_erlang_client(Config) when is_list(Config) ->
                     ok
             end
     end,
-    
-    %% Clean close down!   Server needs to be closed first !!
-    ssl_test_lib:close_port(OpensslPort),
     ssl_test_lib:close(Client2).
 
-
-%%--------------------------------------------------------------------
-%% Internal functions ------------------------------------------------
-%%--------------------------------------------------------------------

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2002-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2002-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,8 @@ typedef struct {
     int tpref;
     int ramv;
     int atags;
+    int cp;
+    int mmbc0;     /* create main mbc for instance 0 */
     UWord sbct;
     UWord asbcst;
     UWord rsbcst;
@@ -65,6 +67,7 @@ typedef struct {
     UWord smbcs;
     UWord mbcgs;
     UWord acul;
+    UWord acful;
     UWord acnl;
     UWord acfml;
 
@@ -111,6 +114,8 @@ typedef struct {
     0,			/* (bool)   tpref:  thread preferred             */\
     0,			/* (bool)   ramv:   realloc always moves         */\
     0,			/* (bool)   atags:  tagged allocations           */\
+    -1,		        /* (ix)     cp:     carrier pool                 */\
+    1,                  /* (bool)   mmbc0:  main mbc in instance 0       */\
     512*1024,		/* (bytes)  sbct:   sbc threshold                */\
     2*1024*2024,	/* (amount) asbcst: abs sbc shrink threshold     */\
     20,			/* (%)      rsbcst: rel sbc shrink threshold     */\
@@ -123,6 +128,7 @@ typedef struct {
     1024*1024,		/* (bytes)  smbcs:  smallest mbc size            */\
     10,			/* (amount) mbcgs:  mbc growth stages            */\
     0,			/* (%)      acul:  abandon carrier utilization limit */\
+    0,			/* (%)      acful:  carrier free utilization limit */\
     1000,		/* (amount) acnl:  abandoned carriers number limit */\
     0,			/* (bytes)  acfml: abandoned carrier fblk min limit */\
     /* --- Data not options -------------------------------------------- */\
@@ -149,10 +155,13 @@ typedef struct {
     0,			/* (bool)   tpref:  thread preferred             */\
     0,			/* (bool)   ramv:   realloc always moves         */\
     0,			/* (bool)   atags:  tagged allocations           */\
+    -1,		        /* (ix)     cp:     carrier pool                 */\
+    1,                  /* (bool)   mmbc0:  main mbc in instance 0       */\
     64*1024,		/* (bytes)  sbct:   sbc threshold                */\
     2*1024*2024,	/* (amount) asbcst: abs sbc shrink threshold     */\
     20,			/* (%)      rsbcst: rel sbc shrink threshold     */\
     80,			/* (%)      rsbcmt: rel sbc move threshold       */\
+    50,			/* (%)      rmbcmt: rel mbc move threshold       */\
     128*1024,		/* (bytes)  mmbcs:  main multiblock carrier size */\
     256,		/* (amount) mmsbc:  max mseg sbcs                */\
     ~((UWord) 0),	/* (amount) mmmbc:  max mseg mbcs                */ \
@@ -160,6 +169,7 @@ typedef struct {
     128*1024,		/* (bytes)  smbcs:  smallest mbc size            */\
     10,			/* (amount) mbcgs:  mbc growth stages            */\
     0,			/* (%)      acul:  abandon carrier utilization limit */\
+    0,			/* (%)      acful:  carrier free utilization limit */\
     1000,		/* (amount) acnl:  abandoned carriers number limit */\
     0,			/* (bytes)  acfml: abandoned carrier fblk min limit */\
     /* --- Data not options -------------------------------------------- */\
@@ -212,12 +222,6 @@ void* erts_alcu_mmapper_mseg_alloc(Allctr_t*, Uint *size_p, Uint flags);
 void* erts_alcu_mmapper_mseg_realloc(Allctr_t*, void *seg, Uint old_size, Uint *new_size_p);
 void  erts_alcu_mmapper_mseg_dealloc(Allctr_t*, void *seg, Uint size, Uint flags);
 # endif
-
-# if defined(ERTS_ALC_A_EXEC)
-void* erts_alcu_exec_mseg_alloc(Allctr_t*, Uint *size_p, Uint flags);
-void* erts_alcu_exec_mseg_realloc(Allctr_t*, void *seg, Uint old_size, Uint *new_size_p);
-void  erts_alcu_exec_mseg_dealloc(Allctr_t*, void *seg, Uint size, Uint flags);
-# endif
 #endif /* HAVE_ERTS_MSEG */
 
 #ifdef ARCH_32
@@ -258,9 +262,10 @@ typedef struct {
     struct alcu_blockscan *last;
 } ErtsAlcuBlockscanYieldData;
 
-int erts_handle_yielded_alcu_blockscan(struct ErtsSchedulerData_ *esdp,
-                                       ErtsAlcuBlockscanYieldData *yield);
-void erts_alcu_sched_spec_data_init(struct ErtsSchedulerData_ *esdp);
+struct ErtsAuxWorkData_;
+
+int erts_handle_yielded_alcu_blockscan(struct ErtsAuxWorkData_ *awdp);
+void erts_alcu_blockscan_init(struct ErtsAuxWorkData_ *awdp);
 
 #endif /* !ERL_ALLOC_UTIL__ */
 
@@ -309,7 +314,7 @@ void erts_alcu_sched_spec_data_init(struct ErtsSchedulerData_ *esdp);
 #  ifdef MSEG_ALIGN_BITS
 #    define ERTS_SUPER_ALIGN_BITS MSEG_ALIGN_BITS
 #  else
-#    define ERTS_SUPER_ALIGN_BITS 18
+#    define ERTS_SUPER_ALIGN_BITS ERTS_MMAP_SUPERALIGNED_BITS
 #  endif
 #  ifdef ARCH_64 
 #    define MBC_ABLK_OFFSET_BITS   23
@@ -443,6 +448,24 @@ struct AOFF_RBTree_t_ {
     } u;
 };
 
+#if ERTS_ALC_A_INVALID != 0
+#  error "Carrier pool implementation assumes ERTS_ALC_A_INVALID == 0"
+#endif
+#if ERTS_ALC_A_MIN <= ERTS_ALC_A_INVALID
+#  error "Carrier pool implementation assumes ERTS_ALC_A_MIN > ERTS_ALC_A_INVALID"
+#endif
+
+/* The pools are only allowed to be manipulated by managed threads except in
+ * the alloc_SUITE:cpool test, where only ERTS_ALC_TEST_CPOOL_IX pool is used. */
+
+#define ERTS_ALC_TEST_CPOOL_IX ERTS_ALC_A_INVALID
+/*
+ * System is not an alloc_util allocator, so we use its slot for
+ * the common cpool...
+ */
+#define ERTS_ALC_COMMON_CPOOL_IX ERTS_ALC_A_SYSTEM
+#define ERTS_ALC_NO_CPOOLS (ERTS_ALC_A_MAX+1)
+
 void aoff_add_pooled_mbc(Allctr_t*, Carrier_t*);
 void aoff_remove_pooled_mbc(Allctr_t*, Carrier_t*);
 Carrier_t* aoff_lookup_pooled_mbc(Allctr_t*, Uint size);
@@ -456,6 +479,7 @@ typedef struct {
     ErtsThrPrgrVal thr_prgr;
     erts_atomic_t max_size;
     UWord abandon_limit;
+    UWord discard_limit;
     UWord blocks[ERTS_ALC_A_COUNT];
     UWord blocks_size[ERTS_ALC_A_COUNT];
     UWord total_blocks_size;
@@ -657,7 +681,6 @@ struct Allctr_t_ {
     /* */
     Uint		mbc_header_size;
     Uint		min_mbc_size;
-    Uint		min_mbc_first_free_size;
     Uint		min_block_size;
     UWord               crr_set_flgs;
     UWord               crr_clr_flgs;
@@ -678,8 +701,10 @@ struct Allctr_t_ {
 	int		disable_abandon;
 	int		check_limit_count;
 	UWord		util_limit;       /* acul */
+	UWord		free_util_limit;  /* acful */
         UWord           in_pool_limit;    /* acnl */
         UWord           fblk_min_limit;   /* acmfl */
+        int             carrier_pool;     /* cp */
 	struct {
 	    erts_atomic_t	blocks_size[ERTS_ALC_A_COUNT];
 	    erts_atomic_t	no_blocks[ERTS_ALC_A_COUNT];

@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2018</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -47,6 +47,14 @@
       must not be changed.</p>
     <p>The time-outs are not exact, but are <em>at least</em> as long
       as requested.</p>
+    <p>Creating timers using
+      <seemfa marker="erts:erlang#send_after/3">erlang:send_after/3</seemfa> and
+      <seemfa marker="erts:erlang#start_timer/3">erlang:start_timer/3</seemfa>
+      is more efficient than using the timers provided by this module. However,
+      the timer module has been improved in OTP 25, making it more efficient and
+      less susceptible to being overloaded. See
+      <seeguide marker="system/efficiency_guide:commoncaveats#timer-module">the
+      Timer Module section in the Efficiency Guide</seeguide>.</p>
   </description>
 
   <datatypes>
@@ -63,10 +71,10 @@
   <funcs>
     <func>
       <name name="apply_after" arity="4" since=""/>
-      <fsummary>Apply <c>Module:Function(Arguments)</c> after a specified
-        <c>Time</c>.</fsummary>
+      <fsummary>Spawn a process evaluating <c>Module:Function(Arguments)</c>
+        after a specified <c>Time</c>.</fsummary>
       <desc>
-        <p>Evaluates <c>apply(<anno>Module</anno>, <anno>Function</anno>,
+        <p>Evaluates <c>spawn(<anno>Module</anno>, <anno>Function</anno>,
           <anno>Arguments</anno>)</c> after <c><anno>Time</anno></c>
           milliseconds.</p>
         <p>Returns <c>{ok, <anno>TRef</anno>}</c> or
@@ -76,12 +84,53 @@
 
     <func>
       <name name="apply_interval" arity="4" since=""/>
-      <fsummary>Evaluate <c>Module:Function(Arguments)</c> repeatedly at
-        intervals of <c>Time</c>.</fsummary>
+      <fsummary>Spawn a process evaluating <c>Module:Function(Arguments)</c>
+        repeatedly at intervals of <c>Time</c>.</fsummary>
       <desc>
-        <p>Evaluates <c>apply(<anno>Module</anno>, <anno>Function</anno>,
+        <p>Evaluates <c>spawn(<anno>Module</anno>, <anno>Function</anno>,
           <anno>Arguments</anno>)</c> repeatedly at intervals of
-          <c><anno>Time</anno></c>.</p>
+          <c><anno>Time</anno></c>, irrespective of whether a previously
+          spawned process has finished or not.</p>
+        <warning>
+          <p>If the execution time of the spawned process is, on average,
+            greater than the given <c><anno>Time</anno></c>, multiple such
+            processes will run at the same time. With long execution times,
+            short intervals, and many interval timers running, this may even
+            lead to exceeding the number of allowed processes. As an extreme
+            example, consider
+            <c>[timer:apply_interval(1, timer, sleep, [1000]) || _ &lt;- lists:seq(1, 1000)]</c>,
+            that is, 1,000 interval timers executing a process that takes 1s
+            to complete, started in intervals of 1ms, which would result in
+            1,000,000 processes running at the same time, far more than a node
+            started with default settings allows (see the
+            <seeguide marker="system/efficiency_guide:advanced#system-limits">System
+            Limits section in the Effiency Guide</seeguide>).</p>
+        </warning>
+        <p>Returns <c>{ok, <anno>TRef</anno>}</c> or
+          <c>{error, <anno>Reason</anno>}</c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="apply_repeatedly" arity="4" since="OTP 26.0"/>
+      <fsummary>Spawn a process evaluating <c>Module:Function(Arguments)</c>
+        repeatedly at intervals of <c>Time</c>.</fsummary>
+      <desc>
+        <p>Evaluates <c>spawn(<anno>Module</anno>, <anno>Function</anno>,
+          <anno>Arguments</anno>)</c> repeatedly at intervals of
+          <c><anno>Time</anno></c>, waiting for the spawned process to
+          finish before starting the next.</p>
+        <p>If the execution time of the spawned process is greater than the
+          given <c><anno>Time</anno></c>, the next process is spawned immediately
+          after the one currently running has finished. Assuming that execution
+          times of the spawned processes performing the applies on average
+          are smaller than <c><anno>Time</anno></c>, the amount of applies
+          made over a large amount of time will be the same even if some
+          individual execution times are larger than
+          <c><anno>Time</anno></c>. The system will try to catch up as soon
+          as possible. For example, if one apply takes
+          <c>2.5*<anno>Time</anno></c>, the following two applies will be
+          made immediately one after the other in sequence.</p>
         <p>Returns <c>{ok, <anno>TRef</anno>}</c> or
           <c>{error, <anno>Reason</anno>}</c>.</p>
       </desc>
@@ -110,8 +159,9 @@
           <c>exit_after(<anno>Time</anno>, self(),
           <anno>Reason1</anno>)</c>.</p>
         <p><c>exit_after/3</c> sends an exit signal with reason
-          <c><anno>Reason1</anno></c> to
-          pid <c><anno>Pid</anno></c>. Returns <c>{ok, <anno>TRef</anno>}</c>
+          <c><anno>Reason1</anno></c> to <c><anno>Target</anno></c>,
+          which can be a local process identifier or an atom of a registered
+          name. Returns <c>{ok, <anno>TRef</anno>}</c>
           or <c>{error, <anno>Reason2</anno>}</c>.</p>
       </desc>
     </func>
@@ -143,7 +193,7 @@
         <p><c>kill_after/1</c> is the same as
           <c>exit_after(<anno>Time</anno>, self(), kill)</c>.</p>
         <p><c>kill_after/2</c> is the same as
-          <c>exit_after(<anno>Time</anno>, <anno>Pid</anno>, kill)</c>.</p>
+          <c>exit_after(<anno>Time</anno>, <anno>Target</anno>, kill)</c>.</p>
       </desc>
     </func>
 
@@ -184,17 +234,21 @@
     <func>
       <name name="send_after" arity="2" since=""/>
       <name name="send_after" arity="3" since=""/>
-      <fsummary>Send <c>Message</c> to <c>Pid</c> after a specified
+      <fsummary>Send <c>Message</c> to <c>Destination</c> after a specified
         <c>Time</c>.</fsummary>
       <desc>
         <taglist>
           <tag><c>send_after/3</c></tag>
           <item>
-            <p>Evaluates <c><anno>Pid</anno> ! <anno>Message</anno></c> after
-              <c><anno>Time</anno></c> milliseconds. (<c><anno>Pid</anno></c>
-              can also be an atom of a registered name.)</p>
+            <p>Evaluates <c><anno>Destination</anno> ! <anno>Message</anno></c> after
+              <c><anno>Time</anno></c> milliseconds. (<c><anno>Destination</anno></c> can
+              be a remote or local process identifier, an atom of a registered name or
+              a tuple <c>{RegName, Node}</c> for a registered name at another node.)</p>
             <p>Returns <c>{ok, <anno>TRef</anno>}</c> or
               <c>{error, <anno>Reason</anno>}</c>.</p>
+            <p>See also
+              <seeguide marker="system/efficiency_guide:commoncaveats#timer-module">
+              the Timer Module section in the Efficiency Guide</seeguide>.</p>
           </item>
           <tag><c>send_after/2</c></tag>
           <item>
@@ -214,10 +268,11 @@
         <taglist>
           <tag><c>send_interval/3</c></tag>
           <item>
-            <p>Evaluates <c><anno>Pid</anno> ! <anno>Message</anno></c>
+            <p>Evaluates <c><anno>Destination</anno> ! <anno>Message</anno></c>
               repeatedly after <c><anno>Time</anno></c> milliseconds.
-              (<c><anno>Pid</anno></c> can also be
-              an atom of a registered name.)</p>
+              (<c><anno>Destination</anno></c> can be a remote or local process
+              identifier, an atom of a registered name or a tuple <c>{RegName, Node}</c>
+              for a registered name at another node.)</p>
             <p>Returns <c>{ok, <anno>TRef</anno>}</c> or
               <c>{error, <anno>Reason</anno>}</c>.</p>
           </item>
@@ -240,6 +295,11 @@
           or suspends the process forever if <c><anno>Time</anno></c> is the
           atom <c>infinity</c>. Naturally, this
           function does <em>not</em> return immediately.</p>
+        <note>
+          <p>Before OTP 25, <c>timer:sleep/1</c> did not accept integer
+            timeout values greater than <c>16#ffffffff</c>, that is, <c>2^32-1</c>.
+            Since OTP 25, arbitrarily high integer values are accepted.</p>
+        </note>
       </desc>
     </func>
 
@@ -259,14 +319,37 @@
 
     <func>
       <name name="tc" arity="1" since="OTP R14B03"/>
-      <name name="tc" arity="2" since="OTP R14B"/>
-      <name name="tc" arity="3" since=""/>
-      <fsummary>Measure the real time it takes to evaluate <c>apply(Module,
-        Function, Arguments)</c> or <c>apply(Fun, Arguments)</c>.</fsummary>
-      <type_desc variable="Time">In microseconds</type_desc>
+      <name name="tc" arity="2" clause_i="1" since="OTP R14B"/>
+      <name name="tc" arity="3" clause_i="1" since=""/>
+      <fsummary>Measure the real time it takes to evaluate <c>Fun</c>.</fsummary>
       <desc>
         <taglist>
           <tag><c>tc/3</c></tag>
+          <item>
+            <p>Calls function <c>timer:tc(Module, Function, Arguments, microsecond)</c>.</p>
+          </item>
+          <tag><c>tc/2</c></tag>
+          <item>
+            <p>Calls function <c>timer:tc(Fun, Arguments, microsecond)</c>.</p>
+          </item>
+          <tag><c>tc/1</c></tag>
+          <item>
+            <p>Calls function <c>timer:tc(Fun, microsecond)</c>.</p>
+          </item>
+        </taglist>
+      </desc>
+    </func>
+
+    <func>
+      <name name="tc" arity="2" clause_i="2" since="OTP 26.0"/>
+      <name name="tc" arity="3" clause_i="2" since="OTP 26.0"/>
+      <name name="tc" arity="4" since="OTP 26.0"/>
+      <fsummary>Measure the real time it takes to evaluate <c>apply(Module,
+        Function, Arguments)</c> or <c>apply(Fun, Arguments)</c>.</fsummary>
+      <type_desc variable="Time">In the specified <c>TimeUnit</c></type_desc>
+      <desc>
+        <taglist>
+          <tag><c>tc/4</c></tag>
           <item>
             <p>Evaluates <c>apply(<anno>Module</anno>, <anno>Function</anno>,
               <anno>Arguments</anno>)</c> and measures the elapsed real time as 
@@ -274,18 +357,18 @@
               <c>erlang:monotonic_time/0</c></seemfa>.</p>
             <p>Returns <c>{<anno>Time</anno>, <anno>Value</anno>}</c>, where
               <c><anno>Time</anno></c> is the elapsed real time in
-              <em>microseconds</em>, and <c><anno>Value</anno></c> is what is
+              the specified <c>TimeUnit</c>, and <c><anno>Value</anno></c> is what is
               returned from the apply.</p>
+          </item>
+          <tag><c>tc/3</c></tag>
+          <item>
+            <p>Evaluates <c>apply(<anno>Fun</anno>, <anno>Arguments</anno>)</c>.
+              Otherwise the same as <c>tc/4</c>.</p>
           </item>
           <tag><c>tc/2</c></tag>
           <item>
-            <p>Evaluates <c>apply(<anno>Fun</anno>, <anno>Arguments</anno>)</c>.
-              Otherwise the same as <c>tc/3</c>.</p>
-          </item>
-          <tag><c>tc/1</c></tag>
-          <item>
             <p>Evaluates <c><anno>Fun</anno>()</c>. Otherwise the same as
-              <c>tc/2</c>.</p>
+              <c>tc/3</c>.</p>
           </item>
         </taglist>
       </desc>
@@ -341,4 +424,3 @@ timer:cancel(R),
       <seemfa marker="#cancel/1"><c>cancel/1</c></seemfa>.</p>
   </section>
 </erlref>
-

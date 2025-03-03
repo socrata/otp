@@ -4,7 +4,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2019. All Rights Reserved.
+# Copyright Ericsson AB 1997-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,11 +47,12 @@ CROSS_COMPILING = @CROSS_COMPILING@
 # ----------------------------------------------------
 DEFAULT_TARGETS =  opt debug release release_docs clean docs
 
-TYPES = @TYPES@
+TYPES = opt debug lcnt valgrind asan gcov
+DEFAULT_TYPES = @DEFAULT_TYPES@
+FLAVORS = @FLAVORS@
+PRIMARY_FLAVOR= @PRIMARY_FLAVOR@
 
 USE_PGO = @USE_PGO@
-
-USE_ESOCK = @USE_ESOCK@
 
 # Slash separated list of return values from $(origin VAR)
 # that are untrusted - set default in this file instead.
@@ -59,13 +60,6 @@ USE_ESOCK = @USE_ESOCK@
 # contain space, and we want to use $(findstring ...) to
 # search the list.
 DUBIOUS_ORIGINS = /undefined/environment/
-
-# ----------------------------------------------------
-#	HiPE
-# ----------------------------------------------------
-
-HIPE_ENABLED = @HIPE_ENABLED@
-NATIVE_LIBS_ENABLED = @NATIVE_LIBS_ENABLED@
 
 # ----------------------------------------------------
 #	Command macros
@@ -81,6 +75,7 @@ CC = @CC@
 GCC = @GCC@
 HCC = @HCC@
 CC32 = @CC32@
+CXX = @CXX@
 CFLAGS32 = @CFLAGS32@
 BASIC_CFLAGS = @CFLAGS@
 DEBUG_FLAGS =  @DEBUG_FLAGS@
@@ -97,17 +92,24 @@ BITS64 = @BITS64@
 
 OTP_RELEASE = @OTP_RELEASE@
 
+ERL_DETERMINISTIC = @ERL_DETERMINISTIC@
+
 # ----------------------------------------------------
 #	Erlang language section
 # ----------------------------------------------------
 EMULATOR = beam
-ifdef BOOTSTRAP
+ifeq ($(ERL_COMPILE_WARNINGS_AS_ERRORS),yes)
+  ERL_COMPILE_FLAGS += -Werror
+endif
+ifdef PRIMARY_BOOTSTRAP
   ERL_COMPILE_FLAGS += +slim
 else
   ERL_COMPILE_FLAGS += +debug_info
 endif
-ifeq ($(USE_ESOCK),yes)
-ERL_COMPILE_FLAGS += -DUSE_ESOCK=true
+ifeq ($(ERL_DETERMINISTIC),yes)
+  ERL_COMPILE_FLAGS += +deterministic
+  YRL_FLAGS += +deterministic
+  XRL_FLAGS += +deterministic
 endif
 
 ERLC_WFLAGS = -W
@@ -133,11 +135,6 @@ $(EBIN)/%.beam: $(EGEN)/%.erl
 $(EBIN)/%.beam: $(ESRC)/%.erl
 	$(V_ERLC) $(ERL_COMPILE_FLAGS) -o$(EBIN) $<
 
-ifeq ($(NATIVE_LIBS_ENABLED),yes)
-# Special rule for the HIPE bootstrap w/ native libs
-../boot_ebin/%.beam: $(ESRC)/%.erl
-	$(V_ERLC) $(ERL_COMPILE_FLAGS) -o../boot_ebin $<
-endif
 
 .erl.beam:
 	$(V_ERLC) $(ERL_COMPILE_FLAGS) -o$(dir $@) $<

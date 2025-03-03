@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1999-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,23 +51,20 @@ typedef struct erl_bin_match_buffer {
 
 struct erl_bits_state {
     /*
-     * Used for building binaries.
+     * Temporary buffer sometimes used by erts_new_bs_put_integer().
      */
     byte *byte_buf_;
-    int byte_buf_len_;
+    Uint byte_buf_len_;
+
     /*
-     * Used for building binaries using the new instruction set.
+     * Pointer to the beginning of the current binary.
      */
-    byte* erts_current_bin_;	/* Pointer to beginning of current binary. */
+    byte* erts_current_bin_;
+
     /*
-     * Offset in bits into the current binary (new instruction set) or
-     * buffer (old instruction set).
+     * Offset in bits into the current binary.
      */
     Uint erts_bin_offset_;
-    /*
-     * Whether the current binary is writable.
-     */
-     unsigned erts_writable_bin_;
 };
 
 typedef struct erl_bin_match_struct{
@@ -93,9 +90,17 @@ typedef struct erl_bin_match_struct{
  * (Except when the current Process* already is a parameter.)
  */
 /* the state resides in the current process' scheduler data */
-#define ERL_BITS_DECLARE_STATEP			struct erl_bits_state *EBS
-#define ERL_BITS_RELOAD_STATEP(P)		do{EBS = &erts_proc_sched_data((P))->erl_bits_state;}while(0)
-#define ERL_BITS_DEFINE_STATEP(P)		struct erl_bits_state *EBS = &erts_proc_sched_data((P))->erl_bits_state
+#define ERL_BITS_DECLARE_STATEP struct erl_bits_state *EBS
+
+#define ERL_BITS_RELOAD_STATEP(P)                                              \
+    do {                                                                       \
+        EBS = &erts_proc_sched_data((P))->registers->aux_regs.d.erl_bits_state;  \
+    } while(0)
+
+#define ERL_BITS_DEFINE_STATEP(P) \
+    struct erl_bits_state *EBS = \
+        &erts_proc_sched_data((P))->registers->aux_regs.d.erl_bits_state
+
 #define ErlBitsState				(*EBS)
 
 #define ERL_BITS_PROTO_0			struct erl_bits_state *EBS
@@ -107,10 +112,8 @@ typedef struct erl_bin_match_struct{
 #define ERL_BITS_ARGS_2(ARG1,ARG2)		EBS, ARG1, ARG2
 #define ERL_BITS_ARGS_3(ARG1,ARG2,ARG3)		EBS, ARG1, ARG2, ARG3
 
-
 #define erts_bin_offset		(ErlBitsState.erts_bin_offset_)
 #define erts_current_bin	(ErlBitsState.erts_current_bin_)
-#define erts_writable_bin       (ErlBitsState.erts_writable_bin_)
 
 #define copy_binary_to_buffer(DstBuffer, DstBufOffset, SrcBuffer, SrcBufferOffset, NumBits) \
   do {											    \
@@ -144,6 +147,11 @@ void erts_bits_destroy_state(ERL_BITS_PROTO_0);
 #define WSIZE(n) ((n + sizeof(Eterm) - 1) / sizeof(Eterm))
 
 /*
+ * Define the maximum number of bits in a unit for the binary syntax.
+ */
+#define ERL_UNIT_BITS 8
+
+/*
  * Binary matching.
  */
 
@@ -166,7 +174,7 @@ int erts_bs_put_utf8(ERL_BITS_PROTO_1(Eterm Integer));
 int erts_bs_put_utf16(ERL_BITS_PROTO_2(Eterm Integer, Uint flags));
 int erts_new_bs_put_binary(Process *c_p, Eterm Bin, Uint num_bits);
 int erts_new_bs_put_binary_all(Process *c_p, Eterm Bin, Uint unit);
-int erts_new_bs_put_float(Process *c_p, Eterm Float, Uint num_bits, int flags);
+Eterm erts_new_bs_put_float(Process *c_p, Eterm Float, Uint num_bits, int flags);
 void erts_new_bs_put_string(ERL_BITS_PROTO_2(byte* iptr, Uint num_bytes));
 
 Uint erts_bits_bufs_size(void);
@@ -175,29 +183,43 @@ Eterm erts_bs_get_utf8(ErlBinMatchBuffer* mb);
 Eterm erts_bs_get_utf16(ErlBinMatchBuffer* mb, Uint flags);
 Eterm erts_bs_append(Process* p, Eterm* reg, Uint live, Eterm build_size_term,
 		     Uint extra_words, Uint unit);
+Eterm erts_bs_append_checked(Process* p, Eterm* reg, Uint live, Uint size,
+                             Uint extra_words, Uint unit);
 Eterm erts_bs_private_append(Process* p, Eterm bin, Eterm sz, Uint unit);
+Eterm erts_bs_private_append_checked(Process* p, Eterm bin, Uint size, Uint unit);
 Eterm erts_bs_init_writable(Process* p, Eterm sz);
 
 /*
  * Common utilities.
  */
 void erts_copy_bits(byte* src, size_t soffs, int sdir,
-		    byte* dst, size_t doffs,int ddir, size_t n);        
+		    byte* dst, size_t doffs,int ddir, size_t n);
 int erts_cmp_bits(byte* a_ptr, size_t a_offs, byte* b_ptr, size_t b_offs, size_t size); 
 
+/*
+ * Calculate the heap space for a binary extracted by
+ * erts_extract_sub_binary().
+ */
+Uint erts_extracted_binary_size(Uint bit_size);
 
 /* Extracts a region from base_bin as a sub-binary or heap binary, whichever
  * is the most appropriate.
  *
- * The caller must ensure that there's enough free space at *hp */
+ * The caller must ensure that there's enough free space at *hp by using
+ * erts_extracted_binary_size().
+ * */
 Eterm erts_extract_sub_binary(Eterm **hp, Eterm base_bin, byte *base_data,
                               Uint bit_offset, Uint num_bits);
 
-/* Pessimistic estimate of the words required for erts_extract_sub_binary */
-#define EXTRACT_SUB_BIN_HEAP_NEED (heap_bin_size(ERL_ONHEAP_BIN_LIMIT))
+/*
+ * Conservative estimate of the number of words required for
+ * erts_extract_sub_binary() when the number of bits is unknown.
+ */
+#define EXTRACT_SUB_BIN_HEAP_NEED \
+    (MAX(ERL_SUB_BIN_SIZE, heap_bin_size(ERL_ONHEAP_BIN_LIMIT)))
 
 /*
- * Flags for bs_get_* / bs_put_* / bs_init* instructions.
+ * Flags for bs_create_bin / bs_get_* / bs_put_* / bs_init* instructions.
  */
 
 #define BSF_ALIGNED 1		/* Field is guaranteed to be byte-aligned. */
@@ -205,5 +227,25 @@ Eterm erts_extract_sub_binary(Eterm **hp, Eterm base_bin, byte *base_data,
 #define BSF_SIGNED 4		/* Field is signed (otherwise unsigned). */
 #define BSF_EXACT 8		/* Size in bs_init is exact. */
 #define BSF_NATIVE 16		/* Native endian. */
+
+/*
+ * Binary construction operations.
+ */
+
+#define BSC_APPEND              0
+#define BSC_PRIVATE_APPEND      1
+#define BSC_BINARY              2
+#define BSC_BINARY_FIXED_SIZE   3
+#define BSC_BINARY_ALL          4
+#define BSC_FLOAT               5
+#define BSC_FLOAT_FIXED_SIZE    6
+#define BSC_INTEGER             7
+#define BSC_INTEGER_FIXED_SIZE  8
+#define BSC_STRING              9
+#define BSC_UTF8               10
+#define BSC_UTF16              11
+#define BSC_UTF32              12
+
+#define BSC_NUM_ARGS            5
 
 #endif /* __ERL_BITS_H__ */

@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2004</year><year>2020</year>
+      <year>2004</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -503,6 +503,24 @@ notification_delivery_info() = #snmpa_notification_delivery_info{}
       <desc>
         <p>Retrieve all tables known to the agent.</p>
 
+        <marker id="which_transports"></marker>
+      </desc>
+    </func>
+
+    <func>
+      <name since="OTP 23.3">which_transports() -> Result</name>
+      <fsummary>Get all configured transports</fsummary>
+      <type>
+        <v>Result = [{TDomain, TAddress} | {TDomain, TAddress, Kind}]</v>
+        <v>TDomain = transportDomainUdpIpv4 | transportDomainUdpIpv6</v>
+        <v>TAddress = {IpAddr, IpPort}</v>
+        <v>IpAddr = inet:ip_address()</v>
+        <v>IpPort = pos_integer()</v>
+        <v>Kind = req_responder | trap_sender</v>
+      </type>
+      <desc>
+        <p>Retrieve all configured transports.</p>
+
         <marker id="which_variables"></marker>
       </desc>
     </func>
@@ -569,7 +587,7 @@ notification_delivery_info() = #snmpa_notification_delivery_info{}
 	<c>LogName</c> defaults to "snmpa_log". 
 	<c>LogFile</c> defaults to "snmpa.log". </p>
 	<p>The <c>Block</c> option indicates if the log should be blocked
-	during conversion. This could be usefull when converting large 
+	during conversion. This could be useful when converting large 
 	logs (when otherwise the log could wrap during conversion). 
 	Defaults to <c>true</c>. </p>
 	<p>See <seeerl marker="snmp#log_to_txt">snmp:log_to_txt</seeerl> 
@@ -610,7 +628,7 @@ notification_delivery_info() = #snmpa_notification_delivery_info{}
 	<c>LogName</c> defaults to "snmpa_log". 
 	<c>LogFile</c> defaults to "snmpa.log".</p>
 	<p>The <c>Block</c> option indicates if the log should be blocked
-	during conversion. This could be usefull when converting large 
+	during conversion. This could be useful when converting large 
 	logs (when otherwise the log could wrap during conversion). 
 	Defaults to <c>true</c>. </p>
 	<p>See <seeerl marker="snmp#log_to_io">snmp:log_to_io</seeerl> 
@@ -754,7 +772,7 @@ notification_delivery_info() = #snmpa_notification_delivery_info{}
         <v>Agent = pid() | atom()</v>
       </type>
       <desc>
-        <p>Retreive the size of the mib server cache. </p>
+        <p>Retrieve the size of the mib server cache. </p>
 
         <marker id="gc_mibs_cache"></marker>
       </desc>
@@ -1086,7 +1104,7 @@ snmp_agent:register_subagent(SA1,[1,2,3], SA2).
 	</list>
 
 	<p>The 'process oid' "tag" that can be provided with the
-	variable name / oids is indended to be used for oid post
+	variable name / oids is intended to be used for oid post
 	processing. The value '<c>keep</c>', which is the default, leaves
 	the oid as is. The value '<c>truncate</c>', will cause the oid
 	to be "truncated". That is, any trailing ".0" will be removed. </p>
@@ -1108,8 +1126,8 @@ snmp_agent:register_subagent(SA1,[1,2,3], SA2).
 	  of this data, with one exception: 
 	  Any tuple containing the atom 
 	  <c>snmpa_default_notification_extra_info</c> 
-	  may be used by the agent and is therefor <em>reserved</em>. </p>
-	  <p>See the net-if incomming messages for sending a 
+	  may be used by the agent and is therefore <em>reserved</em>. </p>
+	  <p>See the net-if incoming messages for sending a 
 	  <seeguide marker="snmp_agent_netif#im_send_pdu">
 	  trap</seeguide> and 
 	  <seeguide marker="snmp_agent_netif#im_send_pdu_req">

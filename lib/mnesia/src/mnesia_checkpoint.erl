@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1996-2018
+%% Copyright Ericsson AB 1996-2024
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -306,7 +306,7 @@ really_retain(Name, Tab) ->
 %%
 %% {min, MinTabs}
 %%   Minimize redundancy and only keep checkpoint info together with
-%%   one replica, preferrably at the local node. If any node involved
+%%   one replica, preferably at the local node. If any node involved
 %%   the checkpoint goes down, the checkpoint is deactivated.
 %%
 %% {max, MaxTabs}
@@ -319,7 +319,7 @@ really_retain(Name, Tab) ->
 %% {ram_overrides_dump, Tabs}
 %%   Only applicable for ram_copies. Bool controls which versions of
 %%   the records that should be included in the checkpoint state.
-%%   true means that the latest comitted records in ram (i.e. the
+%%   true means that the latest committed records in ram (i.e. the
 %%   records that the application accesses) should be included
 %%   in the checkpoint. false means that the records dumped to
 %%   dat-files (the records that will be loaded at startup) should
@@ -579,7 +579,7 @@ call(Name, Msg) ->
 		{'DOWN', Monitor, _, Pid, Reason} ->
 		    {error, {"Got exit", [Name, Reason]}};
 		{Name, Self, Reply} ->
-		    erlang:demonitor(Monitor),
+                    erlang:demonitor(Monitor, [flush]),
 		    Reply
 	    end;
 	Error ->
@@ -617,24 +617,29 @@ init(Cp) ->
     Name = Cp#checkpoint_args.name,
     Props = [set, public, {keypos, 2}],
     try ?ets_new_table(mnesia_pending_checkpoint, Props) of
-	PendingTab ->
-	    Rs = [prepare_tab(Cp, R) || R <- Cp#checkpoint_args.retainers],
-	    Cp2 = Cp#checkpoint_args{retainers = Rs,
-				pid = self(),
-				pending_tab = PendingTab},
-	    add(pending_checkpoint_pids, self()),
-	    add(pending_checkpoints, PendingTab),
-	    set({checkpoint, Name}, self()),
-	    add(checkpoints, Name),
-	    dbg_out("Checkpoint ~p (~p) started~n", [Name, self()]),
-	    proc_lib:init_ack(Cp2#checkpoint_args.supervisor, {ok, self()}),
-	    retainer_loop(Cp2)
+        PendingTab ->
+            try [prepare_tab(Cp, R) || R <- Cp#checkpoint_args.retainers] of
+                Rs ->
+                    Cp2 = Cp#checkpoint_args{retainers = Rs,
+                                             pid = self(),
+                                             pending_tab = PendingTab},
+                    add(pending_checkpoint_pids, self()),
+                    add(pending_checkpoints, PendingTab),
+                    set({checkpoint, Name}, self()),
+                    add(checkpoints, Name),
+                    dbg_out("Checkpoint ~p (~p) started~n", [Name, self()]),
+                    proc_lib:init_ack(Cp2#checkpoint_args.supervisor, {ok, self()}),
+                    retainer_loop(Cp2)
+            catch exit:Reason ->
+                    proc_lib:init_ack(Cp#checkpoint_args.supervisor, {error, Reason})
+            end
     catch error:Reason -> %% system limit
 	    Msg = "Cannot create an ets table for pending transactions",
 	    Error = {error, {system_limit, Name, Msg, Reason}},
-	    proc_lib:init_ack(Cp#checkpoint_args.supervisor, Error)
+	    proc_lib:init_fail(
+              Cp#checkpoint_args.supervisor, Error, {exit, normal})
     end.
-    
+
 prepare_tab(Cp, R) ->
     Tab = R#retainer.tab_name,
     prepare_tab(Cp, R, val({Tab, storage_type})).
@@ -817,7 +822,6 @@ retainer_loop(Cp = #checkpoint_args{is_activated=false, name=Name}) ->
 	{From, deactivate} ->
 	    do_stop(Cp),
 	    reply(From, Name, deactivated),
-	    unlink(From),
 	    exit(shutdown);
 
 	{From, get_checkpoint} ->
@@ -920,7 +924,6 @@ retainer_loop(Cp = #checkpoint_args{name=Name}) ->
 	{From, deactivate} ->
 	    do_stop(Cp),
 	    reply(From, Name, deactivated),
-	    unlink(From),
 	    exit(shutdown);
 
 	{_From, {mnesia_down, Node}} ->

@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2002</year><year>2016</year>
+      <year>2002</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -394,7 +394,7 @@ check(stop) ->
 	    this way is then merged with all other traces.</p>
           <p>The autostart feature requires more data to be stored on
             traced nodes. By default, the data is stored automatically
-            to the file named "ttb_autostart.bin" in the currect working directory
+            to the file named "ttb_autostart.bin" in the current working directory
 	    (cwd) of the traced node.
             Users can change this behaviour (that is, on diskless
             nodes) by specifying their own module to handle autostart data

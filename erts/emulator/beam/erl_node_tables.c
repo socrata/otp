@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2001-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2001-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -152,8 +152,12 @@ dist_table_alloc(void *dep_tmpl)
     Eterm sysname;
     Binary *bin;
     DistEntry *dep;
+    Uint32 init_connection_id;
     erts_rwmtx_opt_t rwmtx_opt = ERTS_RWMTX_OPT_DEFAULT_INITER;
     rwmtx_opt.type = ERTS_RWMTX_TYPE_FREQUENT_READ;
+
+    init_connection_id = (Uint32) erts_get_monotonic_time(NULL);
+    init_connection_id &= ERTS_DIST_CON_ID_MASK;
 
     sysname = ((DistEntry *) dep_tmpl)->sysname;
 
@@ -175,7 +179,7 @@ dist_table_alloc(void *dep_tmpl)
     dep->creation                       = 0; /* undefined */
     dep->cid				= NIL;
     erts_atomic_init_nob(&dep->input_handler, (erts_aint_t) NIL);
-    dep->connection_id			= 0;
+    dep->connection_id			= init_connection_id;
     dep->state				= ERTS_DE_STATE_IDLE;
     dep->pending_nodedown               = 0;
     dep->suspended_nodeup               = NULL;
@@ -187,6 +191,8 @@ dist_table_alloc(void *dep_tmpl)
     erts_mtx_init(&dep->qlock, "dist_entry_out_queue", sysname,
         ERTS_LOCK_FLAGS_CATEGORY_DISTRIBUTION);
     erts_atomic32_init_nob(&dep->qflgs, 0);
+    erts_atomic32_init_nob(&dep->notify, 0);
+    erts_atomic_init_nob(&dep->total_qsize, 0);
     erts_atomic_init_nob(&dep->qsize, 0);
     erts_atomic64_init_nob(&dep->in, 0);
     erts_atomic64_init_nob(&dep->out, 0);
@@ -395,10 +401,13 @@ erts_build_dhandle(Eterm **hpp, ErlOffHeap* ohp,
 {
     Binary *bin = ErtsDistEntry2Bin(dep);
     Eterm mref, dhandle;
+    erts_aint_t refc;
     ASSERT(bin);
     ASSERT(ERTS_MAGIC_BIN_DESTRUCTOR(bin) == erts_dist_entry_destructor);
-    erts_refc_inc_if(&bin->intern.refc, 0, 0); /* inc for pending delete */
-    mref = erts_mk_magic_ref(hpp, ohp, bin);
+    mref = erts_mk_magic_ref_get_refc(hpp, ohp, bin, &refc);
+    if (refc < 2) {
+        erts_refc_inc(&bin->intern.refc, 2); /* inc for pending delete */
+    }
     dhandle = TUPLE2(*hpp, make_small(conn_id), mref);
     *hpp += 3;
     return dhandle;
@@ -722,8 +731,6 @@ erts_set_dist_entry_pending(DistEntry *dep)
 void
 erts_set_dist_entry_connected(DistEntry *dep, Eterm cid, Uint64 flags)
 {
-    erts_aint32_t set_qflgs;
-
     ASSERT(dep->mld);
 
     ERTS_LC_ASSERT(erts_lc_is_de_rwlocked(dep));
@@ -760,9 +767,6 @@ erts_set_dist_entry_connected(DistEntry *dep, Eterm cid, Uint64 flags)
 
     erts_atomic64_set_nob(&dep->in, 0);
     erts_atomic64_set_nob(&dep->out, 0);
-    set_qflgs = (is_internal_port(cid) ?
-                 ERTS_DE_QFLG_PORT_CTRL : ERTS_DE_QFLG_PROC_CTRL);
-    erts_atomic32_read_bor_nob(&dep->qflgs, set_qflgs);
 
     if(flags & DFLAG_PUBLISHED) {
 	dep->next = erts_visible_dist_entries;
@@ -881,6 +885,18 @@ erts_node_table_info(fmtfn_t to, void *to_arg)
 	erts_rwmtx_runlock(&erts_node_table_rwmtx);
 }
 
+ErlNode *erts_find_node(Eterm sysname, Uint32 creation)
+{
+    ErlNode *res;
+    ErlNode ne;
+    ne.sysname = sysname;
+    ne.creation = creation;
+
+    erts_rwmtx_rlock(&erts_node_table_rwmtx);
+    res = hash_get(&erts_node_table, (void *) &ne);
+    erts_rwmtx_runlock(&erts_node_table_rwmtx);
+    return res;
+}
 
 ErlNode *erts_find_or_insert_node(Eterm sysname, Uint32 creation, Eterm book)
 {
@@ -1511,7 +1527,7 @@ static void
 insert_offheap(ErlOffHeap *oh, int type, Eterm id)
 {
     union erl_off_heap_ptr u;
-    struct erts_tmp_aligned_offheap tmp;
+    union erts_tmp_aligned_offheap tmp;
     struct insert_offheap2_arg a;
     a.type = BIN_REF;
 
@@ -1564,6 +1580,20 @@ insert_offheap(ErlOffHeap *oh, int type, Eterm id)
     }
 }
 
+static ERTS_INLINE ErlHeapFragment *
+get_hidden_heap_frag(Eterm val)
+{
+    ErlHeapFragment *hfp;
+    if (is_immed(val))
+        hfp = NULL;
+    else {
+        ASSERT(is_CP(val));
+        hfp = (ErlHeapFragment *) cp_val(val);
+        ASSERT(hfp->alloc_size == hfp->used_size + 1);
+    }
+    return hfp;
+}
+
 static void insert_monitor_data(ErtsMonitor *mon, int type, Eterm id)
 {
     ErtsMonitorData *mdp = erts_monitor_to_data(mon);
@@ -1577,6 +1607,23 @@ static void insert_monitor_data(ErtsMonitor *mon, int type, Eterm id)
                 ERTS_INIT_OFF_HEAP(&oh);
                 oh.first = mdep->uptr.ohhp;
                 insert_offheap(&oh, type, id);
+            }
+            if (mdp->origin.flags & ERTS_ML_FLG_TAG) {
+                ErlHeapFragment *hfp;
+                Eterm tag_storage;
+                if (mdp->origin.flags & ERTS_ML_FLG_EXTENDED)
+                    tag_storage = ((ErtsMonitorDataExtended *) mdp)->heap[0];
+                else
+                    tag_storage = ((ErtsMonitorDataTagHeap *) mdp)->heap[0];
+                hfp = get_hidden_heap_frag(tag_storage);
+                if (hfp)
+                    insert_offheap(&hfp->off_heap, type, id);
+            }
+            if (mdp->origin.flags & ERTS_ML_FLG_SPAWN_PENDING) {
+                ErtsMonitorDataExtended *mdep = (ErtsMonitorDataExtended *) mdp;
+                ErlHeapFragment *hfp = get_hidden_heap_frag(mdep->u.name);
+                if (hfp)
+                    insert_offheap(&hfp->off_heap, type, id);
             }
         }
     }
@@ -1605,6 +1652,9 @@ insert_dist_monitors(DistEntry *dep)
                                   insert_monitor,
                                   (void *) &dep->sysname);
         erts_monitor_tree_foreach(dep->mld->orig_name_monitors,
+                                  insert_monitor,
+                                  (void *) &dep->sysname);
+        erts_monitor_tree_foreach(dep->mld->dist_pend_spawn_exit,
                                   insert_monitor,
                                   (void *) &dep->sysname);
     }
@@ -1641,18 +1691,21 @@ clear_visited_dist_monitors(DistEntry *dep)
 
 static void insert_link_data(ErtsLink *lnk, int type, Eterm id)
 {
-    ErtsLinkData *ldp = erts_link_to_data(lnk);
-    if ((ldp->a.flags & (ERTS_ML_FLG_DBG_VISITED
-                         | ERTS_ML_FLG_EXTENDED)) == ERTS_ML_FLG_EXTENDED) {
-        ErtsLinkDataExtended *ldep = (ErtsLinkDataExtended *) ldp;
-        if (ldep->ohhp) {
+    if ((lnk->flags & (ERTS_ML_FLG_DBG_VISITED
+                       | ERTS_ML_FLG_EXTENDED)) != ERTS_ML_FLG_EXTENDED) {
+        lnk->flags |= ERTS_ML_FLG_DBG_VISITED;
+    }
+    else {
+        ErtsELink *elnk = erts_link_to_elink(lnk);
+        if (elnk->ohhp) {
             ErlOffHeap oh;
             ERTS_INIT_OFF_HEAP(&oh);
-            oh.first = ldep->ohhp;
+            oh.first = elnk->ohhp;
             insert_offheap(&oh, type, id);
         }
+        elnk->ld.proc.flags |= ERTS_ML_FLG_DBG_VISITED;
+        elnk->ld.dist.flags |= ERTS_ML_FLG_DBG_VISITED;
     }
-    ldp->a.flags |= ERTS_ML_FLG_DBG_VISITED;
 }
 
 static int insert_link(ErtsLink *lnk, void *idp, Sint reds)
@@ -1664,8 +1717,13 @@ static int insert_link(ErtsLink *lnk, void *idp, Sint reds)
 
 static int clear_visited_link(ErtsLink *lnk, void *p, Sint reds)
 {
-    ErtsLinkData *ldp = erts_link_to_data(lnk);
-    ldp->a.flags &= ~ERTS_ML_FLG_DBG_VISITED;
+    if (!(lnk->flags & ERTS_ML_FLG_EXTENDED))
+        lnk->flags &= ~ERTS_ML_FLG_DBG_VISITED;
+    else {
+        ErtsELink *elnk = erts_link_to_elink(lnk);
+        elnk->ld.proc.flags &= ~ERTS_ML_FLG_DBG_VISITED;
+        elnk->ld.dist.flags &= ~ERTS_ML_FLG_DBG_VISITED;
+    }
     return 1;
 }
 

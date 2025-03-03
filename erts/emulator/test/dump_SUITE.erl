@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@
 
 -export([all/0, suite/0, init_per_testcase/2, end_per_testcase/2]).
 
--export([signal_abort/1, exiting_dump/1, free_dump/1]).
+-export([signal_abort/1, exiting_dump/1, free_dump/1,
+         heart_dump/1, heart_no_dump/1]).
 
--export([load/0]).
+-export([load/1]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -35,7 +36,7 @@ suite() ->
      {timetrap, {minutes, 2}}].
 
 all() ->
-    [signal_abort, exiting_dump, free_dump].
+    [signal_abort, exiting_dump, free_dump, heart_dump, heart_no_dump].
 
 init_per_testcase(signal_abort, Config) ->
     SO = erlang:system_info(schedulers_online),
@@ -54,7 +55,7 @@ init_per_testcase(_, Config) ->
 
 
 end_per_testcase(_, Config) ->
-    Config.
+    erts_test_utils:ept_check_leaked_nodes(Config).
 
 %%%
 %%% The test cases -------------------------------------------------------------
@@ -66,21 +67,31 @@ signal_abort(Config) ->
 
     Dump = filename:join(proplists:get_value(priv_dir, Config),"signal_abort.dump"),
 
-    {ok, Node} = start_node(Config),
+    {ok, _Peer, Node} = ?CT_PEER(),
 
-    SO = rpc:call(Node, erlang, system_info, [schedulers_online]),
+    false = rpc:call(Node, erts_debug, set_internal_state,
+                     [available_internal_state, true]),
 
-    _P1 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (0 rem SO) + 1}]),
-    _P2 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (1 rem SO) + 1}]),
-    _P3 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (2 rem SO) + 1}]),
-    _P4 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (3 rem SO) + 1}]),
-    _P5 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (4 rem SO) + 1}]),
-    _P6 = spawn_opt(Node, ?MODULE, load, [], [{scheduler, (5 rem SO) + 1}]),
+    Iter = lists:seq(2, 3),
 
-    timer:sleep(500),
+    spawn_opt(Node,
+              fun() ->
+                      os:putenv("ERL_CRASH_DUMP", Dump),
+                      code:ensure_loaded(timer),
 
-    true = rpc:call(Node, os, putenv, ["ERL_CRASH_DUMP",Dump]),
-    rpc:call(Node, erlang, halt, ["dump"]),
+                      %% We spread the load on all schedulers except scheduler 1
+                      [spawn_opt(?MODULE, load, [self()], [{scheduler, I}])
+                       || I <- Iter],
+
+                      %% Make sure that each process is started
+                      [receive ok -> ok end || _ <- Iter],
+                      timer:sleep(500),
+                      erlang:halt("dump")
+              end,
+              [{scheduler,1},{priority,high}, monitor]),
+    receive
+        M -> ct:pal("~p",[M])
+    end,
 
     {ok, Bin} = get_dump_when_done(Dump),
 
@@ -94,8 +105,12 @@ signal_abort(Config) ->
 
     ok.
 
+load(Parent) ->
+    Parent ! ok,
+    load().
 load() ->
-    lists:seq(1,10000),
+    %% We generate load by sleeping
+    erts_debug:set_internal_state(sleep, 10),
     load().
 
 
@@ -103,7 +118,7 @@ load() ->
 exiting_dump(Config) when is_list(Config) ->
     Dump = filename:join(proplists:get_value(priv_dir, Config),"signal_abort.dump"),
 
-    {ok, Node} = start_node(Config),
+    {ok, _Peer, Node} = ?CT_PEER(),
 
     Self = self(),
 
@@ -114,12 +129,13 @@ exiting_dump(Config) when is_list(Config) ->
                                   [ets:insert(T,{I,I}) || I <- lists:seq(1,1000)]
                               end || _ <- lists:seq(1,1000)],
                              Self ! ready,
-                             receive ok -> ok end
+                             receive {terminate, Pid} -> Pid ! ok end
                      end),
 
     true = rpc:call(Node, os, putenv, ["ERL_CRASH_DUMP",Dump]),
 
-    receive ready -> unlink(Pid), Pid ! ok end,
+    receive ready -> unlink(Pid), Pid ! {terminate, self()} end,
+    receive ok -> ok end,
 
     rpc:call(Node, erlang, halt, ["dump"]),
 
@@ -139,8 +155,8 @@ exiting_dump(Config) when is_list(Config) ->
 free_dump(Config) when is_list(Config) ->
     Dump = filename:join(proplists:get_value(priv_dir, Config),"signal_abort.dump"),
 
-    {ok, NodeA} = start_node(Config),
-    {ok, NodeB} = start_node(Config),
+    {ok, _PeerA, NodeA} = ?CT_PEER(),
+    {ok, PeerB, NodeB} = ?CT_PEER(),
 
     Self = self(),
 
@@ -194,10 +210,30 @@ free_dump(Config) when is_list(Config) ->
 
     unlink(PidB),
 
-    rpc:call(NodeB, erlang, halt, [0]),
+    peer:stop(PeerB),
 
     ok.
 
+%% Test that crash dumping works when heart is used
+heart_dump(Config) ->
+    Dump = filename:join(proplists:get_value(priv_dir, Config),"heart.dump"),
+    {ok, _Peer, Node} = ?CT_PEER(#{ args => ["-heart"] }),
+    true = rpc:call(Node, os, putenv, ["ERL_CRASH_DUMP",Dump]),
+    true = rpc:call(Node, os, putenv, ["ERL_CRASH_DUMP_SECONDS","10"]),
+    rpc:call(Node, erlang, halt, ["dump"]),
+    {ok, _Bin} = get_dump_when_done(Dump),
+    ok.
+
+%% Test that there is no crash dump if heart is used and DUMP_SECONDS is not set
+heart_no_dump(Config) ->
+    Dump = filename:join(proplists:get_value(priv_dir, Config),"heart_no.dump"),
+    {ok, _Peer, Node} = ?CT_PEER(#{ args => ["-heart"] }),
+    true = rpc:call(Node, os, putenv, ["ERL_CRASH_DUMP",Dump]),
+    true = rpc:call(Node, os, unsetenv, ["ERL_CRASH_DUMP_SECONDS"]),
+    rpc:call(Node, erlang, halt, ["dump"]),
+    timer:sleep(1000),
+    {error, enoent} = file:read_file_info(Dump),
+    ok.
 
 get_dump_when_done(Dump) ->
     case file:read_file_info(Dump) of
@@ -211,21 +247,10 @@ get_dump_when_done(Dump) ->
 get_dump_when_done(Dump, Sz) ->
     timer:sleep(1000),
     case file:read_file_info(Dump) of
-        {ok, #file_info{ size = Sz }} ->
+        {ok, #file_info{ size = Sz }} when Sz > 1000 ->
             {ok, Bin} = file:read_file(Dump),
             ct:log("~s",[Bin]),
             {ok, Bin};
         {ok, #file_info{ size = NewSz }} ->
             get_dump_when_done(Dump, NewSz)
     end.
-
-start_node(Config) when is_list(Config) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    Name = list_to_atom(atom_to_list(?MODULE)
-                        ++ "-"
-                        ++ atom_to_list(proplists:get_value(testcase, Config))
-                        ++ "-"
-                        ++ integer_to_list(erlang:system_time(second))
-                        ++ "-"
-                        ++ integer_to_list(erlang:unique_integer([positive]))),
-    test_server:start_node(Name, slave, [{args, "-pa "++Pa}]).

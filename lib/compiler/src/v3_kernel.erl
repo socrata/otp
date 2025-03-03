@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -78,15 +78,16 @@
 -export([module/2,format_error/1]).
 
 -import(lists, [all/2,droplast/1,flatten/1,foldl/3,foldr/3,
-                map/2,mapfoldl/3,member/2,
-		keyfind/3,keyreplace/4,
-                last/1,partition/2,reverse/1,
-                sort/1,sort/2,splitwith/2]).
+                map/2,mapfoldl/3,member/2,keyfind/3,last/1,
+                partition/2,reverse/1,sort/1,sort/2,
+                splitwith/2]).
 -import(ordsets, [add_element/2,intersection/2,
                   subtract/2,union/2,union/1]).
 
 -include("core_parse.hrl").
 -include("v3_kernel.hrl").
+
+%% Matches collapse max segment in v3_core.
 -define(EXPAND_MAX_SIZE_SEGMENT, 1024).
 
 %% These are not defined in v3_kernel.hrl.
@@ -113,12 +114,13 @@ copy_anno(Kdst, Ksrc) ->
                fargs=[] :: [#k_var{}],          %Arguments for current function
 	       vcount=0,			%Variable counter
 	       fcount=0,			%Fun counter
-               ds=cerl_sets:new() :: cerl_sets:set(), %Defined variables
+               ds=sets:new([{version, 2}]) :: sets:set(), %Defined variables
 	       funs=[],				%Fun functions
 	       free=#{},			%Free variables
 	       ws=[]   :: [warning()],		%Warnings.
                no_shared_fun_wrappers=false :: boolean(),
-               labels=cerl_sets:new()
+               no_min_max_bifs=false :: boolean(),
+               labels=sets:new([{version, 2}])
               }).
 
 -spec module(cerl:c_module(), [compile:option()]) ->
@@ -129,7 +131,9 @@ module(#c_module{anno=A,name=M,exports=Es,attrs=As,defs=Fs}, Options) ->
     Kes = map(fun (#c_var{name={_,_}=Fname}) -> Fname end, Es),
     NoSharedFunWrappers = proplists:get_bool(no_shared_fun_wrappers,
                                              Options),
-    St0 = #kern{no_shared_fun_wrappers=NoSharedFunWrappers},
+    NoMinMaxBifs = proplists:get_bool(no_min_max_bifs, Options),
+    St0 = #kern{no_shared_fun_wrappers=NoSharedFunWrappers,
+                no_min_max_bifs=NoMinMaxBifs},
     {Kfs,St} = mapfoldl(fun function/2, St0, Fs),
     {ok,#k_mdef{anno=A,name=M#c_literal.val,exports=Kes,attributes=Kas,
                 body=Kfs ++ St#kern.funs},sort(St#kern.ws)}.
@@ -163,7 +167,7 @@ function({#c_var{name={F,Arity}=FA},Body}, St0) ->
         %% the function. We use integers as variable names to avoid
         %% filling up the atom table when compiling huge functions.
         Count = cerl_trees:next_free_variable_name(Body),
-	St1 = St0#kern{func=FA,vcount=Count,fcount=0,ds=cerl_sets:new()},
+	St1 = St0#kern{func=FA,vcount=Count,fcount=0,ds=sets:new([{version, 2}])},
 	{#ifun{anno=Ab,vars=Kvs,body=B0},[],St2} = expr(Body, new_sub(), St1),
 	{B1,_,St3} = ubody(B0, return, St2),
 	%%B1 = B0, St3 = St2,				%Null second pass
@@ -232,25 +236,19 @@ gexpr_test_add(Ke, St0) ->
 %% expr(Cexpr, Sub, State) -> {Kexpr,[PreKexpr],State}.
 %%  Convert a Core expression, flattening it at the same time.
 
-expr(#c_var{anno=A0,name={Name,Arity}}=Fname, Sub, St) ->
-    Vs = [#c_var{name=list_to_atom("V" ++ integer_to_list(V))} ||
-             V <- integers(1, Arity)],
+expr(#c_var{anno=A,name={Name0,Arity}}=Fname, Sub, St) ->
     case St#kern.no_shared_fun_wrappers of
         false ->
-            %% Generate a (possibly shared) wrapper function for calling
-            %% this function.
-            Wrapper0 = ["-fun.",atom_to_list(Name),"/",integer_to_list(Arity),"-"],
-            Wrapper = list_to_atom(flatten(Wrapper0)),
-            Id = {id,{0,0,Wrapper}},
-            A = keyreplace(id, 1, A0, Id),
-            Fun = #c_fun{anno=A,vars=Vs,body=#c_apply{anno=A,op=Fname,args=Vs}},
-            expr(Fun, Sub, St);
+            Name = get_fsub(Name0, Arity, Sub),
+            {#k_local{anno=A,name=Name,arity=Arity},[],St};
         true ->
             %% For backward compatibility with OTP 22 and earlier,
             %% use the pre-generated name for the fun wrapper.
             %% There will be one wrapper function for each occurrence
             %% of `fun F/A`.
-            Fun = #c_fun{anno=A0,vars=Vs,body=#c_apply{anno=A0,op=Fname,args=Vs}},
+            Vs = [#c_var{name=list_to_atom("V" ++ integer_to_list(V))} ||
+                  V <- integers(1, Arity)],
+            Fun = #c_fun{anno=A,vars=Vs,body=#c_apply{anno=A,op=Fname,args=Vs}},
             expr(Fun, Sub, St)
     end;
 expr(#c_var{anno=A,name=V}, Sub, St) ->
@@ -275,8 +273,8 @@ expr(#c_binary{anno=A,segments=Cv}, Sub, St0) ->
 	{Kv,Ep,St1} ->
 	    {#k_binary{anno=A,segs=Kv},Ep,St1}
     catch
-	throw:bad_element_size ->
-	    St1 = add_warning(get_line(A), bad_segment_size, A, St0),
+	throw:{bad_segment_size,Location} ->
+	    St1 = add_warning(Location, {failed,bad_segment_size}, A, St0),
 	    Erl = #c_literal{val=erlang},
 	    Name = #c_literal{val=error},
 	    Args = [#c_literal{val=badarg}],
@@ -328,15 +326,15 @@ expr(#c_call{anno=A,module=M0,name=F0,args=Cargs}, Sub, St0) ->
     Ar = length(Cargs),
     {[M,F|Kargs],Ap,St1} = atomic_list([M0,F0|Cargs], Sub, St0),
     Remote = #k_remote{mod=M,name=F,arity=Ar},
-    case call_type(M0, F0, Cargs) of
+    case call_type(M0, F0, Cargs, St1) of
         bif ->
             {#k_bif{anno=A,op=Remote,args=Kargs},Ap,St1};
         call ->
             {#k_call{anno=A,op=Remote,args=Kargs},Ap,St1};
         error ->
             %% Invalid call (e.g. M:42/3). Issue a warning, and let
-            %% the generated code use the old explict apply.
-            St = add_warning(get_line(A), bad_call, A, St0),
+            %% the generated code use the old explicit apply.
+            St = add_warning(get_location(A), {failed,bad_call}, A, St0),
 	    Call = #c_call{anno=A,
 			   module=#c_literal{val=erlang},
 			   name=#c_literal{val=apply},
@@ -362,7 +360,9 @@ expr(#c_try{anno=A,arg=Ca,vars=Cvs,body=Cb,evars=Evs,handler=Ch}, Sub0, St0) ->
 	    evars=Kevs,handler=pre_seq(Ph, Kh)},[],St5};
 expr(#c_catch{anno=A,body=Cb}, Sub, St0) ->
     {Kb,Pb,St1} = body(Cb, Sub, St0),
-    {#k_catch{anno=A,body=pre_seq(Pb, Kb)},[],St1}.
+    {#k_catch{anno=A,body=pre_seq(Pb, Kb)},[],St1};
+expr(#c_opaque{anno=A,val=V}, _, St) ->
+    {#k_opaque{anno=A,val=V},[],St}.
 
 %% Implement letrec in the traditional way as a local
 %% function for each definition in the letrec.
@@ -390,57 +390,74 @@ letrec_local_function(A, Cfs, Cb, Sub0, St0) ->
 %% Implement letrec with the single definition as a label and each
 %% apply of it as a goto.
 
-letrec_goto([{#c_var{name={Label,0}},Cfail}], Cb, Sub0,
+letrec_goto([{#c_var{name={Label,_Arity}},Cfail}], Cb, Sub0,
             #kern{labels=Labels0}=St0) ->
-    Labels = cerl_sets:add_element(Label, Labels0),
-    {Kb,Pb,St1} = body(Cb, Sub0, St0#kern{labels=Labels}),
-    #c_fun{body=FailBody} = Cfail,
-    {Kfail,Fb,St2} = body(FailBody, Sub0, St1),
+    #c_fun{vars=FunVars,body=FunBody} = Cfail,
+    {Kvars,{FunSub,St1}} =
+        mapfoldl(fun(#c_var{anno=A,name=V}, {SubInt,StInt0}) ->
+                         {New,StInt1} = new_var_name(StInt0),
+                         {#k_var{anno=A,name=New},
+                          {set_vsub(V, New, SubInt),
+                           StInt1#kern{ds=sets:add_element(New, StInt1#kern.ds)}}}
+                 end, {Sub0,St0}, FunVars),
+    Labels = sets:add_element(Label, Labels0),
+    {Kb,Pb,St2} = body(Cb, Sub0, St1#kern{labels=Labels}),
+    {Kfail,Fb,St3} = body(FunBody, FunSub, St2),
     case {Kb,Kfail,Fb} of
         {#k_goto{label=Label},#k_goto{}=InnerGoto,[]} ->
-            {InnerGoto,Pb,St2};
+            {InnerGoto,Pb,St3};
         {_,_,_} ->
-            St3 = St2#kern{labels=Labels0},
-            Alt = #k_letrec_goto{label=Label,first=Kb,then=pre_seq(Fb, Kfail)},
-            {Alt,Pb,St3}
+            St4 = St3#kern{labels=Labels0},
+            Alt = #k_letrec_goto{label=Label,vars=Kvars,
+                                 first=Kb,then=pre_seq(Fb, Kfail)},
+            {Alt,Pb,St4}
     end.
 
 %% translate_match_fail(Arg, Sub, Anno, St) -> {Kexpr,[PreKexpr],State}.
-%%  Translate a match_fail primop to a call erlang:error/1 or
-%%  erlang:error/2.
+%%  Translate match_fail primops, paying extra attention to `function_clause`
+%%  errors that may have been inlined from other functions.
 
 translate_match_fail(Arg, Sub, Anno, St0) ->
-    Cargs = case {cerl:data_type(Arg),cerl:data_es(Arg)} of
-                {tuple,[#c_literal{val=function_clause}|As]} ->
-                    translate_fc_args(As, Sub, St0);
-                {_,_} ->
-                    [Arg]
-            end,
-    {Kargs,Ap,St} = atomic_list(Cargs, Sub, St0),
+    {Cargs,ExtraAnno,St1} =
+        case {cerl:data_type(Arg),cerl:data_es(Arg)} of
+            {tuple,[#c_literal{val=function_clause} | _]=As} ->
+                translate_fc_args(As, Sub, Anno, St0);
+            {tuple,[#c_literal{} | _]=As} ->
+                {As,[],St0};
+            {{atomic,Reason}, []} ->
+                {[#c_literal{val=Reason}],[],St0}
+        end,
+    {Kargs,Ap,St} = atomic_list(Cargs, Sub, St1),
     Ar = length(Cargs),
-    Call = #k_call{anno=Anno,
-                   op=#k_remote{mod=#k_literal{val=erlang},
-                                name=#k_literal{val=error},
-                                arity=Ar},args=Kargs},
-    {Call,Ap,St}.
+    Primop = #k_bif{anno=ExtraAnno ++ Anno,
+                    op=#k_internal{name=match_fail,arity=Ar},
+                    args=Kargs},
+    {Primop,Ap,St}.
 
-translate_fc_args(As, Sub, #kern{fargs=Fargs}) ->
-    case same_args(As, Fargs, Sub) of
-        true ->
-            %% The arguments for the `function_clause` exception are
-            %% the arguments for the current function in the correct
-            %% order.
-            [#c_literal{val=function_clause},cerl:make_list(As)];
-        false ->
-            %% The arguments in the `function_clause` exception don't
-            %% match the arguments for the current function because
-            %% of inlining. Keeping the `function_clause`
-            %% exception reason would be confusing. Rewrite it to
-            %% a `case_clause` exception with the arguments in a
-            %% tuple.
-	    [cerl:c_tuple([#c_literal{val=case_clause},
-                           cerl:c_tuple(As)])]
-    end.
+translate_fc_args(As, Sub, Anno, #kern{fargs=Fargs}=St0) ->
+    {ExtraAnno, St} =
+        case same_args(As, Fargs, Sub) of
+            true ->
+                %% The arguments for the `function_clause` exception are
+                %% the arguments for the current function in the correct
+                %% order.
+                {[], St0};
+            false ->
+                %% The arguments in the `function_clause` exception don't
+                %% match the arguments for the current function because of
+                %% inlining.
+                case keyfind(function, 1, Anno) of
+                     false ->
+                         {Name, St1} = new_fun_name("inlined", St0),
+                         {[{inlined,{Name,length(As) - 1}}], St1};
+                     {_,{Name0,Arity}} ->
+                         %% This is function that has been inlined.
+                         Name1 = ["-inlined-",Name0,"/",Arity,"-"],
+                         Name = list_to_atom(lists:concat(Name1)),
+                         {[{inlined,{Name,Arity}}], St0}
+                end
+        end,
+    {As, ExtraAnno, St}.
 
 same_args([#c_var{name=Cv}|Vs], [#k_var{name=Kv}|As], Sub) ->
     get_vsub(Cv, Sub) =:= Kv andalso same_args(Vs, As, Sub);
@@ -531,15 +548,24 @@ map_key_clean(#k_literal{val=V}) -> {lit,V}.
 
 %% call_type(Module, Function, Arity) -> call | bif | error.
 %%  Classify the call.
-call_type(#c_literal{val=M}, #c_literal{val=F}, As) when is_atom(M), is_atom(F) ->
+call_type(#c_literal{val=M}, #c_literal{val=F}, As, St) when is_atom(M), is_atom(F) ->
     case is_remote_bif(M, F, As) of
-	false -> call;
-	true -> bif
+	false ->
+            call;
+	true ->
+            %% The guard BIFs min/2 and max/2 were introduced in
+            %% Erlang/OTP 26. If we are compiling for an earlier
+            %% version, we must translate them as call instructions.
+            case {M,F,St#kern.no_min_max_bifs} of
+                {erlang,min,true} -> call;
+                {erlang,max,true} -> call;
+                {_,_,_} -> bif
+            end
     end;
-call_type(#c_var{}, #c_literal{val=A}, _) when is_atom(A) -> call;
-call_type(#c_literal{val=A}, #c_var{}, _) when is_atom(A) -> call;
-call_type(#c_var{}, #c_var{}, _) -> call;
-call_type(_, _, _) -> error.
+call_type(#c_var{}, #c_literal{val=A}, _, _) when is_atom(A) -> call;
+call_type(#c_literal{val=A}, #c_var{}, _, _) when is_atom(A) -> call;
+call_type(#c_var{}, #c_var{}, _, _) -> call;
+call_type(_, _, _, _) -> error.
 
 %% match_vars(Kexpr, State) -> {[Kvar],[PreKexpr],State}.
 %%  Force return from body into a list of variables.
@@ -557,10 +583,11 @@ match_vars(Ka, St0) ->
 %%  Transform application.
 
 c_apply(A, #c_var{anno=Ra,name={F0,Ar}}, Cargs, Sub, #kern{labels=Labels}=St0) ->
-    case Ar =:= 0 andalso cerl_sets:is_element(F0, Labels) of
+    case sets:is_element(F0, Labels) of
         true ->
             %% This is a goto to a label in a letrec_goto construct.
-            {#k_goto{label=F0},[],St0};
+            {Kargs,Ap,St1} = atomic_list(Cargs, Sub, St0),
+            {#k_goto{label=F0,args=Kargs},Ap,St1};
         false ->
             {Kargs,Ap,St1} = atomic_list(Cargs, Sub, St0),
             F1 = get_fsub(F0, Ar, Sub),         %Has it been rewritten
@@ -604,7 +631,7 @@ atomic_bin([#c_bitstr{anno=A,val=E0,size=S0,unit=U0,type=T,flags=Fs0}|Es0],
 	   Sub, St0) ->
     {E,Ap1,St1} = atomic(E0, Sub, St0),
     {S1,Ap2,St2} = atomic(S0, Sub, St1),
-    validate_bin_element_size(S1),
+    validate_bin_element_size(S1, A),
     U1 = cerl:concrete(U0),
     Fs1 = cerl:concrete(Fs0),
     {Es,Ap3,St3} = atomic_bin(Es0, Sub, St2),
@@ -616,13 +643,13 @@ atomic_bin([#c_bitstr{anno=A,val=E0,size=S0,unit=U0,type=T,flags=Fs0}|Es0],
      Ap1++Ap2++Ap3,St3};
 atomic_bin([], _Sub, St) -> {#k_bin_end{},[],St}.
 
-validate_bin_element_size(#k_var{}) -> ok;
-validate_bin_element_size(#k_literal{val=Val}) ->
+validate_bin_element_size(#k_var{}, _Anno) -> ok;
+validate_bin_element_size(#k_literal{val=Val}, Anno) ->
     case Val of
         all -> ok;
         undefined -> ok;
         _ when is_integer(Val), Val >= 0 -> ok;
-        _ -> throw(bad_element_size)
+        _ -> throw({bad_segment_size,get_location(Anno)})
     end.
 
 %% atomic_list([Cexpr], Sub, State) -> {[Kexpr],[PreKexpr],State}.
@@ -664,15 +691,15 @@ force_variable(Ke, St0) ->
 %%  handling.
 
 pattern(#c_var{anno=A,name=V}, _Isub, Osub, St0) ->
-    case cerl_sets:is_element(V, St0#kern.ds) of
+    case sets:is_element(V, St0#kern.ds) of
 	true ->
 	    {New,St1} = new_var_name(St0),
 	    {#k_var{anno=A,name=New},
 	     set_vsub(V, New, Osub),
-	     St1#kern{ds=cerl_sets:add_element(New, St1#kern.ds)}};
+	     St1#kern{ds=sets:add_element(New, St1#kern.ds)}};
 	false ->
 	    {#k_var{anno=A,name=V},Osub,
-	     St0#kern{ds=cerl_sets:add_element(V, St0#kern.ds)}}
+	     St0#kern{ds=sets:add_element(V, St0#kern.ds)}}
     end;
 pattern(#c_literal{anno=A,val=Val}, _Isub, Osub, St) ->
     {#k_literal{anno=A,val=Val},Osub,St};
@@ -1064,16 +1091,26 @@ maybe_add_warning(Ke, MatchAnno, St) ->
 	    St;
 	false ->
 	    Anno = get_kanno(Ke),
-	    Line = get_line(Anno),
+	    Line = get_location(Anno),
 	    MatchLine = get_line(MatchAnno),
 	    Warn = case MatchLine of
-		       none -> nomatch_shadow;
-		       _ -> {nomatch_shadow,MatchLine}
+		       none -> {nomatch,shadow};
+		       _ -> {nomatch,{shadow,MatchLine}}
 		   end,
 	    add_warning(Line, Warn, Anno, St)
     end.
-    
+
+get_location([Line|_]) when is_integer(Line) ->
+    Line;
+get_location([{Line, Column} | _T]) when is_integer(Line), is_integer(Column) ->
+    {Line,Column};
+get_location([_|T]) ->
+    get_location(T);
+get_location([]) ->
+    none.
+
 get_line([Line|_]) when is_integer(Line) -> Line;
+get_line([{Line, _Column} | _T]) when is_integer(Line) -> Line;
 get_line([_|T]) -> get_line(T);
 get_line([]) -> none.
 
@@ -1204,7 +1241,7 @@ expand_pat_lit(Lit, A) ->
 %%  comparing with the literal (that is especially true for binaries).
 %%
 %%  It is important not to do this transformation for atomic literals
-%%  (such as `[]`), since that would cause the test for an emtpy list
+%%  (such as `[]`), since that would cause the test for an empty list
 %%  to be executed before the test for a nonempty list.
 
 opt_single_valued(Ttcs) ->
@@ -1352,8 +1389,9 @@ select_bin_int([#iclause{pats=[#k_bin_seg{anno=A,type=integer,
 	true -> throw(not_possible);
 	false -> ok
     end,
-    Cs = select_bin_int_1(Cs0, Bits, Fl, Val),
-    [{k_bin_int,[C#iclause{pats=[P|Ps]}|Cs]}];
+    Cs1 = [C#iclause{pats=[P|Ps]}|select_bin_int_1(Cs0, Bits, Fl, Val)],
+    Cs = reorder_bin_ints(Cs1),
+    [{k_bin_int,Cs}];
 select_bin_int(_) -> throw(not_possible).
 
 select_bin_int_1([#iclause{pats=[#k_bin_seg{anno=A,type=integer,
@@ -1395,6 +1433,67 @@ match_fun(Val) ->
     fun(match, {{integer,_,_},NewV,Bs}) when NewV =:= Val ->
 	    {match,Bs}
     end.
+
+reorder_bin_ints([_]=Cs) ->
+    Cs;
+reorder_bin_ints(Cs0) ->
+    %% It is safe to reorder clauses that match binaries if all
+    %% of the followings conditions are true:
+    %%
+    %% * The first segments for all of them match the same number of
+    %%   bits (guaranteed by caller).
+    %%
+    %% * All segments have fixed sizes.
+    %%
+    %% * The patterns that follow are also safe to re-order.
+    try
+        Cs = sort([{reorder_bin_int_sort_key(C),C} || C <- Cs0]),
+        [C || {_,C} <- Cs]
+    catch
+        throw:not_possible ->
+            Cs0
+    end.
+
+reorder_bin_int_sort_key(#iclause{pats=[Pat|More],guard=#c_literal{val=true}}) ->
+    case all(fun(#k_var{}) -> true;
+                (_) -> false
+             end, More) of
+        true ->
+            %% Only variables. Safe to re-order.
+            ok;
+        false ->
+            %% Not safe to re-order. For example:
+            %%    f([<<"prefix">>, <<"action">>]) -> ...
+            %%    f([<<"prefix">>, Variable]) -> ...
+            throw(not_possible)
+    end,
+
+    %% Ensure that the remaining segments have fixed sizes. For example, the following
+    %% clauses are not safe to re-order:
+    %%    f(<<"dd",_/binary>>) -> dd;
+    %%    f(<<"d",_/binary>>) -> d.
+    ensure_fixed_size(Pat#k_bin_int.next),
+
+    case Pat of
+        #k_bin_int{val=Val,next=#k_bin_end{}} ->
+            %% Sort before clauses with additional segments. This usually results in
+            %% better code.
+            [Val];
+        #k_bin_int{val=Val} ->
+            [Val,more]
+    end;
+reorder_bin_int_sort_key(#iclause{}) ->
+    throw(not_possible).
+
+ensure_fixed_size(#k_bin_seg{size=Size,next=Next}) ->
+    case Size of
+        #k_literal{val=Sz} when is_integer(Sz) ->
+            ensure_fixed_size(Next);
+        _ ->
+            throw(not_possible)
+    end;
+ensure_fixed_size(#k_bin_end{}) ->
+    ok.
 
 %% match_value([Var], Con, [Clause], Default, State) -> {SelectExpr,State}.
 %%  At this point all the clauses have the same constructor, we must
@@ -1444,7 +1543,7 @@ partition_intersection(_, Us, Cs, St) ->
 
 partition_keys(#k_map{es=Pairs}=Map, Ks) ->
     F = fun(#k_map_pair{key=Key}) ->
-                cerl_sets:is_element(map_key_clean(Key), Ks)
+                sets:is_element(map_key_clean(Key), Ks)
         end,
     {Ps1,Ps2} = partition(F, Pairs),
     {Map#k_map{es=Ps1},Map#k_map{es=Ps2}};
@@ -1454,12 +1553,12 @@ partition_keys(#ialias{pat=Map}=Alias, Ks) ->
     {Map1,Alias#ialias{pat=Map2}}.
 
 find_key_intersection(Ps) ->
-    Sets = [cerl_sets:from_list(Ks) || Ks <- Ps],
-    Intersection = cerl_sets:intersection(Sets),
-    case cerl_sets:size(Intersection) of
-        0 ->
+    Sets = [sets:from_list(Ks, [{version, 2}]) || Ks <- Ps],
+    Intersection = sets:intersection(Sets),
+    case sets:is_empty(Intersection) of
+        true ->
             none;
-        _ ->
+        false ->
             All = all(fun (Kset) -> Kset =:= Intersection end, Sets),
             case All of
                 true ->
@@ -1489,9 +1588,7 @@ group_value(_, Us, Cs) ->
     Map = group_values(Cs, #{}),
     %% We must sort the grouped values to ensure consistent
     %% order from compilation to compilation.
-    sort(maps:fold(fun (_, Vcs, Css) ->
-                           [{Us,reverse(Vcs)}|Css]
-                   end, [], Map)).
+    sort([{Us,reverse(Vcs)} || _ := Vcs <- Map]).
 
 group_values([C|Cs], Acc) ->
     Val = clause_val(C),
@@ -1598,7 +1695,7 @@ new_clauses(Cs0, U, St) ->
 %%  will be grouped next.
 %%
 %%  We also try to not create too large groups. If we have too many clauses,
-%%  it is preferrable to match on 8-bits, select a branch, then match on the
+%%  it is preferable to match on 8-bits, select a branch, then match on the
 %%  next 8-bits, rather than match on 16-bits which would force us to have
 %%  to select to many values at the same time, which would not be efficient.
 %%
@@ -1811,8 +1908,9 @@ ubody(#ivalues{anno=A,args=As}, return, St) ->
 ubody(#ivalues{anno=A,args=As}, {break,_Vbs}, St) ->
     Au = lit_list_vars(As),
     {#k_break{anno=A,args=As},Au,St};
-ubody(#k_goto{}=Goto, _Br, St) ->
-    {Goto,[],St};
+ubody(#k_goto{args=As}=Goto, _Br, St) ->
+    Au = lit_list_vars(As),
+    {Goto,Au,St};
 ubody(E, return, St0) ->
     %% Enterable expressions need no trailing return.
     case is_enter_expr(E) of
@@ -1979,12 +2077,24 @@ uexpr(#ifun{anno=A,vars=Vs,body=B0}, {break,Rs}, St0) ->
 	    args=[Local|Fvs],
  	    ret=Rs},
      Free,add_local_function(Fun, St)};
-uexpr(#k_letrec_goto{anno=A,first=F0,then=T0}=MatchAlt, Br, St0) ->
+uexpr(#k_local{anno=A,name=Name,arity=Arity}, {break,Rs}, St) ->
+    Free = lit_list_vars(get_free(Name, Arity, St)),
+    Fvs = make_vars(Free),
+    FreeCount = length(Fvs),
+    Bif = #k_bif{anno=A,
+                 op=#k_internal{name=make_fun,arity=FreeCount+1},
+                 args=[#k_local{name=Name,arity=Arity+FreeCount} | Fvs],
+                 ret=Rs},
+    {Bif,Free,St};
+uexpr(#k_letrec_goto{anno=A,vars=Vs,first=F0,then=T0}=MatchAlt, Br, St0) ->
     Rs = break_rets(Br),
+    Ns = lit_list_vars(Vs),
     {F1,Fu,St1} = ubody(F0, Br, St0),
     {T1,Tu,St2} = ubody(T0, Br, St1),
-    Used = union(Fu, Tu),
+    Used = subtract(union(Fu, Tu), Ns),
     {MatchAlt#k_letrec_goto{anno=A,first=F1,then=T1,ret=Rs},Used,St2};
+uexpr(#k_opaque{}=O, _, St) ->
+    {O,[],St};
 uexpr(Lit, {break,Rs0}, St0) ->
     %% Transform literals to puts here.
     %%ok = io:fwrite("uexpr ~w:~p~n", [?LINE,Lit]),
@@ -2036,13 +2146,16 @@ break_rets(return) -> [].
 
 %% bif_returns(Op, [Ret], State) -> {[Ret],State}.
 
-bif_returns(#k_remote{mod=M,name=N,arity=Ar}, Rs, St0) ->
-    %%ok = io:fwrite("uexpr ~w:~p~n", [?LINE,{M,N,Ar,Rs}]),
-    {Ns,St1} = new_vars(bif_vals(M, N, Ar) - length(Rs), St0),
-    {Rs ++ Ns,St1};
+bif_returns(#k_internal{name=match_fail}, Rs, St) ->
+    %% This is only used for effect, and may have any number of returns.
+    {Rs,St};
 bif_returns(#k_internal{name=N,arity=Ar}, Rs, St0) ->
     %%ok = io:fwrite("uexpr ~w:~p~n", [?LINE,{N,Ar,Rs}]),
     {Ns,St1} = new_vars(bif_vals(N, Ar) - length(Rs), St0),
+    {Rs ++ Ns,St1};
+bif_returns(#k_remote{mod=M,name=N,arity=Ar}, Rs, St0) ->
+    %%ok = io:fwrite("uexpr ~w:~p~n", [?LINE,{M,N,Ar,Rs}]),
+    {Ns,St1} = new_vars(bif_vals(M, N, Ar) - length(Rs), St0),
     {Rs ++ Ns,St1}.
 
 %% ensure_return_vars([Ret], State) -> {[Ret],State}.
@@ -2124,7 +2237,8 @@ lit_vars(#k_bin_seg{size=Size,seg=S,next=N}) ->
     union(lit_vars(Size), union(lit_vars(S), lit_vars(N)));
 lit_vars(#k_tuple{es=Es}) ->
     lit_list_vars(Es);
-lit_vars(#k_literal{}) -> [].
+lit_vars(#k_literal{}) -> [];
+lit_vars(#k_opaque{}) -> [].
 
 lit_list_vars(Ps) ->
     foldl(fun (P, Vs) -> union(lit_vars(P), Vs) end, [], Ps).
@@ -2175,20 +2289,20 @@ integers(_, _) -> [].
 %%% Handling of errors and warnings.
 %%%
 
--type error() :: 'bad_call' | 'nomatch_shadow' | {'nomatch_shadow', integer()}.
+-type error() :: {'failed' | 'nomatch', term()}.
 
 -spec format_error(error()) -> string().
 
-format_error({nomatch_shadow,Line}) ->
+format_error({nomatch,{shadow,Line}}) ->
     M = io_lib:format("this clause cannot match because a previous clause at line ~p "
 		      "always matches", [Line]),
     flatten(M);
-format_error(nomatch_shadow) ->
+format_error({nomatch,shadow}) ->
     "this clause cannot match because a previous clause always matches";
-format_error(bad_call) ->
+format_error({failed,bad_call}) ->
     "invalid module and/or function name; this call will always fail";
-format_error(bad_segment_size) ->
-    "binary construction will fail because of a type mismatch".
+format_error({failed,bad_segment_size}) ->
+    "binary construction will fail because the size of a segment is invalid".
 
 add_warning(none, Term, Anno, #kern{ws=Ws}=St) ->
     File = get_file(Anno),

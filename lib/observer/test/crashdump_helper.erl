@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,8 +23,9 @@
          dump_maps/0,create_maps/0,
          create_binaries/0,create_sub_binaries/1,
          dump_persistent_terms/0,
-         create_persistent_terms/0]).
--compile(r20).
+         create_persistent_terms/0,
+         dump_global_literals/0]).
+-compile(r22).
 -include_lib("common_test/include/ct.hrl").
 
 n1_proc(N2,Creator) ->
@@ -36,7 +37,7 @@ n1_proc(Creator,N2,Pid2,Port2,L) when Pid2==x;length(L)<2->
 	P ->
 	    n1_proc(Creator,N2,Pid2,Port2,[P|L])
     end;
-n1_proc(Creator,_N2,Pid2,Port2,_L) ->
+n1_proc(Creator,N2,Pid2,Port2,_L) ->
     register(aaaaaaaa,self()),
     process_flag(save_calls,3),
     ets:new(cdv_test_ordset_table,[ordered_set]),
@@ -88,6 +89,7 @@ n1_proc(Creator,_N2,Pid2,Port2,_L) ->
     erlang:monitor(process,OtherPid),
     erlang:monitor(process,init), % named process
     erlang:monitor(process,Pid2),
+    monitor_node(N2, true),
 
     code:load_file(?MODULE),
 
@@ -207,3 +209,23 @@ create_persistent_terms() ->
     persistent_term:put({?MODULE,first}, {pid,42.0}),
     persistent_term:put({?MODULE,second}, [1,2,3]),
     {persistent_term:get({?MODULE,first}),persistent_term:get({?MODULE,second})}.
+
+%%%
+%%% Test dumping of global literals such as the tuple returned from os:type/0
+%%% (from OTP 23.1).
+%%%
+
+dump_global_literals() ->
+    Parent = self(),
+    F = fun() ->
+                register(aaaaaaaa_global_literals, self()),
+                put(global_literals, {os:type(),os:version()}),
+                Parent ! {self(),done},
+                receive _ -> ok end
+        end,
+    Pid = spawn_link(F),
+    receive
+        {Pid,done} ->
+            unlink(Pid),
+            {ok,Pid}
+    end.

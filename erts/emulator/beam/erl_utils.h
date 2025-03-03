@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2012-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2012-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 #include "sys.h"
 #include "atom.h"
 #include "erl_printf.h"
+#include "erl_term_hashing.h"
 
 struct process;
 
@@ -63,16 +64,11 @@ erts_current_interval_acqb(erts_interval_t *icp)
  */
 void erts_silence_warn_unused_result(long unused);
 
-
 int erts_fit_in_bits_int64(Sint64);
 int erts_fit_in_bits_int32(Sint32);
 int erts_fit_in_bits_uint(Uint);
 Sint erts_list_length(Eterm);
 int erts_is_builtin(Eterm, Eterm, int);
-Uint32 make_hash2(Eterm);
-Uint32 trapping_make_hash2(Eterm, Eterm*, struct process*);
-Uint32 make_hash(Eterm);
-Uint32 make_internal_hash(Eterm, Uint32 salt);
 
 void erts_save_emu_args(int argc, char **argv);
 Eterm erts_get_emu_args(struct process *c_p);
@@ -105,9 +101,10 @@ erts_bld_atom_2uint_3tup_list(Uint **hpp, Uint *szp, Sint length,
 
 void erts_init_utils(void);
 void erts_init_utils_mem(void);
+void erts_utils_sched_spec_data_init(void);
 
-erts_dsprintf_buf_t *erts_create_tmp_dsbuf(Uint);
 void erts_destroy_tmp_dsbuf(erts_dsprintf_buf_t *);
+erts_dsprintf_buf_t *erts_create_tmp_dsbuf(Uint) ERTS_ATTR_MALLOC_D(erts_destroy_tmp_dsbuf,1);
 
 int eq(Eterm, Eterm);
 
@@ -115,8 +112,8 @@ int eq(Eterm, Eterm);
 
 ERTS_GLB_INLINE Sint erts_cmp(Eterm, Eterm, int, int);
 ERTS_GLB_INLINE int erts_cmp_atoms(Eterm a, Eterm b);
+ERTS_GLB_INLINE Sint erts_cmp_flatmap_keys(Eterm, Eterm);
 
-Sint cmp(Eterm a, Eterm b);
 Sint erts_cmp_compound(Eterm, Eterm, int, int);
 
 #define CMP(A,B)                         erts_cmp(A,B,0,0)
@@ -234,6 +231,17 @@ ERTS_GLB_INLINE Sint erts_cmp(Eterm a, Eterm b, int exact, int eq_only) {
 
     return erts_cmp_compound(a,b,exact,eq_only);
 }
+
+/*
+ * Only to be used for the *internal* sort order of flatmap keys.
+ */
+ERTS_GLB_INLINE Sint erts_cmp_flatmap_keys(Eterm key_a, Eterm key_b) {
+    if (is_atom(key_a) && is_atom(key_b)) {
+        return key_a - key_b;
+    }
+    return erts_cmp(key_a, key_b, 1, 0);
+}
+
 
 #endif /* ERTS_GLB_INLINE_INCL_FUNC_DEF */
 

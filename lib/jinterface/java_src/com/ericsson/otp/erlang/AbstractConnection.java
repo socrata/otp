@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2017. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,8 +76,10 @@ public abstract class AbstractConnection extends Thread {
     protected static final int exitTTTag = 13;
     protected static final int regSendTTTag = 16;
     protected static final int exit2TTTag = 18;
+    protected static final int unlinkIdTag = 35;
+    protected static final int unlinkIdAckTag = 36;
 
-    // MD5 challenge messsage tags
+    // MD5 challenge message tags
     protected static final int ChallengeReply = 'r';
     protected static final int ChallengeAck = 'a';
     protected static final int ChallengeStatus = 's';
@@ -164,18 +166,12 @@ public abstract class AbstractConnection extends Thread {
             throws IOException, OtpAuthException {
         peer = other;
         localNode = self;
-        socket = null;
         int port;
 
         traceLevel = defaultLevel;
         setDaemon(true);
 
-        // now get a connection between the two...
-        port = OtpEpmd.lookupPort(peer);
-        if (port == 0)
-            throw new IOException("No remote node found - cannot connect");
-
-        // now find highest common dist value
+        // Find highest common dist value
         if (peer.proto != self.proto || self.distHigh < peer.distLow
                 || self.distLow > peer.distHigh) {
             throw new IOException("No common protocol found - cannot connect");
@@ -185,7 +181,21 @@ public abstract class AbstractConnection extends Thread {
         peer.distChoose = peer.distHigh > self.distHigh ? self.distHigh
                 : peer.distHigh;
 
-        doConnect(port);
+        // Now get a connection between the two nodes
+        if (self.transportFactory instanceof OtpGenericTransportFactory) {
+            // For alternative distribution protocols using a transport factory
+            // extending the OtpGenericTransportFactory class, the notion of
+            // socket port is not used so the remote node is not registered
+            // with Epmd.
+            doGenericConnect();
+
+        } else {
+            // Get the listening port of the remote node registered with Epmd
+            port = OtpEpmd.lookupPort(peer);
+            if (port == 0)
+                throw new IOException("No remote node found - cannot connect");
+            doPortConnect(port);
+        }
 
         name = peer.node();
         connected = true;
@@ -355,10 +365,8 @@ public abstract class AbstractConnection extends Thread {
     // link to pid
 
     /**
-     * Create a link between the local node and the specified process on the
-     * remote node. If the link is still active when the remote process
-     * terminates, an exit signal will be sent to this connection. Use
-     * {@link #sendUnlink unlink()} to remove the link.
+     *
+     * Send link signal to remote process.
      *
      * @param dest
      *            the Erlang PID of the remote process.
@@ -393,9 +401,8 @@ public abstract class AbstractConnection extends Thread {
     }
 
     /**
-     * Remove a link between the local node and the specified process on the
-     * remote node. This method deactivates links created with {@link #sendLink
-     * link()}.
+     *
+     * Send unlink signal to remote process.
      *
      * @param dest
      *            the Erlang PID of the remote process.
@@ -404,7 +411,8 @@ public abstract class AbstractConnection extends Thread {
      *                if the connection is not active or a communication error
      *                occurs.
      */
-    protected void sendUnlink(final OtpErlangPid from, final OtpErlangPid dest)
+    protected void sendUnlink(final OtpErlangPid from, final OtpErlangPid dest,
+                              long unlink_id)
             throws IOException {
         if (!connected) {
             throw new IOException("Not connected");
@@ -418,8 +426,9 @@ public abstract class AbstractConnection extends Thread {
         header.write1(version);
 
         // header
-        header.write_tuple_head(3);
-        header.write_long(unlinkTag);
+        header.write_tuple_head(4);
+        header.write_long(unlinkIdTag);
+        header.write_long(unlink_id);
         header.write_any(from);
         header.write_any(dest);
 
@@ -427,6 +436,44 @@ public abstract class AbstractConnection extends Thread {
         header.poke4BE(0, header.size() - 4);
 
         do_send(header);
+    }
+
+    /**
+     * Send unlink acknowledgment signal to remote process.
+     *
+     * @param dest
+     *            the Erlang PID of the remote process.
+     *
+     * @exception java.io.IOException
+     *                if the connection is not active or a communication error
+     *                occurs.
+     */
+    protected void sendUnlinkAck(final OtpErlangPid from, final OtpErlangPid dest,
+                                 long unlink_id)
+            throws IOException {
+        if (!connected) {
+            throw new IOException("Not connected");
+        }
+
+        @SuppressWarnings("resource")
+            final OtpOutputStream header = new OtpOutputStream(headerLen);
+
+        // preamble: 4 byte length + "passthrough" tag
+        header.write4BE(0); // reserve space for length
+        header.write1(passThrough);
+        header.write1(version);
+
+        // header
+        header.write_tuple_head(4);
+        header.write_long(unlinkIdAckTag);
+        header.write_long(unlink_id);
+        header.write_any(from);
+        header.write_any(dest);
+        // fix up length in preamble
+        header.poke4BE(0, header.size() - 4);
+
+        do_send(header);
+
     }
 
     /* used internally when "processes" terminate */
@@ -508,6 +555,11 @@ public abstract class AbstractConnection extends Thread {
                     // received tick? send tock!
                     if (len == 0) {
                         synchronized (this) {
+                            if (socket == null) {
+                                // protect from a potential thin race when the
+                                // connection to the remote node is closed
+                                throw new IOException("socket was closed");
+                            }
                             OutputStream out = socket.getOutputStream();
                             out.write(tock);
                             out.flush();
@@ -685,7 +737,21 @@ public abstract class AbstractConnection extends Thread {
                     from = (OtpErlangPid) head.elementAt(1);
                     to = (OtpErlangPid) head.elementAt(2);
 
-                    deliver(new OtpMsg(tag, from, to));
+                    deliver(new OtpMsg(tag, from, to, 0));
+                    break;
+
+                case unlinkIdTag: // { UNLINK_ID, UnlinkId, FromPid, ToPid}
+                case unlinkIdAckTag: // { UNLINK_ID_Ack, UnlinkId, FromPid, ToPid}
+                    if (traceLevel >= ctrlThreshold) {
+                        System.out.println("<- " + headerType(head) + " "
+                                + head);
+                    }
+
+                    long unlink_id = ((OtpErlangLong) head.elementAt(1)).longValue();
+                    from = (OtpErlangPid) head.elementAt(2);
+                    to = (OtpErlangPid) head.elementAt(3);
+
+                    deliver(new OtpMsg(tag, from, to, unlink_id));
                     break;
 
                 // absolutely no idea what to do with these, so we ignore
@@ -877,6 +943,12 @@ public abstract class AbstractConnection extends Thread {
         case unlinkTag:
             return "UNLINK";
 
+        case unlinkIdTag:
+            return "UNLINK_ID";
+
+        case unlinkIdAckTag:
+            return "UNLINK_ID_ACK";
+
         case regSendTag:
             return "REG_SEND";
 
@@ -970,27 +1042,51 @@ public abstract class AbstractConnection extends Thread {
         }
     }
 
-    protected void doConnect(final int port) throws IOException,
+    protected void doPortConnect(final int port) throws IOException,
             OtpAuthException {
         try {
             socket = peer.createTransport(peer.host(), port);
-
             if (traceLevel >= handshakeThreshold) {
                 System.out.println("-> MD5 CONNECT TO " + peer.host() + ":"
                         + port);
             }
+            doConnect();
+
+        } catch (final OtpAuthException ae) {
+            close();
+            throw ae;
+        } catch (final Exception e) {
+            close();
+            final IOException ioe = new IOException(
+                    "Cannot connect to peer node");
+            ioe.initCause(e);
+            throw ioe;
+        }
+    }
+
+    protected void doConnect() throws IOException, OtpAuthException {
             final int send_name_tag = sendName(peer.distChoose, localNode.flags,
-                                               localNode.creation);
+                                               localNode.creation());
             recvStatus();
             final int her_challenge = recvChallenge();
             final byte[] our_digest = genDigest(her_challenge,
                     localNode.cookie());
             final int our_challenge = genChallenge();
-            sendComplement(send_name_tag);
             sendChallengeReply(our_challenge, our_digest);
             recvChallengeAck(our_challenge);
             cookieOk = true;
             sendCookie = false;
+    }
+
+    protected void doGenericConnect() throws IOException,
+            OtpAuthException {
+        try {
+            socket = peer.createTransport(peer);
+            if (traceLevel >= handshakeThreshold) {
+                System.out.println("-> MD5 CONNECT TO " + peer.node());
+            }
+            doConnect();
+
         } catch (final OtpAuthException ae) {
             close();
             throw ae;
@@ -1067,54 +1163,21 @@ public abstract class AbstractConnection extends Thread {
         final OtpOutputStream obuf = new OtpOutputStream();
         final String str = localNode.node();
         int send_name_tag;
-        if (dist == 5) {
-            obuf.write2BE(1+2+4 + str.length());
-            send_name_tag = 'n';
-            obuf.write1(send_name_tag);
-            obuf.write2BE(dist);
-            obuf.write4BE(aflags);
-            obuf.write(str.getBytes());
-        }
-        else {
-            obuf.write2BE(1+8+4+2 + str.length());
-            send_name_tag = 'N';
-            obuf.write1(send_name_tag);
-            obuf.write8BE(aflags);
-            obuf.write4BE(creation);
-            obuf.write2BE(str.length());
-            obuf.write(str.getBytes());
-        }
+        obuf.write2BE(1+8+4+2 + str.length());
+        send_name_tag = 'N';
+        obuf.write1(send_name_tag);
+        obuf.write8BE(aflags);
+        obuf.write4BE(creation);
+        obuf.write2BE(str.length());
+        obuf.write(str.getBytes());
 
         obuf.writeToAndFlush(socket.getOutputStream());
 
         if (traceLevel >= handshakeThreshold) {
             System.out.println("-> " + "HANDSHAKE sendName" + " flags="
-                    + aflags + " dist=" + dist + " local=" + localNode);
+                    + aflags + " local=" + localNode);
         }
         return send_name_tag;
-    }
-
-    protected void sendComplement(final int send_name_tag)
-            throws IOException {
-
-        if (send_name_tag == 'n' &&
-            (peer.flags & AbstractNode.dFlagHandshake23) != 0) {
-            @SuppressWarnings("resource")
-            final OtpOutputStream obuf = new OtpOutputStream();
-            obuf.write2BE(1+4+4);
-            obuf.write1('c');
-            final int flagsHigh = (int)(localNode.flags >> 32);
-            obuf.write4BE(flagsHigh);
-            obuf.write4BE(localNode.creation);
-
-            obuf.writeToAndFlush(socket.getOutputStream());
-
-            if (traceLevel >= handshakeThreshold) {
-                System.out.println("-> " + "HANDSHAKE sendComplement" +
-                                   " flagsHigh=" + flagsHigh +
-                                   " creation=" + localNode.creation);
-            }
-        }
     }
 
     protected void sendChallenge(final long her_flags, final long our_flags,
@@ -1123,23 +1186,13 @@ public abstract class AbstractConnection extends Thread {
         @SuppressWarnings("resource")
         final OtpOutputStream obuf = new OtpOutputStream();
         final String str = localNode.node();
-        if ((her_flags & AbstractNode.dFlagHandshake23) == 0) {
-            obuf.write2BE(1+2+4+4 + str.length());
-            obuf.write1('n');
-            obuf.write2BE(5);
-            obuf.write4BE(our_flags & 0xffffffff);
-            obuf.write4BE(challenge);
-            obuf.write(str.getBytes());
-        }
-        else {
-            obuf.write2BE(1+8+4+4+2 + str.length());
-            obuf.write1('N');
-            obuf.write8BE(our_flags);
-            obuf.write4BE(challenge);
-            obuf.write4BE(localNode.creation);
-            obuf.write2BE(str.length());
-            obuf.write(str.getBytes());
-        }
+        obuf.write2BE(1+8+4+4+2 + str.length());
+        obuf.write1('N');
+        obuf.write8BE(our_flags);
+        obuf.write4BE(challenge);
+        obuf.write4BE(localNode.creation());
+        obuf.write2BE(str.length());
+        obuf.write(str.getBytes());
 
         obuf.writeToAndFlush(socket.getOutputStream());
 
@@ -1175,13 +1228,18 @@ public abstract class AbstractConnection extends Thread {
             final OtpInputStream ibuf = new OtpInputStream(tmpbuf, 0);
             byte[] tmpname;
             final int len = tmpbuf.length;
+            long flag_mask;
+
             send_name_tag = ibuf.read1();
             switch (send_name_tag) {
             case 'n':
-                apeer.distLow = apeer.distHigh = ibuf.read2BE();
-                if (apeer.distLow != 5)
+                if (ibuf.read2BE() != 5)
                     throw new IOException("Invalid handshake version");
                 apeer.flags = ibuf.read4BE();
+                flag_mask = (1L << 32) - 1;
+                if ((apeer.flags & AbstractNode.dFlagHandshake23) == 0)
+                    throw new IOException("Missing DFLAG_HANDSHAKE_23");
+                apeer.distLow = apeer.distHigh = 6;
                 tmpname = new byte[len - 7];
                 ibuf.readN(tmpname);
                 hisname = OtpErlangString.newString(tmpname);
@@ -1189,9 +1247,13 @@ public abstract class AbstractConnection extends Thread {
             case 'N':
                 apeer.distLow = apeer.distHigh = 6;
                 apeer.flags = ibuf.read8BE();
+                flag_mask = ~0L;
+                if ((apeer.flags & AbstractNode.dFlagMandatory25Digest) != 0) {
+                    apeer.flags |= AbstractNode.mandatoryFlags25;
+                }
                 if ((apeer.flags & AbstractNode.dFlagHandshake23) == 0)
                     throw new IOException("Missing DFLAG_HANDSHAKE_23");
-                apeer.creation = ibuf.read4BE();
+                apeer.setCreation(ibuf.read4BE());
                 int namelen = ibuf.read2BE();
                 tmpname = new byte[namelen];
                 ibuf.readN(tmpname);
@@ -1201,21 +1263,16 @@ public abstract class AbstractConnection extends Thread {
                 throw new IOException("Unknown remote node type");
             }
 
-            if ((apeer.flags & AbstractNode.dFlagExtendedReferences) == 0) {
+            if ((~apeer.flags & flag_mask & AbstractNode.mandatoryFlags) != 0) {
                 throw new IOException(
-                        "Handshake failed - peer cannot handle extended references");
-            }
-
-            if ((apeer.flags & AbstractNode.dFlagExtendedPidsPorts) == 0) {
-                throw new IOException(
-                        "Handshake failed - peer cannot handle extended pids and ports");
+                        "Handshake failed - peer cannot handle all mandatory capabilities");
             }
 
         } catch (final OtpErlangDecodeException e) {
             throw new IOException("Handshake failed - not enough data");
         }
 
-        final int i = hisname.indexOf('@', 0);
+        final int i = hisname.indexOf('@');
         apeer.node = hisname;
         apeer.alive = hisname.substring(0, i);
         apeer.host = hisname.substring(i + 1, hisname.length());
@@ -1237,23 +1294,16 @@ public abstract class AbstractConnection extends Thread {
             final OtpInputStream ibuf = new OtpInputStream(buf, 0);
             int namelen;
             switch (ibuf.read1()) {
-            case 'n':
-                if (peer.distChoose != 5)
-                    throw new IOException("Old challenge wrong version");
-                peer.distLow = peer.distHigh = ibuf.read2BE();
-                peer.flags = ibuf.read4BE();
-                if ((peer.flags & AbstractNode.dFlagHandshake23) != 0)
-                    throw new IOException("Old challenge unexpected DFLAG_HANDHAKE_23");
-                challenge = ibuf.read4BE();
-                namelen = buf.length - (1+2+4+4);
-                break;
             case 'N':
                 peer.distLow = peer.distHigh = peer.distChoose = 6;
                 peer.flags = ibuf.read8BE();
+                if ((peer.flags & AbstractNode.dFlagMandatory25Digest) != 0) {
+                    peer.flags |= AbstractNode.mandatoryFlags25;
+                }
                 if ((peer.flags & AbstractNode.dFlagHandshake23) == 0)
                     throw new IOException("New challenge missing DFLAG_HANDHAKE_23");
                 challenge = ibuf.read4BE();
-                peer.creation = ibuf.read4BE();
+                peer.setCreation(ibuf.read4BE());
                 namelen = ibuf.read2BE();
                 break;
             default:
@@ -1266,15 +1316,9 @@ public abstract class AbstractConnection extends Thread {
                 throw new IOException(
                         "Handshake failed - peer has wrong name: " + hisname);
             }
-
-            if ((peer.flags & AbstractNode.dFlagExtendedReferences) == 0) {
+            if ((peer.flags & AbstractNode.mandatoryFlags) != AbstractNode.mandatoryFlags) {
                 throw new IOException(
-                        "Handshake failed - peer cannot handle extended references");
-            }
-
-            if ((peer.flags & AbstractNode.dFlagExtendedPidsPorts) == 0) {
-                throw new IOException(
-                        "Handshake failed - peer cannot handle extended pids and ports");
+                        "Handshake failed - peer cannot handle all mandatory capabilities");
             }
 
         } catch (final OtpErlangDecodeException e) {
@@ -1292,8 +1336,7 @@ public abstract class AbstractConnection extends Thread {
 
     protected void recvComplement(int send_name_tag) throws IOException {
 
-        if (send_name_tag == 'n' &&
-            (peer.flags & AbstractNode.dFlagHandshake23) != 0) {
+        if (send_name_tag == 'n') {
             try {
                 final byte[] tmpbuf = read2BytePackage();
                 @SuppressWarnings("resource")
@@ -1303,8 +1346,11 @@ public abstract class AbstractConnection extends Thread {
 
                 final long flagsHigh = ibuf.read4BE();
                 peer.flags |= flagsHigh << 32;
-                peer.creation = ibuf.read4BE();
-
+                if ((~peer.flags & AbstractNode.mandatoryFlags) != 0) {
+                    throw new IOException("Handshake failed - peer missing" +
+                                          " mandatory capabilities");
+                }
+                peer.setCreation(ibuf.read4BE());
             } catch (final OtpErlangDecodeException e) {
                 throw new IOException("Handshake failed - not enough data");
             }

@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2018</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -53,8 +53,8 @@
     converts filenames back and forth to the native filename encoding
     (usually UTF-8, but UTF-16 on Windows).</p>
 
-    <p>The default mode depends on the operating system. Windows and
-    MacOS X enforce consistent filename encoding and therefore the
+    <p>The default mode depends on the operating system. Windows, MacOS X
+    and Android enforce consistent filename encoding and therefore the
     VM uses <c>utf8</c> mode.</p>
 
     <p>On operating systems with transparent naming (for example, all Unix
@@ -425,10 +425,16 @@ f.txt:  {person, "kalle", 25}.
     </func>
     <func>
       <name name="delete" arity="1" since=""/>
+      <name name="delete" arity="2" since="OTP 24.0"/>
       <fsummary>Delete a file.</fsummary>
+      <type name="delete_option"/>
       <desc>
         <p>Tries to delete file <c><anno>Filename</anno></c>.
           Returns <c>ok</c> if successful.</p>
+        <p>If the option <c>raw</c> is set, the file server is not called.
+           This can be useful in particular during the early boot stage when
+           the file server is not yet registered, to still be able to delete
+           local files.</p>
         <p>Typical error reasons:</p>
         <taglist>
           <tag><c>enoent</c></tag>
@@ -861,6 +867,12 @@ f.txt:  {person, "kalle", 25}.
 	      does probably not match the number of bytes that can be
 	      read from a compressed file.</p>
           </item>
+          <tag><c>compressed_one</c></tag>
+          <item>
+            <p>Read one member of a gzip compressed file.
+	      Option <c>compressed_one</c> can only be combined
+	      with <c>read</c>.</p>
+          </item>
           <tag><c>{encoding, Encoding}</c></tag>
           <item>
             <p>Makes the file perform automatic translation of characters to
@@ -982,6 +994,13 @@ f.txt:  {person, "kalle", 25}.
           An <c><anno>IoDevice</anno></c> returned from this call can be used
           as an argument to the I/O functions (see
           <seeerl marker="stdlib:io"><c>io(3)</c></seeerl>).</p>
+        <warning>
+          <p>While this function can be used to open any file, we recommend
+            against using it for NFS-mounted files, FIFOs, devices, or
+            similar since they can cause IO threads to hang forever.</p>
+          <p>If your application needs to interact with these kinds of files we
+            recommend breaking out those parts to a port program instead.</p>
+        </warning>
         <note>
           <p>In previous versions of <c>file</c>, modes were specified
             as one of the atoms <c>read</c>, <c>write</c>, or
@@ -1195,6 +1214,9 @@ f.txt:  {person, "kalle", 25}.
       <name name="pid2name" arity="1" since=""/>
       <fsummary>Return the name of the file handled by a pid.</fsummary>
       <desc>
+        <change>
+          <p>This function is deprecated and will be removed in Erlang/OTP 27.</p>
+        </change>
         <p>If <c><anno>Pid</anno></c> is an I/O device, that is, a pid returned from
           <c>open/2</c>, this function returns the filename, or rather:</p>
         <taglist>
@@ -1292,15 +1314,12 @@ f.txt:  {person, "kalle", 25}.
       <desc>
         <p>Combines <c>position/2</c> and <c>read/2</c> in one
           operation, which is more efficient than calling them one at a
-          time. If <c><anno>IoDevice</anno></c> is opened in <c>raw</c> mode,
-          some restrictions apply:</p>
-	  <list type="bulleted">
-	    <item><c><anno>Location</anno></c> is only allowed to be an
-            integer.</item>
-	    <item>The current position of the file is undefined after the
-	    operation.</item>
-	  </list>
-	  <p>As the position is specified as a byte-offset, take special caution
+          time.</p>
+	<p><c><anno>Location</anno></c> is only allowed to be an
+          integer for <c>raw</c> and <c>ram</c> modes.</p>
+	<p>The current position of the file after the operation
+	  is undefined for <c>raw</c> mode and unchanged for <c>ram</c> mode.</p>
+	<p>As the position is specified as a byte-offset, take special caution
 	  when working with files where <c>encoding</c> is set to something else
 	  than <c>latin1</c>, as not every byte position is a valid character
 	  boundary on such a file.</p>
@@ -1327,14 +1346,12 @@ f.txt:  {person, "kalle", 25}.
       <desc>
         <p>Combines <c>position/2</c> and <c>write/2</c> in one
           operation, which is more efficient than calling them one at a
-          time. If <c><anno>IoDevice</anno></c> has been opened in <c>raw</c> mode,
-          some restrictions apply:</p>
-	  <list type="bulleted">
-	    <item><c><anno>Location</anno></c> is only allowed to be an
-            integer.</item>
-	    <item>The current position of the file is undefined after the
-	    operation.</item>
-	  </list>
+          time.
+	</p>
+	<p><c><anno>Location</anno></c> is only allowed to be an
+          integer for <c>raw</c> and <c>ram</c> modes.</p>
+	<p>The current position of the file after the operation
+	  is undefined for <c>raw</c> mode and unchanged for <c>ram</c> mode.</p>
 	<p>When positioning in a file with other <c>encoding</c> than <c>latin1</c>,
 	caution must be taken to set the position on a correct character boundary.
 	For details, see <seemfa marker="#position/2"><c>position/2</c></seemfa>.</p>
@@ -1357,8 +1374,8 @@ f.txt:  {person, "kalle", 25}.
 	  read from the file, while the position in the file can be moved much more than
 	  this number when reading a Unicode file.</p>
 	  <p>Also, if <c>encoding</c> is set to something else than <c>latin1</c>,
-	  the <c>read/3</c> call fails if the data contains characters larger than 255,
-	  which is why module <seeerl marker="stdlib:io"><c>io(3)</c></seeerl>
+	  the <c>read/2</c> call fails if the data contains characters larger than 255,
+	  which is why <seemfa marker="stdlib:io#get_chars/3"><c>io:get_chars/3</c></seemfa>
 	  is to be preferred when reading such a file.</p>
 	  <p>The function returns:</p>
         <taglist>
@@ -1478,9 +1495,10 @@ f.txt:  {person, "kalle", 25}.
           <item>
             <p>Size of file in bytes.</p>
           </item>
-          <tag><c>type = device | directory | other | regular | symlink</c></tag>
+          <tag><c>type = device | directory | other | regular</c></tag>
           <item>
-            <p>The type of the file.</p>
+            <p>The type of the file. Can also contain <c>symlink</c> when returned
+              from <seemfa marker="#read_link_info/1">read_link_info/1,2</seemfa>.</p>
           </item>
           <tag><c>access = read | write | read_write | none</c></tag>
           <item>
@@ -1610,7 +1628,7 @@ f.txt:  {person, "kalle", 25}.
 	  raw line-oriented reading.</p>
 	  <p>If <c>encoding</c> is set to something else than <c>latin1</c>, the
 	  <c>read_line/1</c> call fails if the data contains characters larger than 255,
-	  why module <seeerl marker="stdlib:io"><c>io(3)</c></seeerl> is to be
+	  why <seemfa marker="stdlib:io#get_line/2"><c>io:get_line/2</c></seemfa> is to be
 	  preferred when reading such a file.</p>
 	  <p>The function returns:</p>
         <taglist>
@@ -1856,7 +1874,13 @@ f.txt:  {person, "kalle", 25}.
 	<c>0</c> all data after the specified <c>Offset</c> is sent.</p>
 	<p>The file used must be opened using the <c>raw</c> flag, and the process
 	calling <c>sendfile</c> must be the controlling process of the socket.
-	See <seemfa marker="gen_tcp#controlling_process/2"><c>gen_tcp:controlling_process/2</c></seemfa>.</p>
+	See <seemfa marker="gen_tcp#controlling_process/2"><c>gen_tcp:controlling_process/2</c></seemfa>
+        or module
+        <seemfa marker="socket#setopt/3"><c>socket</c>'s</seemfa>
+        <seetype marker="socket#otp_socket_option">
+          level <c>otp</c> socket option
+        </seetype>
+        <c>controlling_process</c>.</p>
 	<p>If the OS used does not support non-blocking <c>sendfile</c>, an
 	Erlang fallback using <seemfa marker="#read/2"><c>read/2</c></seemfa>
 	and <seemfa marker="gen_tcp#send/2"><c>gen_tcp:send/2</c></seemfa> is
@@ -1954,7 +1978,10 @@ f.txt:  {person, "kalle", 25}.
 	  <p>If the file is opened with <c>encoding</c> set to something else than
 	  <c>latin1</c>, each byte written can result in many bytes being written to
 	  the file, as the byte range 0..255 can represent anything between one and
-	  four bytes depending on value and UTF encoding type.</p>
+	  four bytes depending on value and UTF encoding type. If you want to write
+          <seetype marker="stdlib:unicode#chardata"><c>unicode:chardata()</c></seetype>
+          to the <c><anno>IoDevice</anno></c> you should use <seemfa marker="stdlib:io#put_chars/2">
+          <c>io:put_chars/2</c></seemfa> instead.</p>
         <p>Typical error reasons:</p>
         <taglist>
           <tag><c>ebadf</c></tag>
@@ -2165,7 +2192,7 @@ f.txt:  {person, "kalle", 25}.
       <item><c>espipe</c> - Invalid seek</item>
       <item><c>esrch</c> - No such process</item>
       <item><c>estale</c> - Stale remote file handle</item>
-      <item><c>exdev</c> - Cross-domain link</item>
+      <item><c>exdev</c> - Cross-device link</item>
     </list>
   </section>
 

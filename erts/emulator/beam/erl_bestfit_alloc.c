@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2003-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2003-2021. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,7 +52,6 @@
 #endif
 
 #define MIN_MBC_SZ		(16*1024)
-#define MIN_MBC_FIRST_FREE_SZ	(4*1024)
 
 #define TREE_NODE_FLG		(((Uint) 1) << 0)
 #define RED_FLG			(((Uint) 1) << 1)
@@ -179,7 +178,6 @@ erts_bfalc_start(BFAllctr_t *bfallctr,
 
     allctr->mbc_header_size		= sizeof(Carrier_t);
     allctr->min_mbc_size		= MIN_MBC_SZ;
-    allctr->min_mbc_first_free_size	= MIN_MBC_FIRST_FREE_SZ;
     allctr->min_block_size		= (bfinit->ao
 					   ? sizeof(RBTree_t)
 					   : sizeof(RBTreeList_t));
@@ -434,7 +432,8 @@ tree_delete(Allctr_t *allctr, Block_t *del)
 	y = z;
     else
 	/* Set y to z:s successor */
-	for(y = z->right; y->left; y = y->left);
+	for (y = z->right; y->left; y = y->left)
+            ;
     /* splice out y */
     x = y->left ? y->left : y->right;
     spliced_is_black = IS_BLACK(y);
@@ -736,7 +735,7 @@ bf_link_free_block(Allctr_t *allctr, Block_t *block)
 		    BF_LIST_PREV(BF_LIST_NEXT(x)) = blk;
 		BF_LIST_NEXT(x) = blk;
 
-		return; /* Finnished */
+		return; /* Finished */
 	    }
 	    else if (blk_sz < size) {
 		if (!x->left) {
@@ -1010,11 +1009,11 @@ static void print_tree(RBTree_t *, int);
 
 /*
  * Checks that the order between parent and children are correct,
- * and that the Red-Black Tree properies are satisfied. if size > 0,
+ * and that the Red-Black Tree properties are satisfied. if size > 0,
  * check_tree() returns a node that satisfies "best fit" resp.
  * "address order best fit".
  *
- * The Red-Black Tree properies are:
+ * The Red-Black Tree properties are:
  *   1. Every node is either red or black.
  *   2. Every leaf (NIL) is black.
  *   3. If a node is red, then both its children are black.

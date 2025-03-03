@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2010-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2010-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
          stop_service/1,
          add_transport/2,
          remove_transport/2,
+         which_transports/0,  which_transports/1,
+         which_watchdogs/0,   which_watchdogs/1,
+         which_connections/0, which_connections/1,
          subscribe/1,
          unsubscribe/1]).
 
@@ -36,6 +39,7 @@
 
 %% Information.
 -export([services/0,
+         is_service/1,
          peer_info/1,
          peer_find/1,
          service_info/2]).
@@ -65,7 +69,8 @@
               transport_ref/0,
               transport_opt/0,
               transport_pred/0,
-              call_opt/0]).
+              call_opt/0,
+              elapsed_time/0]).
 
 -export_type(['OctetString'/0,
               'Integer32'/0,
@@ -87,6 +92,7 @@
 -include_lib("diameter/include/diameter.hrl").
 -include("diameter_internal.hrl").
 
+
 %% ---------------------------------------------------------------------------
 %% start/0
 %% ---------------------------------------------------------------------------
@@ -98,6 +104,7 @@
 start() ->
     application:start(?APPLICATION).
 
+
 %% ---------------------------------------------------------------------------
 %% stop/0
 %% ---------------------------------------------------------------------------
@@ -108,6 +115,7 @@ start() ->
 
 stop() ->
     application:stop(?APPLICATION).
+
 
 %% ---------------------------------------------------------------------------
 %% start_service/2
@@ -121,6 +129,7 @@ start_service(SvcName, Opts)
   when is_list(Opts) ->
     diameter_config:start_service(SvcName, Opts).
 
+
 %% ---------------------------------------------------------------------------
 %% stop_service/1
 %% ---------------------------------------------------------------------------
@@ -129,18 +138,67 @@ start_service(SvcName, Opts)
    -> ok
     | {error, term()}.
 
+%% To handle possible race conditions we check whois and then wait...
+%% This should be simple, but just in case the function is called
+%% when there is no service actually running...
 stop_service(SvcName) ->
-    diameter_config:stop_service(SvcName).
+    case diameter_service:whois(SvcName) of
+        undefined ->
+            %% Nothing, so we just call stop to perform possible cleanup...
+            diameter_config:stop_service(SvcName);
+        _ ->
+            %% Note that the service may die/be killed just after we checked...
+            subscribe(SvcName),
+            Result = do_stop_service(SvcName),
+            unsubscribe(SvcName),
+            Result
+    end.
+
+do_stop_service(SvcName) ->
+    ok = diameter_config:stop_service(SvcName),
+    %% Now wait for the stop event
+    await_service_stop_event(SvcName),
+    %% And finally wait for the registry to be "flushed" (ugh!)...
+    diameter_service:await_service_cleanup(SvcName).
+    
+await_service_stop_event(SvcName) ->
+    receive
+        #diameter_event{service = SvcName,
+                        info    = stop} ->
+            ok
+    after 1000 ->
+            case diameter_service:whois(SvcName) of
+                undefined ->
+                    ok;
+                _Pid ->
+                    await_service_stop_event(SvcName)
+            end
+    end.
+
+
+%% ---------------------------------------------------------------------------
+%% is_service/1
+%% ---------------------------------------------------------------------------
+
+%% -doc false.
+-spec is_service(service_name())
+                -> boolean().
+
+is_service(SvcName) ->
+    (undefined =/= diameter_service:whois(SvcName)).
+
+
 
 %% ---------------------------------------------------------------------------
 %% services/0
 %% ---------------------------------------------------------------------------
 
 -spec services()
-   -> [service_name()].
+              -> [service_name()].
 
 services() ->
     [Name || {Name, _} <- diameter_service:services()].
+
 
 %% ---------------------------------------------------------------------------
 %% service_info/2
@@ -154,7 +212,7 @@ service_info(SvcName, Option) ->
     diameter_service:info(SvcName, Option).
 
 %% ---------------------------------------------------------------------------
-%% peer_info/2
+%% peer_info/1
 %% ---------------------------------------------------------------------------
 
 -spec peer_info(peer_ref())
@@ -195,6 +253,96 @@ add_transport(SvcName, {T, Opts} = Cfg)
 
 remove_transport(SvcName, Pred) ->
     diameter_config:remove_transport(SvcName, Pred).
+
+
+%% ---------------------------------------------------------------------------
+%% which_transport/0, which_transport/1
+%% ---------------------------------------------------------------------------
+
+-spec which_transports() -> [#{ref     := reference(),
+                               type    := atom(),
+                               service := string()}].
+which_transports() ->
+    diameter_config:which_transports().
+
+
+-spec which_transports(SvcName) -> [#{ref  := reference(),
+                                      type := atom()}] when
+      SvcName :: string().
+
+which_transports(SvcName) ->
+    diameter_config:which_transports(SvcName).
+
+
+%% ---------------------------------------------------------------------------
+%% which_watchdogs/0, which_watchdogs/1
+%% ---------------------------------------------------------------------------
+
+-spec which_watchdogs() -> [#{ref     := reference(),
+                              type    := atom(),
+                              pid     := pid(),
+                              state   := diameter_service:wd_state(),
+                              peer    := boolean() | pid(),
+                              uptime  := elapsed_time(),
+                              service := SvcName}] when
+      SvcName :: string().
+
+which_watchdogs() ->
+    diameter_service:which_watchdogs().
+
+
+-spec which_watchdogs(SvcName) ->
+          [#{ref     := reference(),
+             type    := atom(),
+             pid     := pid(),
+             state   := diameter_service:wd_state(),
+             peer    := boolean() | pid(),
+             uptime  := elapsed_time()}] when
+      SvcName :: string().
+
+which_watchdogs(SvcName) ->
+    diameter_service:which_watchdogs(SvcName).
+
+
+%% ---------------------------------------------------------------------------
+%% which_connections/0, which_connections/1
+%% ---------------------------------------------------------------------------
+
+-spec which_connections() ->
+          [{SvcName,
+            [#{peer     := PeerInfo,
+               wd       := WDInfo,
+               peername := {inet:ip_address(), inet:port_number()},
+               sockname := {inet:ip_address(), inet:port_number()}}]}] when
+      SvcName  :: string(),
+      PeerInfo :: #{pid    := pid(),
+                    uptime := elapsed_time()},
+      WDInfo   :: #{ref    := reference(),
+                    type   := atom(),
+                    pid    := pid(),
+                    state  := diameter_service:wd_state(),
+                    uptime := elapsed_time()}.
+
+which_connections() ->
+    diameter_service:which_connections().
+
+-spec which_connections(SvcName) ->
+          [#{peer     := PeerInfo,
+             wd       := WDInfo,
+             peername := {inet:ip_address(), inet:port_number()},
+             sockname := {inet:ip_address(), inet:port_number()}}] when
+      SvcName :: string(),
+      PeerInfo :: #{pid    := pid(),
+                    uptime := elapsed_time()},
+      WDInfo   :: #{ref    := reference(),
+                    type   := atom(),
+                    pid    := pid(),
+                    state  := diameter_service:wd_state(),
+                    uptime := elapsed_time()}.
+
+which_connections(SvcName) ->
+    diameter_service:which_connections(SvcName).
+
 
 %% ---------------------------------------------------------------------------
 %% subscribe/1
@@ -382,6 +530,7 @@ call(SvcName, App, Message) ->
     | {string_decode, boolean()}
     | {traffic_counters, boolean()}
     | {use_shared_peers, remotes()}
+    | {bins_info, boolean() | non_neg_integer()}
     | common_opt().
 
 -type application_opt()
@@ -437,3 +586,10 @@ call(SvcName, App, Message) ->
     | {filter, peer_filter()}
     | {peer, peer_ref()}
     | {timeout, 'Unsigned32'()}.
+
+-type elapsed_time() ::
+        {Hours     :: non_neg_integer(),
+         Mins      :: 0..59,
+         Secs      :: 0..59,
+         MicroSecs :: 0..999999}.
+

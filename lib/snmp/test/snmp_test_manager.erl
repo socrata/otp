@@ -1,7 +1,7 @@
 %% 
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2005-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2021. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -155,7 +155,7 @@ parse_opts(Opts) ->
     MgrDir  = get_opt(dir, get_opt(config,  MgrOpts, [])),
     
     
-    %% Retreive the agent configuration
+    %% Retrieve the agent configuration
     AgentConf   = get_opt(agent_config, Opts),
     AgentTarget = get_opt(agent_target, Opts),
     {MgrDir, MgrConf, MgrOpts, AgentTarget, AgentConf}.

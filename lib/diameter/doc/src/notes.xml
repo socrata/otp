@@ -11,14 +11,14 @@
 <header>
 <copyright>
 <year>2011</year>
-<year>2020</year>
+<year>2022</year>
 <holder>Ericsson AB. All Rights Reserved.</holder>
 </copyright>
 <legalnotice>
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
- 
+
     http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
@@ -42,6 +42,208 @@ Releases are listed in reverse chronological order, most recent
 first.</p>
 
 <!-- ===================================================================== -->
+
+<section><title>diameter 2.3.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Stop service has been made more synchronous.</p>
+          <p>
+	    Own Id: OTP-19206 Aux Id: ERIERL-1102 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.3.2.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Pick peer can now also handle request of type
+	    #diameter_packet{}.</p>
+          <p>
+	    Own Id: OTP-19090 Aux Id: PR-8399 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.3.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Reduce the impact of calling service_info by not counting
+	    the binaries (on the heap) info, This is done by
+	    introducing an option, bins_info, which controls this.</p>
+          <p>
+	    Own Id: OTP-19040 Aux Id: ERIERL-1060 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Replaced unintentional Erlang Public License 1.1 headers
+	    in some files with the intended Apache License 2.0
+	    header.</p>
+          <p>
+	    Own Id: OTP-18815 Aux Id: PR-7780 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.3</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Replace size/1 with either tuple_size/1 or byte_size/1</p>
+          <p>
+	    The <c>size/1</c> BIF is not optimized by the JIT, and
+	    its use can result in worse types for Dialyzer.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    tuple, <c>tuple_size/1</c> should always be preferred.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    binary, <c>byte_size/1</c> should be preferred. However,
+	    <c>byte_size/1</c> also accepts a bitstring (rounding up
+	    size to a whole number of bytes), so one must make sure
+	    that the call to <c>byte_size/</c> is preceded by a call
+	    to <c>is_binary/1</c> to ensure that bitstrings are
+	    rejected. Note that the compiler removes redundant calls
+	    to <c>is_binary/1</c>, so if one is not sure whether
+	    previous code had made sure that the argument is a
+	    binary, it does not harm to add an <c>is_binary/1</c>
+	    test immediately before the call to <c>byte_size/1</c>.</p>
+          <p>
+	    Own Id: OTP-18405 Aux Id:
+	    GH-6672,PR-6702,PR-6768,PR-6700,PR-6769,PR-6812,PR-6814 </p>
+        </item>
+        <item>
+          <p>
+	    Deprecates <c>dbg:stop_clear/0</c> because it is simply a
+	    function alias to <c>dbg:stop/0</c></p>
+          <p>
+	    Own Id: OTP-18478 Aux Id: GH-6903 </p>
+        </item>
+        <item>
+	    <p> The implementation has been fixed to use
+	    <c>proc_lib:init_fail/2,3</c> where appropriate, instead
+	    of <c>proc_lib:init_ack/1,2</c>. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18490 Aux Id: OTP-18471, GH-6339, PR-6843 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.2.7</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>There is a new configure option,
+	    <c>--enable-deterministic-build</c>, which will apply the
+	    <c>deterministic</c> compiler option when building
+	    Erlang/OTP. The <c>deterministic</c> option has been
+	    improved to eliminate more sources of non-determinism in
+	    several applications.</p>
+          <p>
+	    Own Id: OTP-18165 Aux Id: PR-5965 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.2.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix decode of non-IP address types; that is, of values of
+	    the derived AVP data format Address whose first two
+	    octets specify an address family other than 1 (IP) or 2
+	    (IP6). Such values have never been decoded, and were
+	    treated as decode errors. They're now decoded to a
+	    2-tuple of the integer() address family and binary()
+	    remaining octets, with no family-specific decode. The
+	    2-tuple distinguishes the decode from the 4-tuple and
+	    8-tuple IP address decodes. 2-tuples are also now
+	    encoded.</p>
+          <p>
+	    Note that even currently unassigned address families are
+	    decoded: only the reserved values, 0 and 65535, are
+	    treated as errors.</p>
+          <p>
+	    Own Id: OTP-17976 Aux Id: GH-5463 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.2.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>The compilation time is no longer recorded in BEAM
+	    files. There remained several undocumented functions that
+	    attempted to retrieve compilation times. Those have now
+	    been removed.</p>
+          <p>
+	    Own Id: OTP-17962</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>diameter 2.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The unordered option was ignored on a client
+	    diameter_sctp transport, causing all delivery to be
+	    ordered.</p>
+          <p>
+	    The association id was not specified to gen_sctp when
+	    requesting unordered delivery, causing the setting to be
+	    applied to the whole endpoint.</p>
+          <p>
+	    Thanks to Bengt Kleberg and Andreas Schultz.</p>
+          <p>
+	    Own Id: OTP-17366 Aux Id: GH-4775 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>diameter 2.2.3</title>
 
@@ -603,7 +805,7 @@ first.</p>
         </item>
         <item>
           <p>
-	    Update build scripts to not make assumtions about where
+	    Update build scripts to not make assumptions about where
 	    env, cp and perl are located.</p>
           <p>
 	    Own Id: OTP-13800</p>
@@ -870,7 +1072,7 @@ first.</p>
 	    connection over SCTP, and then TCP in case SCTP fails.
 	    Multiple module tuples can be paired with a single config
 	    tuple, but in this case the start order was reversed
-	    relative to the order in which the modules were specifed.</p>
+	    relative to the order in which the modules were specified.</p>
           <p>
 	    Own Id: OTP-12851</p>
         </item>

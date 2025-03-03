@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -128,12 +128,6 @@ typedef struct driver_data {
 
 #if defined(DEBUG)
 #define ERL_BUILD_TYPE_MARKER ".debug"
-#elif defined(PURIFY)
-#define ERL_BUILD_TYPE_MARKER ".purify"
-#elif defined(QUANTIFY)
-#define ERL_BUILD_TYPE_MARKER ".quantify"
-#elif defined(PURECOV)
-#define ERL_BUILD_TYPE_MARKER ".purecov"
 #elif defined(VALGRIND)
 #define ERL_BUILD_TYPE_MARKER ".valgrind"
 #else /* opt */
@@ -712,7 +706,7 @@ static ErlDrvData spawn_start(ErlDrvPort port_num, char* name,
                 if (res >= io_vector[i].iov_len)
                     res -= io_vector[i].iov_len;
                 else {
-                    driver_enq(port_num, io_vector[i].iov_base + res,
+                    driver_enq(port_num, &((char*)io_vector[i].iov_base)[res],
                                io_vector[i].iov_len - res);
                     res = 0;
                 }
@@ -1465,7 +1459,7 @@ static void ready_input(ErlDrvData e, ErlDrvEvent ready_fd)
 		switch (packet_bytes) {
 		case 1: h = get_int8(dd->ifd->pbuf);  break;
 		case 2: h = get_int16(dd->ifd->pbuf); break;
-		case 4: h = get_int32(dd->ifd->pbuf); break;
+		case 4: h = get_uint32(dd->ifd->pbuf); break;
 		default: ASSERT(0); return; /* -1; */
 		}
 
@@ -1641,6 +1635,7 @@ void fd_ready_async(ErlDrvData drv_data,
 /* Forker driver */
 
 static int forker_fd;
+extern struct termios erl_sys_initial_tty_mode;
 
 static ErlDrvData forker_start(ErlDrvPort port_num, char* name,
                                SysDriverOpts* opts)
@@ -1722,6 +1717,28 @@ static ErlDrvData forker_start(ErlDrvPort port_num, char* name,
     erts_free(ERTS_ALC_T_CS_PROG_PATH, child_setup_prog);
 
     close(fds[1]);
+
+    /* If stdin is a tty then we need to restore its settings when we exit.
+       So we send the tty mode to erl_child_setup so that it can cleanup
+       in case the emulator is terminated with SIGKILL. */
+    if (isatty(0)) {
+        ssize_t res, pos = 0;
+        size_t size = sizeof(struct termios);
+        byte *buff = (byte *)&erl_sys_initial_tty_mode;
+        do {
+            if ((res = write(forker_fd, buff + pos, size - pos)) < 0) {
+                if (errno == ERRNO_BLOCK || errno == EINTR)
+                    continue;
+                erts_exit(ERTS_ABORT_EXIT,
+                          "Could not write tty mode to domain socket in spawn_init: %d\n",
+                          errno);
+            }
+            if (res == 0) {
+                erts_exit(0, "erl_child_setup closed\n");
+            }
+            pos += res;
+        } while (size - pos != 0);
+    }
 
     SET_NONBLOCKING(forker_fd);
 

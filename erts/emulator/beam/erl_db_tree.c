@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -519,7 +519,7 @@ DbTableMethod db_tree =
     db_lookup_dbterm_tree,
     db_finalize_dbterm_tree,
     db_eterm_to_dbterm_tree_common,
-    db_dbterm_list_prepend_tree_common,
+    db_dbterm_list_append_tree_common,
     db_dbterm_list_remove_first_tree_common,
     db_put_dbterm_tree,
     db_free_dbterm_tree_common,
@@ -757,6 +757,7 @@ int db_put_dbterm_tree_common(DbTableCommon *tb,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RR rotation */
+                    ASSERT(p1->right);
 		    p2 = p1->right;
 		    p1->right = p2->left;
 		    p2->left = p1;
@@ -787,6 +788,7 @@ int db_put_dbterm_tree_common(DbTableCommon *tb,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RL rotation */
+                    ASSERT(p1->left);
 		    p2 = p1->left;
 		    p1->left = p2->right;
 		    p2->right = p1;
@@ -878,6 +880,7 @@ int db_put_tree_common(DbTableCommon *tb, TreeDbTerm **root, Eterm obj,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RR rotation */
+                    ASSERT(p1->right);
 		    p2 = p1->right;
 		    p1->right = p2->left;
 		    p2->left = p1;
@@ -908,6 +911,7 @@ int db_put_tree_common(DbTableCommon *tb, TreeDbTerm **root, Eterm obj,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RL rotation */
+                    ASSERT(p1->left);
 		    p2 = p1->left;
 		    p1->left = p2->right;
 		    p2->right = p1;
@@ -1303,7 +1307,7 @@ int db_select_continue_tree_common(Process *p,
 	    if (!sc.got) {
 		RET_TO_BIF(am_EOT, DB_ERROR_NONE);
 	    } else {
-		RET_TO_BIF(bif_trap3(&ets_select_reverse_exp, p, 
+		RET_TO_BIF(bif_trap3(&ets_select_reverse_exp, p,
 				     sc.accum, NIL, am_EOT), 
 			   DB_ERROR_NONE);
 	    }
@@ -1330,7 +1334,7 @@ int db_select_continue_tree_common(Process *p,
 	 sc.accum,
 	 tptr[7],
 	 make_small(sc.got));
-    RET_TO_BIF(bif_trap1(&bif_trap_export[BIF_ets_select_1], p, continuation), 
+    RET_TO_BIF(bif_trap1(BIF_TRAP_EXPORT(BIF_ets_select_1), p, continuation),
 	       DB_ERROR_NONE);
 
 #undef RET_TO_BIF
@@ -1475,7 +1479,7 @@ int db_select_tree_common(Process *p, DbTable *tb,
 	 make_small(sc.got));
 
     /* Don't free mpi.mp, so don't use macro */
-    *ret = bif_trap1(&bif_trap_export[BIF_ets_select_1], p, continuation); 
+    *ret = bif_trap1(BIF_TRAP_EXPORT(BIF_ets_select_1), p, continuation);
     return DB_ERROR_NONE;
 
 #undef RET_TO_BIF
@@ -1583,7 +1587,7 @@ int db_select_count_continue_tree_common(Process *p,
 	 tptr[3], 
 	 tptr[4],
 	 egot);
-    RET_TO_BIF(bif_trap1(&ets_select_count_continue_exp, p, continuation), 
+    RET_TO_BIF(bif_trap1(&ets_select_count_continue_exp, p, continuation),
 	       DB_ERROR_NONE);
 
 #undef RET_TO_BIF
@@ -1707,7 +1711,7 @@ int db_select_count_tree_common(Process *p, DbTable *tb,
 	 egot);
 
     /* Don't free mpi.mp, so don't use macro */
-    *ret = bif_trap1(&ets_select_count_continue_exp, p, continuation); 
+    *ret = bif_trap1(&ets_select_count_continue_exp, p, continuation);
     return DB_ERROR_NONE;
 
 #undef RET_TO_BIF
@@ -1883,7 +1887,7 @@ int db_select_chunk_tree_common(Process *p, DbTable *tb,
 	 make_small(reverse),
 	 make_small(sc.got));
     /* Don't let RET_TO_BIF macro free mpi.mp*/
-    *ret = bif_trap1(&bif_trap_export[BIF_ets_select_1], p, continuation);
+    *ret = bif_trap1(BIF_TRAP_EXPORT(BIF_ets_select_1), p, continuation);
     return DB_ERROR_NONE;
 
 #undef RET_TO_BIF
@@ -1993,7 +1997,7 @@ int db_select_delete_continue_tree_common(Process *p,
 	 tptr[3], 
 	 tptr[4],
 	 eaccsum);
-    RET_TO_BIF(bif_trap1(&ets_select_delete_continue_exp, p, continuation), 
+    RET_TO_BIF(bif_trap1(&ets_select_delete_continue_exp, p, continuation),
 	       DB_ERROR_NONE);
 
 #undef RET_TO_BIF
@@ -2124,7 +2128,7 @@ int db_select_delete_tree_common(Process *p, DbTable *tbl,
     if (sc.erase_lastterm) {
 	free_term(tbl, sc.lastterm);
     }
-    *ret = bif_trap1(&ets_select_delete_continue_exp, p, continuation); 
+    *ret = bif_trap1(&ets_select_delete_continue_exp, p, continuation);
     return DB_ERROR_NONE;
 
 #undef RET_TO_BIF
@@ -2463,9 +2467,11 @@ static SWord db_free_table_continue_tree(DbTable *tbl, SWord reds)
 	ASSERT(erts_flxctr_is_snapshot_ongoing(&tb->common.counters) ||
                ((APPROX_MEM_CONSUMED(tb)
                  == (sizeof(DbTable) +
+                     (!DB_LOCK_FREE(tb) ? erts_rwmtx_size(&tb->common.rwlock) : 0) +
                      erts_flxctr_nr_of_allocated_bytes(&tb->common.counters))) ||
                 (APPROX_MEM_CONSUMED(tb)
                  == (sizeof(DbTable) +
+                     (!DB_LOCK_FREE(tb) ? erts_rwmtx_size(&tb->common.rwlock) : 0) +
                      sizeof(DbFixation) +
                      erts_flxctr_nr_of_allocated_bytes(&tb->common.counters)))));
     }
@@ -3093,7 +3099,7 @@ static TreeDbTerm *find_next(DbTableCommon *tb, TreeDbTerm *root,
 	for (;;) {
 	    PUSH_NODE(stack, this);
 	    if (( c = cmp_key(tb,key,this) ) > 0) {
-		if (this->right == NULL) /* We are at the previos 
+		if (this->right == NULL) /* We are at the previous 
 					    and the element does
 					    not exist */
 		    break;
@@ -3440,6 +3446,7 @@ int db_lookup_dbterm_tree_common(Process *p, DbTable *tbl, TreeDbTerm **root,
     handle->flags = flags;
     handle->bp = (void**) pp;
     handle->new_size = (*pp)->dbterm.size;
+    handle->old_tpl = NULL;
     return 1;
 }
 
@@ -3527,11 +3534,11 @@ void* db_eterm_to_dbterm_tree_common(int compress, int keypos, Eterm obj)
     return term;
 }
 
-void* db_dbterm_list_prepend_tree_common(void *list, void *db_term)
+void* db_dbterm_list_append_tree_common(void *last_term, void *db_term)
 {
-    TreeDbTerm* l = list;
+    TreeDbTerm* l = last_term;
     TreeDbTerm* t = db_term;
-    t->left = l;
+    l->left = t;
     return t;
 }
 
@@ -3745,7 +3752,7 @@ static enum ms_key_boundness key_boundness(DbTableCommon *tb,
     key = db_getkey(tb->keypos, pattern);
     if (is_non_value(key))
 	return MS_KEY_IMPOSSIBLE;  /* can't possibly match anything */
-    if (!db_has_variable(key)) {   /* Bound key */
+    if (db_is_fully_bound(key)) {
         *keyp = key;
 	return MS_KEY_BOUND;
     } else if (key != am_Underscore &&
@@ -4046,7 +4053,6 @@ static int doit_select(DbTableCommon *tb, TreeDbTerm *this,
 {
     struct select_context *sc = (struct select_context *) ptr;
     Eterm ret;
-    Eterm* hp;
 
     sc->lastobj = this->dbterm.tpl;
     
@@ -4059,8 +4065,9 @@ static int doit_select(DbTableCommon *tb, TreeDbTerm *this,
 			   GETKEY_WITH_POS(sc->keypos, this->dbterm.tpl)) > 0))) {
 	return 0;
     }
-    ret = db_match_dbterm(tb, sc->p,sc->mp, &this->dbterm, &hp, 2);
+    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, ERTS_PAM_COPY_RESULT);
     if (is_value(ret)) {
+        Eterm *hp = HAlloc(sc->p, 2);
 	sc->accum = CONS(hp, ret, sc->accum);
     }
     if (--(sc->max) <= 0) {
@@ -4084,7 +4091,7 @@ static int doit_select_count(DbTableCommon *tb, TreeDbTerm *this,
 			  GETKEY_WITH_POS(sc->keypos, this->dbterm.tpl)) > 0)) {
 	return 0;
     }
-    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, NULL, 0);
+    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, ERTS_PAM_TMP_RESULT);
     if (ret == am_true) {
 	++(sc->got);
     }
@@ -4100,7 +4107,6 @@ static int doit_select_chunk(DbTableCommon *tb, TreeDbTerm *this,
 {
     struct select_context *sc = (struct select_context *) ptr;
     Eterm ret;
-    Eterm* hp;
 
     sc->lastobj = this->dbterm.tpl;
     
@@ -4114,8 +4120,9 @@ static int doit_select_chunk(DbTableCommon *tb, TreeDbTerm *this,
 	return 0;
     }
 
-    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, &hp, 2);
+    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, ERTS_PAM_COPY_RESULT);
     if (is_value(ret)) {
+        Eterm *hp = HAlloc(sc->p, 2);
 	++(sc->got);
 	sc->accum = CONS(hp, ret, sc->accum);
     }
@@ -4143,7 +4150,7 @@ static int doit_select_delete(DbTableCommon *tb, TreeDbTerm *this,
 	cmp_partly_bound(sc->end_condition, 
 			 GETKEY_WITH_POS(sc->keypos, this->dbterm.tpl)) > 0)
 	return 0;
-    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, NULL, 0);
+    ret = db_match_dbterm(tb, sc->p, sc->mp, &this->dbterm, ERTS_PAM_TMP_RESULT);
     if (ret == am_true) {
 	key = GETKEY(sc->tb, this->dbterm.tpl);
 	linkout_tree(sc->tb, sc->common.root, key, sc->stack);
@@ -4161,6 +4168,7 @@ static int doit_select_replace(DbTableCommon *tb, TreeDbTerm **this,
                                int forward)
 {
     struct select_replace_context *sc = (struct select_replace_context *) ptr;
+    DbTerm* obj;
     Eterm ret;
 
     sc->lastobj = (*this)->dbterm.tpl;
@@ -4171,7 +4179,10 @@ static int doit_select_replace(DbTableCommon *tb, TreeDbTerm **this,
 			  GETKEY_WITH_POS(sc->keypos, (*this)->dbterm.tpl)) > 0)) {
 	return 0;
     }
-    ret = db_match_dbterm(tb, sc->p, sc->mp, &(*this)->dbterm, NULL, 0);
+    obj = &(*this)->dbterm;
+    if (tb->compress)
+        obj = db_alloc_tmp_uncompressed(tb, obj);
+    ret = db_match_dbterm_uncompressed(tb, sc->p, sc->mp, obj, ERTS_PAM_TMP_RESULT);
 
     if (is_value(ret)) {
         TreeDbTerm* new;
@@ -4190,6 +4201,8 @@ static int doit_select_replace(DbTableCommon *tb, TreeDbTerm **this,
         free_term((DbTable*)tb, old);
         ++(sc->replaced);
     }
+    if (tb->compress)
+        db_free_tmp_uncompressed(obj);
     if (--(sc->max) <= 0) {
 	return 0;
     }
@@ -4263,7 +4276,7 @@ static void check_slot_pos(DbTableTree *tb)
 	return;
     t = traverse_until(tb->root, &pos, tb->stack.slot);
     if (t != tb->stack.array[tb->stack.pos - 1]) {
-	erts_fprintf(stderr, "Slot position does not correspont with stack, "
+	erts_fprintf(stderr, "Slot position does not correspond with stack, "
 		   "element position %d is really 0x%08X, when stack says "
 		   "it's 0x%08X\n", tb->stack.slot, t, 
 		   tb->stack.array[tb->stack.pos - 1]);

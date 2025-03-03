@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2000</year><year>2020</year>
+      <year>2000</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -63,9 +63,9 @@
 	Erlang code will of course have to take care of retransmissions,
 	etc in this example). That is, depending on what you want
 	to do you perhaps do not need to implement a driver at all
-	and can then skip the driver related sections below.
-	The <c>gen_tcp_dist</c> example described in the
-	<seeguide marker="#distribution_module">Distribution
+	and can then skip the driver related sections below. The
+	<c>gen_tcp_dist</c> and <c>erl_uds_dist</c> examples described
+	in the <seeguide marker="#distribution_module">Distribution
 	Module</seeguide> section utilize distribution controller
 	processes and can be worth having a look at if you want to
 	use distribution controller processes.
@@ -162,7 +162,7 @@
     <marker id="distribution_module"/>
     <title>Distribution Module</title>
     <p>
-      The distribution module expose an API that <c>net_kernel</c> call
+      The distribution module exposes an API that <c>net_kernel</c> calls
       in order to manage connections to other nodes. The module name
       should have the suffix <c>_dist</c>.
     </p>
@@ -187,13 +187,20 @@
       then voluntarily terminate when an exit signal is received.
     </p>
     <p>
-      An example implementation of a distribution module can be found
-      in
+      An example implementation of a distribution module can be found in
       <url href="gen_tcp_dist.erl">$ERL_TOP/lib/kernel/examples/gen_tcp_dist/src/gen_tcp_dist.erl</url>.
       It implements the distribution over TCP/IP using the <c>gen_tcp</c>
       API with distribution controllers implemented by processes. This
       instead of using port distribution controllers as the ordinary TCP/IP
       distribution uses.
+    </p>
+    <p>
+      Another example implementation of a distribution module can be found in
+      <url href="erl_uds_dist.erl">$ERL_TOP/lib/kernel/examples/erl_uds_dist/src/erl_uds_dist.erl</url>.
+      It implements the distribution over Unix domain sockets using the
+      <c>gen_tcp</c> API with distribution controllers implemented by processes.
+      Compared to the original <c>uds_dist</c> example using a port driver
+      written in C, <c>erl_uds_dist</c> is written entirely in Erlang.
     </p>
 
     <section>
@@ -307,8 +314,18 @@
 	    <c>accept_connection/5</c> should spawn a process that will
 	    perform the Erlang distribution handshake for the connection.
 	    If the handshake successfully completes it should continue to
-	    function as a connection supervisor. This process
-	    should preferably execute on <c>max</c> priority.
+	    function as a connection supervisor. This process should
+            preferably execute on <c>max</c> priority and should be linked
+            to the caller. The <c>dist_util:net_ticker_spawn_options()</c>
+            function can be called to get spawn options suitable for this process
+            which can be passed directly to
+            <seemfa marker="erts:erlang#spawn_opt/4"><c>erlang:spawn_opt/4</c></seemfa>.
+            <c>dist_util:net_ticker_spawn_options()</c> will by default return
+            <c>[link, {priority, max}]</c>, but allows the user to configure more
+            options using the
+            <seeapp marker="kernel:kernel_app#net_ticker_spawn_options"><c>net_ticker_spawn_options</c></seeapp>
+            kernel parameter. The process identifier of this process should be
+            returned.
 	  </p>
 	  <p>The arguments:</p>
 	  <taglist>
@@ -373,8 +390,18 @@
 	    <c>Node</c>. When connection has been established it should
 	    perform the Erlang distribution handshake for the connection.
 	    If the handshake successfully completes it should continue to
-	    function as a connection supervisor. This process
-	    should preferably execute on <c>max</c> priority.
+	    function as a connection supervisor. This process should
+            preferably execute on <c>max</c> priority and should be linked
+            to the caller. The <c>dist_util:net_ticker_spawn_options()</c>
+            function can be called to get spawn options suitable for this process
+            which can be passed directly to
+            <seemfa marker="erts:erlang#spawn_opt/4"><c>erlang:spawn_opt/4</c></seemfa>.
+            <c>dist_util:net_ticker_spawn_options()</c> will by default return
+            <c>[link, {priority, max}]</c>, but allows the user to configure more
+            options using the
+            <seeapp marker="kernel:kernel_app#net_ticker_spawn_options"><c>net_ticker_spawn_options</c></seeapp>
+            kernel parameter. The process identifier of this process should be
+            returned.
 	  </p>
 	  <p>The arguments:</p>
 	  <taglist>
@@ -1018,7 +1045,7 @@
         header of four bytes containing the length of the package in a
         big-endian 32-bit integer. As Unix domain sockets only can be used
         between processes on the same machine, we do not need to
-        code the integer in some special endianess, but we will do it anyway
+        code the integer in some special endianness, but we will do it anyway
         because in most situation you need to do it. Unix domain
         sockets are reliable and order maintaining, so we do not need to
         implement resends and such in the driver.</p>
@@ -1125,7 +1152,7 @@
         callbacks although it has marked itself as busy. This has always been a
         requirement on drivers used by the distribution, but no capability
         information has been available about this previously. For more
-        information. see <seecref marker="erl_driver#set_busy_port">
+        information, see <seecref marker="erl_driver#set_busy_port">
         <c>erl_driver:set_busy_port()</c></seecref>).</p>
 
       <p>This driver was written before the runtime system had SMP support.
@@ -1403,7 +1430,7 @@
 
     <section>
       <title>Selected Parts of the Distribution Driver Implementation</title>
-      <p>The implemenation of the distribution driver is not completely
+      <p>The implementation of the distribution driver is not completely
         covered here, details about buffering and other things
         unrelated to driver writing are not explained. Likewise are
         some peculiarities of the UDS protocol not explained in

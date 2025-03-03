@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,6 @@
  * limitations under the License.
  *
  * %CopyrightEnd%
- */
-
-/*
- * This is a C version of the erl.exec Bourne shell script, including
- * additions required for Windows NT.
  */
 
 #include "etc_common.h"
@@ -44,14 +39,12 @@
 #define DIRSEP "\\"
 #define PATHSEP ";"
 #define NULL_DEVICE "nul"
-#define BINARY_EXT ""
 #define DLL_EXT ".dll"
 #define EMULATOR_EXECUTABLE "beam.dll"
 #else
 #define PATHSEP ":"
 #define DIRSEP "/"
 #define NULL_DEVICE "/dev/null"
-#define BINARY_EXT ""
 #define EMULATOR_EXECUTABLE "beam"
 
 #endif
@@ -70,7 +63,6 @@ static const char plusM_au_allocs[]= {
     'R',	/* driver_alloc		*/
     'S',	/* sl_alloc		*/
     'T',	/* temp_alloc		*/
-    'X',	/* exec_alloc		*/
     'Z',        /* test_alloc           */
     '\0'
 };
@@ -83,6 +75,8 @@ static char *plusM_au_alloc_switches[] = {
     "acul",
     "acnl",
     "acfml",
+    "acful",
+    "cp",
     "e",
     "t",
     "lmbcs",
@@ -109,7 +103,6 @@ static char *plusM_other_switches[] = {
     "usac",
     "im",
     "is",
-    "it",
     "lpm",
     "Mamcbf",
     "Mrmcbf",
@@ -124,6 +117,7 @@ static char *plusM_other_switches[] = {
     "Ytt",
     "Iscs",
     "Xscs",
+    "dai",
     NULL
 };
 
@@ -158,6 +152,7 @@ static char *plush_val_switches[] = {
     "max",
     "maxk",
     "maxel",
+    "maxib",
     "mqd",
     "",
     NULL
@@ -174,6 +169,7 @@ static char *plusz_val_switches[] = {
     "dbbl",
     "dntgc",
     "ebwt",
+    "osrl",
     NULL
 };
 
@@ -186,11 +182,11 @@ static char *plusz_val_switches[] = {
 #define sleep(seconds) Sleep(seconds*1000)
 #endif
 
-#define SMP_SUFFIX	  ".smp"
+#define DEFAULT_SUFFIX	  "smp"
 
 void usage(const char *switchname);
 static void usage_format(char *format, ...);
-void start_epmd(char *epmd);
+void start_epmd_daemon(char *epmd);
 void error(char* format, ...);
 
 /*
@@ -222,7 +218,6 @@ static char* possibly_quote(char* arg);
 /*
  * Functions from win_erlexec.c
  */
-int start_win_emulator(char* emu, char *startprog,char** argv, int start_detached);
 int start_emulator(char* emu, char*start_prog, char** argv, int start_detached);
 #endif
 
@@ -245,12 +240,12 @@ static int verbose = 0;		/* If non-zero, print some extra information. */
 static int start_detached = 0;	/* If non-zero, the emulator should be
 				 * started detached (in the background).
 				 */
-static int start_smp_emu = 1;   /* Start the smp emulator. */
-static const char* emu_type = 0; /* Type of emulator (lcnt, valgrind, etc) */
+static const char* emu_type = NULL; /* Type of emulator (lcnt, valgrind, etc) */
+static const char* emu_flavor = DEFAULT_SUFFIX; /* Flavor of emulator (smp, jit or emu) */
 
 #ifdef __WIN32__
 static char *start_emulator_program = NULL; /* For detached mode -
-					       erl.exe/werl.exe */
+					       erl.exe */
 static char* key_val_name = ERLANG_VERSION; /* Used by the registry
 					   * access functions.
 					   */
@@ -260,7 +255,6 @@ static int config_script_cnt = 0;
 static int got_start_erl = 0;
 
 static HANDLE this_module_handle;
-static int run_werl;
 static WCHAR *utf8_to_utf16(unsigned char *bytes);
 static char *utf16_to_utf8(WCHAR *wstr);
 static WCHAR *latin1_to_utf16(char *str);
@@ -381,9 +375,10 @@ add_extra_suffixes(char *prog)
        p = write_str(p, ".");
        p = write_str(p, emu_type);
    }
-   if (start_smp_emu) {
-       p = write_str(p, SMP_SUFFIX);
-   }
+
+   p = write_str(p, ".");
+   p = write_str(p, emu_flavor);
+
 #ifdef __WIN32__
    if (dll) {
        p = write_str(p, DLL_EXT);
@@ -408,9 +403,16 @@ static void add_boot_config(void)
 # define ADD_BOOT_CONFIG
 #endif
 
+#define NEXT_ARG_CHECK_NAMED(Option) \
+    do {                                                                \
+        if (i+1 >= argc || strncmp(argv[i+1], "--", 3) == 0)            \
+            usage(Option);                                              \
+    } while(0)
+
+#define NEXT_ARG_CHECK() NEXT_ARG_CHECK_NAMED(argv[i])
 
 #ifdef __WIN32__
-__declspec(dllexport) int win_erlexec(int argc, char **argv, HANDLE module, int windowed)
+__declspec(dllexport) int win_erlexec(int argc, char **argv, HANDLE module)
 #else
 int main(int argc, char **argv)
 #endif
@@ -419,10 +421,11 @@ int main(int argc, char **argv)
 				 * of the arguments. */
     int isdistributed = 0;
     int no_epmd = 0;
+    int proto_dist = 0;
+    int start_epmd = 1;         /* Whether epmd should be started */
     int i;
     char* s;
     char *epmd_prog = NULL;
-    char *malloc_lib;
     int process_args = 1;
     int print_args_exit = 0;
     int print_qouted_cmd_exit = 0;
@@ -430,7 +433,6 @@ int main(int argc, char **argv)
 
 #ifdef __WIN32__
     this_module_handle = module;
-    run_werl = windowed;
     /* if we started this erl just to get a detached emulator,
      * the arguments are already prepared for beam, so we skip
      * directly to start_emulator */
@@ -448,21 +450,18 @@ int main(int argc, char **argv)
 	Eargsp[argc] = NULL;
 	emu = argv[0];
 	start_emulator_program = strsave(argv[0]);
-	goto skip_arg_massage;
-    }
-    free_env_val(s);
-#else
-    int reset_cerl_detached = 0;
-
-    s = get_env("CERL_DETACHED_PROG");
-    if (s && strcmp(s, "") != 0) {
-	emu = s;
-	start_detached = 1;
-	reset_cerl_detached = 1;
-	ensure_EargsSz(argc + 1);
-	memcpy((void *) Eargsp, (void *) argv, argc * sizeof(char *));
-	Eargsp[argc] = emu;
-	Eargsp[argc] = NULL;
+        /* We set the stdandard handles to nul in order for prim_tty_nif
+           and erlang:display_string to work without returning ebadf for
+           detached emulators */
+        SetStdHandle(STD_INPUT_HANDLE,
+                     CreateFile("nul", GENERIC_READ, 0, NULL, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, NULL));
+        SetStdHandle(STD_OUTPUT_HANDLE,
+                     CreateFile("nul", GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, NULL));
+        SetStdHandle(STD_ERROR_HANDLE,
+                     CreateFile("nul", GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, NULL));
 	goto skip_arg_massage;
     }
     free_env_val(s);
@@ -489,21 +488,8 @@ int main(int argc, char **argv)
 #endif
 
     /* We need to do this before the ordinary processing. */
-    malloc_lib = get_env("ERL_MALLOC_LIB");
     while (i < argc) {
-	if (argv[i][0] == '+') {
-	    if (argv[i][1] == 'M' && argv[i][2] == 'Y' && argv[i][3] == 'm') {
-		if (argv[i][4] == '\0') {
-		    if (++i < argc)
-			malloc_lib = argv[i];
-		    else
-			usage("+MYm");
-		}
-		else
-		    malloc_lib = &argv[i][4];
-	    }
-	}
-	else if (argv[i][0] == '-') {
+	if (argv[i][0] == '-') {
 	    if (strcmp(argv[i], "-smp") == 0) {
 		if (i + 1 >= argc)
 		    goto smp;
@@ -531,23 +517,21 @@ int main(int argc, char **argv)
 	    } else if (strcmp(argv[i], "-extra") == 0) {
 		break;
 	    } else if (strcmp(argv[i], "-emu_type") == 0) {
-		if (i + 1 >= argc) {
-                    usage(argv[i]);
-                }
+                NEXT_ARG_CHECK();
                 emu_type = argv[i+1];
+                i++;
+	    } else if (strcmp(argv[i], "-emu_flavor") == 0) {
+                NEXT_ARG_CHECK();
+                emu_flavor = argv[i+1];
                 i++;
 	    }
 	}
 	i++;
     }
 
-    if (malloc_lib) {
-	if (strcmp(malloc_lib, "libc") != 0)
-	    usage("+MYm");
-    }
     emu = add_extra_suffixes(emu);
     emu_name = strsave(emu);
-    erts_snprintf(tmpStr, sizeof(tmpStr), "%s" DIRSEP "%s" BINARY_EXT, bindir, emu);
+    erts_snprintf(tmpStr, sizeof(tmpStr), "%s" DIRSEP "%s", bindir, emu);
     emu = strsave(tmpStr);
 
     s = get_env("ESCRIPT_NAME");
@@ -590,7 +574,7 @@ int main(int argc, char **argv)
             in_index = bindir_slug_index + bindir_slug_length;
             out_index += block_length;
         }
-
+        efree((void*)bindir_slug);
         strcpy(out_index, in_index);
     }
 
@@ -626,8 +610,7 @@ int main(int argc, char **argv)
 			    error("Conflicting -boot options");
                         if (got_start_erl)
                             error("Conflicting -start_erl and -boot options");
-			if (i+1 >= argc)
-			    usage("-boot");
+                        NEXT_ARG_CHECK();
 			boot_script = strsave(argv[i+1]);
 			i++;
 		    }
@@ -651,8 +634,7 @@ int main(int argc, char **argv)
 		    else if (strcmp(argv[i], "-config") == 0){
 			if (got_start_erl)
 			    error("Conflicting -start_erl and -config options");
-			if (i+1 >= argc)
-			    usage("-config");
+                        NEXT_ARG_CHECK();
                         do {
                             config_script_cnt++;
                             config_scripts = erealloc(config_scripts,
@@ -662,19 +644,27 @@ int main(int argc, char **argv)
                         } while ((i+1) < argc && argv[i+1][0] != '-' && argv[i+1][0] != '+');
 		    }
 #endif
+                    else if (strcmp(argv[i], "-configfd") == 0) {
+                        NEXT_ARG_CHECK();
+                        if ( strcmp(argv[i+1], "0") != 0 ) {
+			    add_arg(argv[i]);
+                        } else {
+                            add_args("-noshell", "-noinput", NULL);
+                            add_arg(argv[i]);
+                        }
+		    }
 		    else {
 			add_arg(argv[i]);
 		    }
 		    break;
 
 		  case 'd':
-		    if (strcmp(argv[i], "-detached") != 0) {
-			add_arg(argv[i]);
-		    } else {
-			start_detached = 1;
-			add_args("-noshell", "-noinput", NULL);
-		    }
-		    break;
+                    add_arg(argv[i]);
+                    if (strcmp(argv[i], "-detached") == 0) {
+                        start_detached = 1;
+                        add_args("-noshell", "-noinput", NULL);
+                    }
+                    break;
 
 		  case 'e':
 		    if (strcmp(argv[i], "-extra") == 0) {
@@ -691,13 +681,13 @@ int main(int argc, char **argv)
 		    } else if (strcmp(argv[i], "-emu_qouted_cmd_exit") == 0) {
 			print_qouted_cmd_exit = 1;
 		    } else if (strcmp(argv[i], "-env") == 0) { /* -env VARNAME VARVALUE */
-			if (i+2 >= argc)
-			    usage("-env");
-			set_env(argv[i+1], argv[i+2]);
-			i += 2;
+                        NEXT_ARG_CHECK();
+                        i += 1;
+                        NEXT_ARG_CHECK_NAMED("-env");
+			set_env(argv[i], argv[i+1]);
+			i += 1;
 		    } else if (strcmp(argv[i], "-epmd") == 0) {
-			if (i+1 >= argc)
-			    usage("-epmd");
+                        NEXT_ARG_CHECK();
 			epmd_prog = argv[i+1];
 			++i;
 		    } else {
@@ -737,8 +727,7 @@ int main(int argc, char **argv)
 
 		  case 'n':
 		    if (strcmp(argv[i], "-name") == 0) { /* -name NAME */
-			if (i+1 >= argc)
-			    usage("-name");
+                        NEXT_ARG_CHECK();
 
 			/*
 			 * Note: Cannot use add_args() here, due to non-defined
@@ -757,6 +746,19 @@ int main(int argc, char **argv)
 		    } else if (strcmp(argv[i], "-no_epmd") == 0) {
 			add_arg("-no_epmd");
 			no_epmd = 1;
+			start_epmd = 0;
+		    } else {
+			add_arg(argv[i]);
+		    }
+		    break;
+
+		  case 'p':
+		    if (strcmp(argv[i], "-proto_dist") == 0) {
+			NEXT_ARG_CHECK();
+			add_arg(argv[i]);
+			add_arg(argv[i+1]);
+			proto_dist = 1;
+			i++;
 		    } else {
 			add_arg(argv[i]);
 		    }
@@ -764,8 +766,7 @@ int main(int argc, char **argv)
 
 		  case 's':	/* -sname NAME */
 		    if (strcmp(argv[i], "-sname") == 0) {
-			if (i+1 >= argc)
-			    usage("-sname");
+                        NEXT_ARG_CHECK();
 			add_arg(argv[i]);
 			add_arg(argv[i+1]);
 			isdistributed = 1;
@@ -773,6 +774,7 @@ int main(int argc, char **argv)
 		    }
 #ifdef __WIN32__
 		    else if (strcmp(argv[i], "-service_event") == 0) {
+                        NEXT_ARG_CHECK();
 			add_arg(argv[i]);
 			add_arg(argv[i+1]);
 			i++;
@@ -786,15 +788,14 @@ int main(int argc, char **argv)
 		    }
 #endif
 		    else if (strcmp(argv[i], "-start_epmd") == 0) {
-			if (i+1 >= argc)
-			    usage("-start_epmd");
+                        NEXT_ARG_CHECK();
 
 			if (strcmp(argv[i+1], "true") == 0) {
 			    /* The default */
-			    no_epmd = 0;
+			    start_epmd = 1;
 			}
 			else if (strcmp(argv[i+1], "false") == 0) {
-			    no_epmd = 1;
+			    start_epmd = 0;
 			}
 			else
 			    usage_format("Expected boolean argument for \'-start_epmd\'.\n");
@@ -839,8 +840,7 @@ int main(int argc, char **argv)
 		  case 'K':
 		      if (argv[i][2] != '\0')
 			  goto the_default;
-		      if (i+1 >= argc)
-			  usage(argv[i]);
+                      NEXT_ARG_CHECK();
 		      argv[i][0] = '-';
 		      add_Eargs(argv[i]);
 		      add_Eargs(argv[i+1]);
@@ -850,6 +850,7 @@ int main(int argc, char **argv)
                       if (argv[i][2] == 'O' && (argv[i][3] == 't' || argv[i][3] == 'p')) {
                           if (argv[i][4] != '\0')
                               goto the_default;
+                          NEXT_ARG_CHECK();
                           argv[i][0] = '-';
                           add_Eargs(argv[i]);
                           add_Eargs(argv[i+1]);
@@ -860,6 +861,17 @@ int main(int argc, char **argv)
                           (argv[i][4] == 't' || argv[i][4] == 'p')) {
                           if (argv[i][5] != '\0')
                               goto the_default;
+                          NEXT_ARG_CHECK();
+                          argv[i][0] = '-';
+                          add_Eargs(argv[i]);
+                          add_Eargs(argv[i+1]);
+                          i++;
+                          break;
+                      }
+                      if (argv[i][2] == 'O' && argv[i][3] == 's') {
+                          if (argv[i][4] != '\0')
+                              goto the_default;
+                          NEXT_ARG_CHECK();
                           argv[i][0] = '-';
                           add_Eargs(argv[i]);
                           add_Eargs(argv[i+1]);
@@ -867,6 +879,13 @@ int main(int argc, char **argv)
                           break;
                       }
                       usage(argv[i]);
+                      break;
+                  case 'J':
+                      NEXT_ARG_CHECK();
+                      argv[i][0] = '-';
+                      add_Eargs(argv[i]);
+                      add_Eargs(argv[i+1]);
+                      i++;
                       break;
 		  case 'S':
 		      if (argv[i][2] == 'P') {
@@ -886,8 +905,7 @@ int main(int argc, char **argv)
 		      }
 		      else if (argv[i][2] != '\0')
 			  goto the_default;
-		      if (i+1 >= argc)
-			  usage(argv[i]);
+                      NEXT_ARG_CHECK();
 		      argv[i][0] = '-';
 		      add_Eargs(argv[i]);
 		      add_Eargs(argv[i+1]);
@@ -906,17 +924,17 @@ int main(int argc, char **argv)
 			}
 		      }
 		      if (i+1 < argc) {
-			if ((argv[i+1][0] != '-') &&
-			    (argv[i+1][0] != '+')) {
-			  if (argv[i+1][0] == 'i') {
-			    add_Eargs(argv[i]);
-			    add_Eargs(argv[i+1]);
-			    i++;
-			    break;
-			  } else {
-			    usage(argv[i]);
+                          if (argv[i+1][1] == '\0') {
+                              if ((argv[i+1][0] == 'i') ||
+                                  (argv[i+1][0] == 'c') ||
+                                  (argv[i+1][0] == 'd')
+                                  ) {
+                                  add_Eargs(argv[i]);
+                                  add_Eargs(argv[i+1]);
+                                  i++;
+                                  break;
+                              }
 			  }
-			}
 		      }
 		      add_Eargs(argv[i]);
 		      break;
@@ -943,10 +961,7 @@ int main(int argc, char **argv)
 						plusM_au_alloc_switches))
 			  || is_one_of_strings(&argv[i][2],
 					       plusM_other_switches)) {
-			  if (i+1 >= argc
-			      || argv[i+1][0] == '-'
-			      || argv[i+1][0] == '+')
-			      usage(argv[i]);
+                          NEXT_ARG_CHECK();
 			  argv[i][0] = '-';
 			  add_Eargs(argv[i]);
 			  add_Eargs(argv[i+1]);
@@ -960,10 +975,7 @@ int main(int argc, char **argv)
 		      if (!is_one_of_strings(&argv[i][2], plush_val_switches)) {
 			  goto the_default;
 		      } else {
-			  if (i+1 >= argc
-			      || argv[i+1][0] == '-'
-			      || argv[i+1][0] == '+')
-			      usage(argv[i]);
+                          NEXT_ARG_CHECK();
 			  argv[i][0] = '-';
 			  add_Eargs(argv[i]);
 			  add_Eargs(argv[i+1]);
@@ -975,10 +987,7 @@ int main(int argc, char **argv)
 					     plusr_val_switches))
 			  goto the_default;
 		      else {
-			  if (i+1 >= argc
-			      || argv[i+1][0] == '-'
-			      || argv[i+1][0] == '+')
-			      usage(argv[i]);
+                          NEXT_ARG_CHECK();
 			  argv[i][0] = '-';
 			  add_Eargs(argv[i]);
 			  add_Eargs(argv[i+1]);
@@ -990,10 +999,7 @@ int main(int argc, char **argv)
 					     pluss_val_switches))
 			  goto the_default;
 		      else {
-			  if (i+1 >= argc
-			      || argv[i+1][0] == '-'
-			      || argv[i+1][0] == '+')
-			      usage(argv[i]);
+                          NEXT_ARG_CHECK();
 			  argv[i][0] = '-';
 			  add_Eargs(argv[i]);
 			  add_Eargs(argv[i+1]);
@@ -1001,10 +1007,11 @@ int main(int argc, char **argv)
 		      }
 		      break;
 		  case 'p':
-		      if (argv[i][2] != 'c' || argv[i][3] != '\0')
+		      if (!(argv[i][2] == 'c' && argv[i][3] == '\0')
+                          && !(argv[i][2] == 'a' && argv[i][3] == 'd' && argv[i][4] == '\0')) {
 			  goto the_default;
-		      if (i+1 >= argc)
-			  usage(argv[i]);
+                      }
+                      NEXT_ARG_CHECK();
 		      argv[i][0] = '-';
 		      add_Eargs(argv[i]);
 		      add_Eargs(argv[i+1]);
@@ -1014,10 +1021,7 @@ int main(int argc, char **argv)
 		      if (!is_one_of_strings(&argv[i][2], plusz_val_switches)) {
 			  goto the_default;
 		      } else {
-			  if (i+1 >= argc
-			      || argv[i+1][0] == '-'
-			      || argv[i+1][0] == '+')
-			      usage(argv[i]);
+                          NEXT_ARG_CHECK();
 			  argv[i][0] = '-';
 			  add_Eargs(argv[i]);
 			  add_Eargs(argv[i+1]);
@@ -1038,10 +1042,19 @@ int main(int argc, char **argv)
 	}
     }
 
+    efree(emu_name);
+
     if (process_args) {
 	ADD_BOOT_CONFIG;
     }
 #undef ADD_BOOT_CONFIG
+
+    /* The default distribution protocol (inet_tcp) relies on epmd,
+       so the -no_epmd option can only work when using an alternative
+       protocol for Erlang distribution. */
+    if (no_epmd && !proto_dist) {
+        error("Missing -proto_dist option, expected when using -no_epmd.");
+    }
 
     /* Doesn't conflict with -extra, since -make skips all the rest of
        the arguments. */
@@ -1049,8 +1062,8 @@ int main(int argc, char **argv)
 	add_args("-s", "erlang", "halt", NULL);
     }
 
-    if (isdistributed && !no_epmd)
-	start_epmd(epmd_prog);
+    if (isdistributed && start_epmd)
+	start_epmd_daemon(epmd_prog);
 
 #if (! defined(__WIN32__)) && defined(DEBUG)
     if (start_detached && get_env("ERL_CONSOLE_MODE")) {
@@ -1072,6 +1085,8 @@ int main(int argc, char **argv)
     add_Eargs("--");
     add_Eargs("-root");
     add_Eargs(rootdir);
+    add_Eargs("-bindir");
+    add_Eargs(bindir);
     add_Eargs("-progname");
     add_Eargs(progname);
     add_Eargs("--");
@@ -1111,35 +1126,14 @@ int main(int argc, char **argv)
  skip_arg_massage:
     /*DebugBreak();*/
 
-    if (run_werl) {
-	if (start_detached) {
-	    char *p;
-	    /* transform werl to erl */
-	    p = start_emulator_program+strlen(start_emulator_program);
-	    while (--p >= start_emulator_program && *p != '/' && *p != '\\' &&
-		   *p != 'W' && *p != 'w')
-		;
-	    if (p >= start_emulator_program && (*p == 'W' || *p == 'w') &&
-		(p[1] == 'E' || p[1] == 'e') && (p[2] == 'R' || p[2] == 'r') &&
-		(p[3] == 'L' || p[3] == 'l')) {
-		memmove(p,p+1,strlen(p));
-	    }
-	}
-      return start_win_emulator(emu, start_emulator_program, Eargsp, start_detached);
-    } else {
-      return start_emulator(emu, start_emulator_program, Eargsp, start_detached);
-    }
+    return start_emulator(emu, start_emulator_program, Eargsp, start_detached);
 
 #else
 
- skip_arg_massage:
     if (start_detached) {
 	int status = fork();
 	if (status != 0)	/* Parent */
 	    return 0;
-
-	if (reset_cerl_detached)
-	    putenv("CERL_DETACHED_PROG=");
 
 	/* Detach from controlling terminal */
 #ifdef HAVE_SETSID
@@ -1178,7 +1172,37 @@ int main(int argc, char **argv)
 	execv(emu, Eargsp);
     }
     if (errno == ENOENT) {
-        error("The emulator \'%s\' does not exist.", emu);
+        if (strcmp(emu_flavor,DEFAULT_SUFFIX) || emu_type) {
+            /* The executable did not exist and a flavor/type flags was given.
+             * We collect the possible combinations and print that in the error
+             * in order to help the user.
+             */
+            char buff[255], *currbuff = buff;
+            DIR *dp = opendir(bindir);
+            if (dp) {
+                struct dirent *ep;
+                while ((ep = readdir(dp)) != NULL) {
+                    if (strncmp("beam",ep->d_name,4) == 0) {
+                        char *type = strstr(ep->d_name,".") + 1;
+                        char *flavor = strstr(type,".");
+                        currbuff += sprintf(currbuff,"\n  ");
+                        if (flavor == NULL) {
+                            flavor = type;
+                        } else {
+                            char* emu_type = strndup(type,flavor - type);
+                            currbuff += sprintf(currbuff,"-emu_type %s ", emu_type);
+                            free(emu_type);
+                            flavor++;
+                        }
+                        currbuff += sprintf(currbuff,"-emu_flavor %s", flavor);
+                    }
+                }
+                closedir(dp);
+            }
+            error("Invalid emulator type or flavor. Available combinations are: %s\n",buff);
+        } else {
+            error("The emulator \'%s\' does not exist.");
+        }
     } else {
         error("Error %d executing \'%s\'.", errno, emu);
     }
@@ -1197,11 +1221,13 @@ usage_aux(void)
 	  "[-start_erl [datafile]] "
 #endif
 	  "[-make] [-man [manopts] MANPAGE] [-x] [-emu_args] [-start_epmd BOOLEAN] "
+          "[-emu_type TYPE] [-emu_flavor FLAVOR] "
 	  "[-args_file FILENAME] [+A THREADS] [+a SIZE] [+B[c|d|i]] [+c [BOOLEAN]] "
-	  "[+C MODE] [+h HEAP_SIZE_OPTION] [+K BOOLEAN] "
-	  "[+l] [+M<SUBSWITCH> <ARGUMENT>] [+P MAX_PROCS] [+Q MAX_PORTS] "
+	  "[+C MODE] [+dcg DECENTRALIZED_COUNTER_GROUPS_LIMIT] [+h HEAP_SIZE_OPTION] "
+          "[+J[Pperf|Msingle] JIT_OPTION] "
+	  "[+M<SUBSWITCH> <ARGUMENT>] [+P MAX_PROCS] [+Q MAX_PORTS] "
 	  "[+R COMPAT_REL] "
-	  "[+r] [+rg READER_GROUPS_LIMIT] [+s SCHEDULER_OPTION] "
+	  "[+r] [+rg READER_GROUPS_LIMIT] [+s<SUBSWITCH> SCHEDULER_OPTION] "
 	  "[+S NO_SCHEDULERS:NO_SCHEDULERS_ONLINE] "
 	  "[+SP PERCENTAGE_SCHEDULERS:PERCENTAGE_SCHEDULERS_ONLINE] "
 	  "[+T LEVEL] [+V] [+v] "
@@ -1234,7 +1260,7 @@ usage_format(char *format, ...)
 }
 
 void
-start_epmd(char *epmd)
+start_epmd_daemon(char *epmd)
 {
     char  epmd_cmd[MAXPATHLEN+100];
 #ifdef __WIN32__
@@ -1309,6 +1335,7 @@ ensure_EargsSz(int sz)
     if (EargsSz < sz)
 	Eargsp = (char **) erealloc((void *) Eargsp,
 				    sizeof(char *) * (EargsSz = sz));
+    ASSERT(Eargsp);
 }
 
 static void
@@ -1565,6 +1592,14 @@ static void get_parameters(int argc, char** argv)
     emu = EMULATOR_EXECUTABLE;
     start_emulator_program = strsave(argv[0]);
 
+    /* in wsl argv[0] is given as "erl.exe", but start_emulator_program should be
+       an absolute path, so we prepend BINDIR to it */
+    if (strcmp(start_emulator_program, "erl.exe") == 0) {
+        erts_snprintf(tmpStr, sizeof(tmpStr), "%s" DIRSEP "%s", bindir,
+                      start_emulator_program);
+        start_emulator_program = strsave(tmpStr);
+    }
+
     free(ini_filename);
 }
 
@@ -1671,7 +1706,7 @@ static char **build_args_from_string(char *string, int allow_comments)
 {
     int argc = 0;
     char **argv = NULL;
-    int alloced = 0;
+    int allocated = 0;
     char **cur_s = NULL;	/* Initialized to avoid warning. */
     int s_alloced = 0;
     int s_pos = 0;
@@ -1690,15 +1725,15 @@ static char **build_args_from_string(char *string, int allow_comments)
 
     if (!p)
 	return NULL;
-    argv = emalloc(sizeof(char *) * (alloced = 10));
+    argv = emalloc(sizeof(char *) * (allocated = 10));
     state = Start;
     for(;;) {
 	switch (state) {
 	case Start:
 	    if (!*p)
 		goto done;
-	    if (argc >= alloced - 2) { /* Make room for extra NULL and "--" */
-		argv = erealloc(argv, (alloced += 10) * sizeof(char *));
+	    if (argc >= allocated - 2) { /* Make room for extra NULL and "--" */
+		argv = erealloc(argv, (allocated += 10) * sizeof(char *));
 	    }
 	    cur_s = argc + argv;
 	    *cur_s = NULL;
@@ -1825,10 +1860,10 @@ done:
 #undef ENSURE
 }
 
-static char *
+static const char *
 errno_string(void)
 {
-    char *str = strerror(errno);
+    const char *str = strerror(errno);
     if (!str)
 	return "unknown error";
     return str;
@@ -1850,8 +1885,18 @@ read_args_file(char *filename)
 	file = fopen(filename, "r");
     } while (!file && errno == EINTR);
     if (!file) {
-	usage_format("Failed to open arguments file \"%s\": %s\n",
+#ifdef __WIN32__
+        char cwd[MAX_PATH];
+        if (_getcwd(cwd, sizeof(cwd)) == NULL) {
+#else
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+#endif
+            cwd[0] = '\0';
+        }
+	usage_format("Failed to open arguments file \"%s\" at \"%s\": %s\n",
 		     filename,
+             cwd,
 		     errno_string());
     }
 

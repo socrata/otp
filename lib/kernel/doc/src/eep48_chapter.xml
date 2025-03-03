@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2020</year><year>2020</year>
+      <year>2020</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -37,6 +37,9 @@
 
   <p>To fetch the EEP-48 documentation for a module you can use
     <seemfa marker="code#get_doc/1"><c>code:get_doc/1</c></seemfa>.</p>
+
+  <p>To render the EEP-48 documentation for an Erlang module you can use
+    <seemfa marker="stdlib:shell_docs#render/2"><c>shell_docs:render/2</c></seemfa>.</p>
 
   <section>
     <title>the "Docs" storage</title>
@@ -169,7 +172,7 @@
         as &lt;&lt;"1.3.0"&gt;&gt; or &lt;&lt;"20.0"&gt;&gt;.</item>
 
       <tag>edit_url := binary()</tag>
-      <item>a binary representing a URL to change to change the documentation itself.</item>
+      <item>a binary representing a URL to change the documentation itself.</item>
     </taglist>
 
     <p>Any key may be added to Metadata at any time. Keys that are frequently

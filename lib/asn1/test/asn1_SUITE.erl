@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -137,6 +137,7 @@ all() ->
      testNortel,
      test_WS_ParamClass,
      test_modified_x420,
+     testContaining,
 
      %% Some heavy tests.
      testTcapsystem,
@@ -191,17 +192,40 @@ init_per_testcase(Func, Config) ->
 
 end_per_testcase(_Func, Config) ->
     CaseDir = proplists:get_value(case_dir, Config),
+    unload_modules(CaseDir),
     asn1_test_lib:rm_dirs([CaseDir]),
     code:del_path(CaseDir).
+
+unload_modules(CaseDir) ->
+    F = fun(Name0, Acc) ->
+                Name1 = filename:rootname(filename:basename(Name0)),
+                Name = list_to_existing_atom(Name1),
+                [Name|Acc]
+        end,
+    Beams1 = lists:usort(filelib:fold_files(CaseDir, "[.]beam\$", true, F, [])),
+    Beams = [M || M <- Beams1, code:is_loaded(M) =/= false],
+    _ = [begin
+             code:purge(M),
+             code:delete(M),
+             code:purge(M),
+             io:format("Unloaded ~p", [M])
+         end || M <- Beams],
+    ok.
 
 %%------------------------------------------------------------------------------
 %% Test runners
 %%------------------------------------------------------------------------------
 
+have_jsonlib() ->
+    case code:which(jsx) of
+        non_existing -> false;
+    _ -> true
+    end.
+
 test(Config, TestF) ->
-    TestJer = case code:which(jsx) of
-                  non_existing -> [];
-                  _ -> [jer]
+    TestJer = case have_jsonlib() of
+                  true -> [jer, {ber, [ber,jer]}];
+                  false -> []
               end,
     test(Config, TestF, [per,
                          uper,
@@ -421,14 +445,30 @@ testExtensionDefault(Config) ->
     test(Config, fun testExtensionDefault/3).
 testExtensionDefault(Config, Rule, Opts) ->
     asn1_test_lib:compile_all(["ExtensionDefault"], Config, [Rule|Opts]),
-    testExtensionDefault:main(Rule).
+    case lists:member(ber, Opts) andalso lists:member(jer, Opts) of
+        true ->
+            %% JER back-end disables maps for BER, too.
+            ok;
+        false ->
+            testExtensionDefault:main(Rule)
+    end.
 
 testMaps(Config) ->
-    test(Config, fun testMaps/3,
+    Jer = case have_jsonlib() of
+        true -> [{jer,[maps,no_ok_wrapper]}];
+        false -> []
+    end,
+    RulesAndOptions = 
          [{ber,[maps,no_ok_wrapper]},
           {ber,[maps,der,no_ok_wrapper]},
           {per,[maps,no_ok_wrapper]},
-          {uper,[maps,no_ok_wrapper]}]).
+          {uper,[maps,no_ok_wrapper]}] ++ Jer,
+    test(Config, fun testMaps/3, RulesAndOptions),
+    case Jer of
+        [] -> {comment,"skipped JER"};
+        _ -> ok
+    end.
+
 testMaps(Config, Rule, Opts) ->
     asn1_test_lib:compile_all(['Maps'], Config, [Rule|Opts]),
     testMaps:main(Rule).
@@ -587,14 +627,15 @@ constraint_equivalence_abs(Config) ->
 	[_|_] ->
 	    io:put_chars("Not equivalent:\n"),
 	    [io:format("~s: ~p\n", [N,D]) || {N,D} <- Diff],
-	    test_server:fail(length(Diff))
+	    ct:fail(length(Diff))
     end.
 
 parse(Config) ->
     [asn1_test_lib:compile(M, Config, [abs]) || M <- test_modules()].
 
 per(Config) ->
-    test(Config, fun per/3, [per,uper,{per,[maps]},{uper,[maps]}]).
+    test(Config, fun per/3,
+         [per,uper,{per,[maps]},{uper,[maps]},{per,[jer]}]).
 per(Config, Rule, Opts) ->
     module_test(per_modules(), Config, Rule, Opts).
 
@@ -715,19 +756,18 @@ ber_decode_error(Config, Rule, Opts) ->
     ber_decode_error:run(Opts).
 
 otp_14440(_Config) ->
-    Args = " -pa \"" ++ filename:dirname(code:which(?MODULE)) ++ "\"",
-    {ok,N} = slave:start(hostname(), otp_14440, Args),
+    {ok, Peer, N} = ?CT_PEER(),
     Result = rpc:call(N, ?MODULE, otp_14440_decode, []),
     io:format("Decode result = ~p~n", [Result]),
+    peer:stop(Peer),
     case Result of
         {exit,{error,{asn1,{invalid_value,5}}}} ->
-            ok = slave:stop(N);
+            ok;
         %% We get this if stack depth limit kicks in:
         {exit,{error,{asn1,{unknown,_}}}} ->
-            ok = slave:stop(N);
+            ok;
         _ ->
-            _ = slave:stop(N),
-            ?t:fail(Result)
+            ct:fail(Result)
     end.
 %%
 otp_14440_decode() ->
@@ -978,9 +1018,8 @@ testNortel(Config) -> test(Config, fun testNortel/3).
 testNortel(Config, Rule, Opts) ->
     asn1_test_lib:compile("Nortel", Config, [Rule|Opts]).
 
-test_undecoded_rest(Config) -> test(Config, fun test_undecoded_rest/3).
-test_undecoded_rest(_Config,jer,_Opts) ->
-    ok; % not relevant for JER
+test_undecoded_rest(Config) ->
+    test(Config, fun test_undecoded_rest/3, [per, uper, ber]).
 test_undecoded_rest(Config, Rule, Opts) ->
     do_test_undecoded_rest(Config, Rule, Opts),
     do_test_undecoded_rest(Config, Rule, [no_ok_wrapper|Opts]),
@@ -1047,7 +1086,8 @@ test_compile_options(Config) ->
     ok = test_compile_options:noobj(Config),
     ok = test_compile_options:record_name_prefix(Config),
     ok = test_compile_options:verbose(Config),
-    ok = test_compile_options:maps(Config).
+    ok = test_compile_options:maps(Config),
+    ok = test_compile_options:determinism(Config).
 
 testDoubleEllipses(Config) -> test(Config, fun testDoubleEllipses/3).
 testDoubleEllipses(Config, Rule, Opts) ->
@@ -1105,6 +1145,20 @@ testExtensionAdditionGroup(Config, Rule, Opts) ->
     asn1_test_lib:compile("EUTRA-RRC-Definitions", Config,
 			  [Rule,{record_name_prefix,"RRC-"}|Opts]),
     extensionAdditionGroup:run(Rule).
+
+testContaining(Config) ->
+    test(Config, fun testContaining/3).
+testContaining(Config, Rule, Opts) ->
+    asn1_test_lib:compile("Containing", Config, [Rule|Opts]),
+    testContaining:containing(Rule),
+    case {Rule,have_jsonlib()} of
+        {per,true} ->
+            io:format("Testing with both per and jer...\n"),
+            asn1_test_lib:compile("Containing", Config, [jer,Rule|Opts]),
+            testContaining:containing(per_jer);
+        _ ->
+            ok
+    end.
 
 per_modules() ->
     [X || X <- test_modules()].
@@ -1345,8 +1399,7 @@ xref(_Config) ->
 	{ok,[]} ->
 	    ok;
 	{ok,[_|_]=Res} ->
-	    io:format("Exported, but unused: ~p\n", [Res]),
-	    ?t:fail()
+	    ct:fail("Exported, but unused: ~p\n", [Res])
     end.
 
 %% Ensure that all functions that are implicitly exported by
@@ -1367,8 +1420,7 @@ xref_export_all(_Config) ->
             ok;
         [_|_] ->
             Msg = [io_lib:format("~p:~p/~p\n", [M,F,A]) || {M,F,A} <- Unused],
-            io:format("There are unused functions:\n\n~s\n", [Msg]),
-            ?t:fail(unused_functions)
+            ct:fail("There are unused functions:\n\n~s\n", [Msg])
     end.
 
 %% Collect all functions that common_test will call in this module.
@@ -1397,11 +1449,3 @@ all_called_1([F|T]) when is_atom(F) ->
     L ++ all_called_1(T);
 all_called_1([]) ->
     [].
-
-hostname() ->
-    hostname(atom_to_list(node())).
-
-hostname([$@ | Hostname]) ->
-    list_to_atom(Hostname);
-hostname([_C | Cs]) ->
-    hostname(Cs).

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@
                         | bsr_anycrlf | bsr_unicode
                         | no_start_optimize | ucp | never_utf.
 
+-type replace_fun() :: fun((binary(), [binary()]) -> iodata() | unicode:charlist()).
+
 %%% BIFs
 
 -export([internal_run/4]).
@@ -38,6 +40,10 @@
 -export([version/0, compile/1, compile/2, run/2, run/3, inspect/2]).
 
 -spec version() -> binary().
+
+%% We must inline these functions so that the stacktrace points to
+%% the correct function.
+-compile({inline, [badarg_with_cause/2, badarg_with_info/1]}).
 
 version() ->
     erlang:nif_error(undef).
@@ -152,7 +158,12 @@ inspect(_,_) ->
       SplitList :: [iodata() | unicode:charlist()].
 
 split(Subject,RE) ->
-    split(Subject,RE,[]).
+    try
+        split(Subject,RE,[])
+    catch
+        error:_ ->
+            badarg_with_info([Subject,RE])
+    end.
 
 -spec split(Subject, RE, Options) -> SplitList when
       Subject :: iodata() | unicode:charlist(),
@@ -206,11 +217,11 @@ split(Subject,RE,Options) ->
     end
     catch
 	throw:badopt ->
-	    erlang:error(badarg,[Subject,RE,Options]);
+	    badarg_with_cause([Subject,RE,Options], badopt);
 	throw:badre ->
-	    erlang:error(badarg,[Subject,RE,Options]);
+	    badarg_with_info([Subject,RE,Options]);
 	error:badarg ->
-	    erlang:error(badarg,[Subject,RE,Options])
+	    badarg_with_info([Subject,RE,Options])
     end.
 
 backstrip_empty(List, false) ->
@@ -344,15 +355,20 @@ compile_split(_,_) ->
 -spec replace(Subject, RE, Replacement) -> iodata() | unicode:charlist() when
       Subject :: iodata() | unicode:charlist(),
       RE :: mp() | iodata(),
-      Replacement :: iodata() | unicode:charlist().
+      Replacement :: iodata() | unicode:charlist() | replace_fun().
 
 replace(Subject,RE,Replacement) ->
-    replace(Subject,RE,Replacement,[]).
+    try
+        replace(Subject,RE,Replacement,[])
+    catch
+        error:_ ->
+            badarg_with_info([Subject,RE,Replacement])
+    end.
 
 -spec replace(Subject, RE, Replacement, Options) -> iodata() | unicode:charlist() when
       Subject :: iodata() | unicode:charlist(),
       RE :: mp() | iodata() | unicode:charlist(),
-      Replacement :: iodata() | unicode:charlist(),
+      Replacement :: iodata() | unicode:charlist() | replace_fun(),
       Options :: [Option],
       Option :: anchored | global | notbol | noteol | notempty 
 	      | notempty_atstart
@@ -366,11 +382,11 @@ replace(Subject,RE,Replacement) ->
 
 replace(Subject,RE,Replacement,Options) ->
     try
-    {NewOpt,Convert} = process_repl_params(Options,iodata),
-    Unicode = check_for_unicode(RE, Options),
-    FlatSubject = to_binary(Subject, Unicode),
-    FlatReplacement = to_binary(Replacement, Unicode),
-    IoList = do_replace(FlatSubject,Subject,RE,FlatReplacement,NewOpt),
+	{NewOpt,Convert} = process_repl_params(Options,iodata),
+	Unicode = check_for_unicode(RE, Options),
+	FlatSubject = to_binary(Subject, Unicode),
+	Replacement1 = normalize_replacement(Replacement, Unicode),
+	IoList = do_replace(FlatSubject,Subject,RE,Replacement1,NewOpt),
 	case Convert of
 	    iodata ->
 		IoList;
@@ -391,13 +407,17 @@ replace(Subject,RE,Replacement,Options) ->
 	end
     catch
 	throw:badopt ->
-	    erlang:error(badarg,[Subject,RE,Replacement,Options]);
+	    badarg_with_cause([Subject,RE,Replacement,Options], badopt);
 	throw:badre ->
-	    erlang:error(badarg,[Subject,RE,Replacement,Options]);
+	    badarg_with_info([Subject,RE,Replacement,Options]);
 	error:badarg ->
-	    erlang:error(badarg,[Subject,RE,Replacement,Options])
+	    badarg_with_info([Subject,RE,Replacement,Options])
     end.
 
+normalize_replacement(Replacement, _Unicode) when is_function(Replacement, 2) ->
+    Replacement;
+normalize_replacement(Replacement, Unicode) ->
+    to_binary(Replacement, Unicode).
 
 do_replace(FlatSubject,Subject,RE,Replacement,Options) ->
     case re:run(FlatSubject,RE,Options) of
@@ -427,7 +447,9 @@ process_repl_params([{return,_}|_],_) ->
     throw(badopt);
 process_repl_params([H|T],C) ->
     {NT,NC} = process_repl_params(T,C),
-    {[H|NT],NC}.
+    {[H|NT],NC};
+process_repl_params(_,_) ->
+    throw(badopt).
 
 process_split_params([],Convert,Limit,Strip,Group) ->
     {[],Convert,Limit,Strip,Group};
@@ -461,7 +483,9 @@ process_split_params([{return,_}|_],_,_,_,_) ->
     throw(badopt);
 process_split_params([H|T],C,L,S,G) ->
     {NT,NC,NL,NS,NG} = process_split_params(T,C,L,S,G),
-    {[H|NT],NC,NL,NS,NG}.
+    {[H|NT],NC,NL,NS,NG};
+process_split_params(_,_,_,_,_) ->
+    throw(badopt).
 
 apply_mlist(Subject,Replacement,Mlist) ->
     do_mlist(Subject,Subject,0,precomp_repl(Replacement), Mlist).
@@ -494,7 +518,9 @@ precomp_repl(<<X,Rest/binary>>) ->
 	    [<<X,BHead/binary>> | T0];
 	Other ->
 	    [<<X>> | Other]
-    end.
+    end;
+precomp_repl(Repl) when is_function(Repl) ->
+    Repl.
     
 
 
@@ -522,6 +548,16 @@ do_mlist(Whole,Subject,Pos,Repl,[[{MPos,Count} | Sub] | Tail])
     [NewData | do_mlist(Whole,Rest,Pos+EatLength,Repl,Tail)].
 
 
+do_replace(Subject, Repl, SubExprs0) when is_function(Repl) ->
+    All = binary:part(Subject, hd(SubExprs0)),
+    SubExprs1 =
+        [ if
+              Pos >= 0, Len > 0 ->
+                  binary:part(Subject, Pos, Len);
+              true ->
+                  <<>>
+          end || {Pos, Len} <- tl(SubExprs0) ],
+    Repl(All, SubExprs1);
 do_replace(_,[Bin],_) when is_binary(Bin) ->
     Bin;
 do_replace(Subject,Repl,SubExprs0) ->
@@ -942,3 +978,10 @@ to_binary(Data, true) ->
     unicode:characters_to_binary(Data,unicode);
 to_binary(Data, false) ->
     iolist_to_binary(Data).
+
+badarg_with_cause(Args, Cause) ->
+    erlang:error(badarg, Args, [{error_info, #{module => erl_stdlib_errors,
+                                               cause => Cause}}]).
+
+badarg_with_info(Args) ->
+    erlang:error(badarg, Args, [{error_info, #{module => erl_stdlib_errors}}]).

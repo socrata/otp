@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -161,21 +161,19 @@ send(Request, Opts) ->
     BinRequest = pack(encode(Request)),
     ok = gen_tcp:send(Socket, BinRequest),
 
-    {ok, BinResponse} = gen_tcp:recv(Socket, 0, Timeout),
+    {ok, <<Len:32/unsigned-big-integer>>} = gen_tcp:recv(Socket, 4, Timeout),
+    {ok, BinResponse} = gen_tcp:recv(Socket, Len, Timeout),
 
     ok = gen_tcp:close(Socket),
 
-    Response = decode(unpack(BinResponse)),
+    Response = decode(BinResponse),
 
     Response.
 
-%% Message packing and unpacking
+%% Message packing
 
 pack(Data) ->
-    <<(size(Data)):32/unsigned-big-integer, Data/binary>>.
-
-unpack(<<Len:32/unsigned-big-integer, Data:Len/binary>>) ->
-    Data.
+    <<(byte_size(Data)):32/unsigned-big-integer, Data/binary>>.
 
 %% SSH Agent message encoding
 

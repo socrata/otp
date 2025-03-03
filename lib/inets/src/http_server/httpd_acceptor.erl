@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,8 +66,7 @@ acceptor_init(Parent, Manager, SocketType, Addr, Port, IpFamily,
 	    acceptor_loop(Manager, SocketType, Addr, Port, 
 			  ListenSocket, IpFamily,ConfigDb, AcceptTimeout);
 	Error ->
-	    proc_lib:init_ack(Parent, Error),
-	    error
+	    proc_lib:init_fail(Parent, Error, {exit, normal})
     end.
    
 do_init(SocketType, Addr, Port, IpFamily) ->
@@ -152,7 +151,7 @@ handle_error(closed, _, _) ->
 			     "badly."),
     exit(normal);
 
-%% This will only happen when the client is terminated abnormaly
+%% This will only happen when the client is terminated abnormally
 %% and is not a problem for the server, so we want
 %% to terminate normal so that we can restart without any 
 %% error messages.

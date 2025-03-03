@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -54,31 +54,33 @@ send(SendAddr, #session{socket = Socket, socket_type = SocketType},
 send(SendAddr, #session{socket = Socket, socket_type = SocketType}, Request) ->
     send(SendAddr, Socket, SocketType, Request).
     
-send(SendAddr, Socket, SocketType, 
-     #request{method        = Method, 
-	      path          = Path, 
-	      pquery        = Query, 
-	      headers       = Headers,
-	      content       = Content, 
-	      address       = Address, 
-	      abs_uri       = AbsUri, 
-	      headers_as_is = HeadersAsIs,
-	      settings      = HttpOptions, 
-	      userinfo      = UserInfo}) -> 
+send(SendAddr, Socket, SocketType,
+     #request{method          = Method,
+              path            = Path,
+              pquery          = Query,
+              headers         = Headers,
+              content         = Content,
+              address         = Address,
+              abs_uri         = AbsUri,
+              headers_as_is   = HeadersAsIs,
+              settings        = HttpOptions,
+              userinfo        = UserInfo,
+              request_options = Options}) ->
     
-    ?hcrt("send", 
-	  [{send_addr,     SendAddr}, 
-	   {socket,        Socket}, 
-	   {method,        Method}, 
-	   {path,          Path}, 
-	   {pquery,        Query}, 
-	   {headers,       Headers},
-	   {content,       Content}, 
-	   {address,       Address}, 
-	   {abs_uri,       AbsUri}, 
-	   {headers_as_is, HeadersAsIs},
-	   {settings,      HttpOptions}, 
-	   {userinfo,      UserInfo}]),
+    ?hcrt("send",
+          [{send_addr,       SendAddr},
+           {socket,          Socket},
+           {method,          Method},
+           {path,            Path},
+           {pquery,          Query},
+           {headers,         Headers},
+           {content,         Content},
+           {address,         Address},
+           {abs_uri,         AbsUri},
+           {headers_as_is,   HeadersAsIs},
+           {settings,        HttpOptions},
+           {userinfo,        UserInfo},
+           {request_options, Options}]),
 
     TmpHdrs = handle_user_info(UserInfo, Headers),
 
@@ -95,17 +97,23 @@ send(SendAddr, Socket, SocketType,
 		{TmpHdrs2, Path ++ Query}	
 	end,
     
-    FinalHeaders = 
-	case NewHeaders of
-	    HeaderList when is_list(HeaderList) ->
-		http_headers(HeaderList, []);
-	    _  ->
-		http_request:http_headers(NewHeaders)
-	end,
-    Version = HttpOptions#http_options.version,
-
-    do_send_body(SocketType, Socket, Method, Uri, Version, FinalHeaders, Body).
-
+    FinalHeaders = try
+                       case NewHeaders of
+                           HeaderList when is_list(HeaderList) ->
+                               http_headers(HeaderList, []);
+                           _  ->
+                               http_request:http_headers(NewHeaders)
+                       end
+                   catch throw:{invalid_header, _} = Bad ->
+                           {error, Bad}
+                   end,
+    case FinalHeaders of
+        {error,_} = InvalidHeaders ->
+            InvalidHeaders;
+        _ ->
+            Version = HttpOptions#http_options.version,
+            do_send_body(SocketType, Socket, Method, Uri, Version, FinalHeaders, Body)
+    end.
 
 do_send_body(SocketType, Socket, Method, Uri, Version, Headers, 
 	     {ProcessBody, Acc}) when is_function(ProcessBody, 1) ->
@@ -120,8 +128,7 @@ do_send_body(SocketType, Socket, Method, Uri, Version, Headers,
 do_send_body(SocketType, Socket, Method, Uri, Version, Headers, Body) ->
     ?hcrt("create message", [{body, Body}]),
     Message = [method(Method), " ", Uri, " ",
-	       version(Version), ?CRLF,
-	       headers(Headers, Version), ?CRLF, Body],
+	       Version, ?CRLF, Headers, ?CRLF, Body],
     ?hcrd("send", [{message, Message}]),
     http_transport:send(SocketType, Socket, Message).
 
@@ -242,10 +249,10 @@ handle_transfer_encoding(Headers) ->
     Headers#http_request_h{'content-length' = undefined}.
 
 body_length(Body) when is_binary(Body) ->
-   integer_to_list(size(Body));
+   integer_to_list(byte_size(Body));
 
 body_length(Body) when is_list(Body) ->
-  integer_to_list(length(Body)).
+  integer_to_list(iolist_size(Body)).
 
 %% Set 'Content-Type' when it is explicitly set.
 handle_content_type(Headers, "") ->
@@ -255,20 +262,6 @@ handle_content_type(Headers, ContentType) ->
 
 method(Method) ->
     http_util:to_upper(atom_to_list(Method)).
-
-version("HTTP/0.9") ->
-    "";
-version(Version) ->
-    Version.
-
-headers(_, "HTTP/0.9") ->
-    "";
-%% HTTP 1.1 headers not present in HTTP 1.0 should be
-%% consider as unknown extension headers that should be
-%% ignored. 
-headers(Headers, _) ->
-    Headers.
-
 
 http_headers([], Headers) ->
     lists:flatten(Headers);

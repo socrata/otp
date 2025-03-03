@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,12 +22,13 @@
 %% External exports
 -export([start/1, 
 	 load_application/1, unload_application/1, 
-	 start_application/2, start_boot_application/2, stop_application/1,
-	 control_application/1,
+	 start_application/2, start_application_request/2,
+	 start_boot_application/2, stop_application/1,
+	 control_application/1, is_running/1,
 	 change_application_data/2, prep_config_change/0, config_change/1,
 	 which_applications/0, which_applications/1,
 	 loaded_applications/0, info/0, set_env/2,
-	 get_pid_env/2, get_env/2, get_pid_all_env/1, get_all_env/1,
+	 get_pid_env/2, get_env/2, get_env/3, get_pid_all_env/1, get_all_env/1,
 	 get_pid_key/2, get_key/2, get_pid_all_key/1, get_all_key/1,
 	 get_master/1, get_application/1, get_application_module/1,
 	 start_type/1, permit_application/2, do_config_diff/2,
@@ -158,7 +159,7 @@
 %% Env         = [{Key, Value}]
 %%-----------------------------------------------------------------
 
--record(appl, {name, appl_data, descr, id, vsn, restart_type, inc_apps, apps}).
+-record(appl, {name, appl_data, descr, id, vsn, restart_type, inc_apps, opt_apps, apps}).
 
 %%-----------------------------------------------------------------
 %% Func: start/1
@@ -208,10 +209,10 @@ start(KernelApp) ->
 %% Returns: ok | {error, Reason}
 %%-----------------------------------------------------------------
 load_application(Application) ->
-    gen_server:call(?AC, {load_application, Application}, infinity).
+    call({load_application, Application}, infinity).
 
 unload_application(AppName) ->
-    gen_server:call(?AC, {unload_application, AppName}, infinity).
+    call({unload_application, AppName}, infinity).
 
 %%-----------------------------------------------------------------
 %% Func: start_application/2
@@ -235,12 +236,26 @@ unload_application(AppName) ->
 %% Returns: ok | {error, Reason}
 %%-----------------------------------------------------------------
 start_application(AppName, RestartType) ->
-    gen_server:call(?AC, {start_application, AppName, RestartType}, infinity).
+    call({start_application, AppName, RestartType}, infinity).
+
+start_application_request(AppName, RestartType) ->
+    gen_server:send_request(?AC, {start_application, AppName, RestartType}).
+
+%%-----------------------------------------------------------------
+%% Func: is_running/1
+%% Args: Application = atom()
+%% Purpose: Checks if an application is running.
+%%          This is used by application to avoid traversing an
+%%          application's child in case it is already running.
+%% Returns: boolean
+%%-----------------------------------------------------------------
+is_running(AppName) when is_atom(AppName) ->
+    call({is_running, AppName}, infinity).
 
 %%-----------------------------------------------------------------
 %% Func: start_boot_application/2
 %% The same as start_application/2 expect that this function is
-%% called from the boot script file. It mustnot be used by the operator.
+%% called from the boot script file. It must not be used by the operator.
 %% This function will cause a node crash if a permanent application 
 %% fails to boot start
 %%-----------------------------------------------------------------
@@ -248,9 +263,9 @@ start_boot_application(Application, RestartType) ->
     case {application:load(Application), RestartType} of
 	{ok, _} ->
 	    AppName = get_appl_name(Application),
-	    gen_server:call(?AC, {start_application, AppName, RestartType}, infinity);
+	    call({start_application, AppName, RestartType}, infinity);
 	{{error, {already_loaded, AppName}}, _} ->
-	    gen_server:call(?AC, {start_application, AppName, RestartType}, infinity);
+	    call({start_application, AppName, RestartType}, infinity);
 	{{error,{bad_environment_value,Env}}, permanent} ->
 	    Txt = io_lib:format("Bad environment variable: ~tp  Application: ~p",
 				[Env, Application]),
@@ -260,15 +275,15 @@ start_boot_application(Application, RestartType) ->
     end.
 
 stop_application(AppName) ->
-    gen_server:call(?AC, {stop_application, AppName}, infinity).
+    call({stop_application, AppName}, infinity).
 
 %%-----------------------------------------------------------------
 %% Returns: [{Name, Descr, Vsn}]
 %%-----------------------------------------------------------------
 which_applications() ->
-    gen_server:call(?AC, which_applications).    
+    call(which_applications).
 which_applications(Timeout) ->
-    gen_server:call(?AC, which_applications, Timeout).
+    call(which_applications, Timeout).
 
 loaded_applications() ->
     ets:select(ac_tab,
@@ -280,10 +295,10 @@ loaded_applications() ->
 
 %% Returns some debug info
 info() ->
-    gen_server:call(?AC, info).    
+    call(info).
 
 control_application(AppName) ->
-    gen_server:call(?AC, {control_application, AppName}, infinity).
+    call({control_application, AppName}, infinity).
 
 %%-----------------------------------------------------------------
 %% Func: change_application_data/2
@@ -308,21 +323,14 @@ control_application(AppName) ->
 %%          some applicatation may have got new config data.
 %%-----------------------------------------------------------------
 change_application_data(Applications, Config) ->
-    gen_server:call(?AC, 
-		    {change_application_data, Applications, Config},
-		    infinity).
+    call({change_application_data, Applications, Config},infinity).
 
 prep_config_change() ->
-    gen_server:call(?AC, 
-		    prep_config_change,
-		    infinity).
+    call(prep_config_change, infinity).
 
 
 config_change(EnvPrev) ->
-    gen_server:call(?AC, 
-		    {config_change, EnvPrev},
-		    infinity).
-
+    call({config_change, EnvPrev},infinity).
 
 
 get_pid_env(Master, Key) ->
@@ -332,10 +340,14 @@ get_pid_env(Master, Key) ->
     end.
 
 get_env(AppName, Key) ->
-    case ets:lookup(ac_tab, {env, AppName, Key}) of
-	[{_, Val}] -> {ok, Val};
-	_ -> undefined
+    NotFound = make_ref(),
+    case ets:lookup_element(ac_tab, {env, AppName, Key}, 2, NotFound) of
+        NotFound -> undefined;
+        Val -> {ok, Val}
     end.
+
+get_env(AppName, Key, Default) ->
+    ets:lookup_element(ac_tab, {env, AppName, Key}, 2, Default).
 
 get_pid_all_env(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
@@ -373,6 +385,8 @@ get_key(AppName, Key) ->
 		    {ok, (Appl#appl.appl_data)#appl_data.regs};
 		included_applications ->
 		    {ok, Appl#appl.inc_apps};
+                optional_applications ->
+                    {ok, Appl#appl.opt_apps};
 		applications ->
 		    {ok, Appl#appl.apps};
 		env ->
@@ -404,6 +418,7 @@ get_all_key(AppName) ->
 		  {maxT, (Appl#appl.appl_data)#appl_data.maxT},
 		  {registered, (Appl#appl.appl_data)#appl_data.regs},
 		  {included_applications, Appl#appl.inc_apps},
+                  {optional_applications, Appl#appl.opt_apps},
 		  {applications, Appl#appl.apps},
 		  {env, get_all_env(AppName)},
 		  {mod, (Appl#appl.appl_data)#appl_data.mod},
@@ -417,7 +432,7 @@ get_all_key(AppName) ->
 start_type(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
 	[[AppName]] -> 
-	    gen_server:call(?AC, {start_type, AppName}, infinity);
+	    call({start_type, AppName}, infinity);
 	_X -> 
 	    undefined
     end.
@@ -428,10 +443,7 @@ start_type(Master) ->
 
 
 get_master(AppName) ->
-    case ets:lookup(ac_tab, {application_master, AppName}) of
-	[{_, Pid}] -> Pid;
-	_ -> undefined
-    end.
+    ets:lookup_element(ac_tab, {application_master, AppName}, 2, undefined).
 
 get_application(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
@@ -456,31 +468,44 @@ get_application_module(_Module, []) ->
     undefined.
 
 permit_application(ApplName, Flag) ->
-    gen_server:call(?AC, 
-		    {permit_application, ApplName, Flag},
-		    infinity).
+    call({permit_application, ApplName, Flag},infinity).
 
 set_env(Config, Opts) ->
     case check_conf_data(Config) of
 	ok ->
 	    Timeout = proplists:get_value(timeout, Opts, 5000),
-	    gen_server:call(?AC, {set_env, Config, Opts}, Timeout);
+	    call({set_env, Config, Opts}, Timeout);
 
 	{error, _} = Error ->
 	    Error
     end.
 
 set_env(AppName, Key, Val) ->
-    gen_server:call(?AC, {set_env, AppName, Key, Val, []}).
+    call({set_env, AppName, Key, Val, []}).
 set_env(AppName, Key, Val, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, 5000),
-    gen_server:call(?AC, {set_env, AppName, Key, Val, Opts}, Timeout).
+    call({set_env, AppName, Key, Val, Opts}, Timeout).
 
 unset_env(AppName, Key) ->
-    gen_server:call(?AC, {unset_env, AppName, Key, []}).
+    call({unset_env, AppName, Key, []}).
 unset_env(AppName, Key, Opts) ->
     Timeout = proplists:get_value(timeout, Opts, 5000),
-    gen_server:call(?AC, {unset_env, AppName, Key, Opts}, Timeout).
+    call({unset_env, AppName, Key, Opts}, Timeout).
+
+call(Cmd) ->
+    case gen_server:call(?AC, Cmd) of
+        {error, terminating} ->
+            exit(terminating);
+        Res ->
+            Res
+    end.
+call(Cmd, Timeout) ->
+    case gen_server:call(?AC, Cmd, Timeout) of
+        {error, terminating} ->
+            exit(terminating);
+        Res ->
+            Res
+    end.
 
 %%%-----------------------------------------------------------------
 %%% call-back functions from gen_server
@@ -495,7 +520,7 @@ init(Init, Kernel) ->
 	{ok, ConfData} ->
 	    %% Actually, we don't need this info in an ets table anymore.
 	    %% This table was introduced because starting applications
-	    %% should be able to get som info from AC (e.g. loaded_apps).
+	    %% should be able to get some info from AC (e.g. loaded_apps).
 	    %% The new implementation makes sure the AC process can be
 	    %% called during start-up of any app.
 	    case check_conf_data(ConfData) of
@@ -524,6 +549,12 @@ init(Init, Kernel) ->
 		lists:flatten(io_lib:format("error in config file "
 					    "~tp (~w): ~ts",
 					    [File, Line, Str])),
+	    Init ! {ack, self(), {error, to_string(ReasonStr)}};
+        {error, {file_descriptor, FDString, Line, Str}} ->
+	    ReasonStr =
+		lists:flatten(io_lib:format("error in config read from file descriptor "
+					    "~tp (~w): ~ts",
+					    [FDString, Line, Str])),
 	    Init ! {ack, self(), {error, to_string(ReasonStr)}}
     end.
 
@@ -616,7 +647,7 @@ check_distributed(_Else) ->
         {'noreply', state()} | {'reply', term(), state()}.
 
 handle_call({load_application, Application}, From, S) ->
-    case catch do_load_application(Application, S) of
+    case catch maybe_load_application(Application, S) of
 	{ok, NewS} ->
 	    AppName = get_appl_name(Application),
 	    case cntrl(AppName, S, {ac_load_application_req, AppName}) of
@@ -650,7 +681,7 @@ handle_call({start_application, AppName, RestartType}, From, S) ->
     #state{running = Running, starting = Starting, start_p_false = SPF, 
 	   started = Started, start_req = Start_req} = S,
     %% Check if the commandline environment variables are OK.
-    %% Incase of erroneous variables do not start the application,
+    %% In case of erroneous variables do not start the application,
     %% if the application is permanent crash the node.
     %% Check if the application is already starting.
     case lists:keyfind(AppName, 1, Start_req) of
@@ -689,6 +720,10 @@ handle_call({start_application, AppName, RestartType}, From, S) ->
 	    SS = S#state{start_req = [{AppName, From} | Start_req]},
 	    {noreply, SS}
     end;
+
+handle_call({is_running, AppName}, _From, S) ->
+    #state{running = Running} = S,
+    {reply, lists:keymember(AppName, 1, Running), S};
 
 handle_call({permit_application, AppName, Bool}, From, S) ->
     Control = S#state.control,
@@ -815,13 +850,11 @@ handle_call({stop_application, AppName}, _From, S) ->
     end;
 
 handle_call({change_application_data, Applications, Config}, _From, S) ->
-    OldAppls = ets:filter(ac_tab,
-			  fun([{{loaded, _AppName}, Appl}]) ->
-				  {true, Appl};
-			     (_) ->
-				  false
-			  end,
-			  []),
+    OldAppls = ets:foldl(fun({{loaded, _AppName}, Appl}, Acc) ->
+                                 [Appl|Acc];
+                            (_, Acc) ->
+                                 Acc
+                         end, [], ac_tab),
     case catch do_change_apps(Applications, Config, OldAppls) of
 	{error, _} = Error ->
 	    {reply, Error, S};
@@ -927,7 +960,7 @@ handle_application_started(AppName, Res, S) ->
     #state{starting = Starting, running = Running, started = Started, 
 	   start_req = Start_req} = S,
     Start_reqN = reply_to_requester(AppName, Start_req, Res),
-    {_AppName, RestartType, _Type, _From} = lists:keyfind(AppName, 1, Starting),
+    {AppName, RestartType, _Type, _From} = lists:keyfind(AppName, 1, Starting),
     case Res of
 	{ok, Id} ->
 	    case AppName of
@@ -953,8 +986,8 @@ handle_application_started(AppName, Res, S) ->
 			true ->
 			    #state{running = StopRunning, started = StopStarted} = NewS,
 			    case lists:keyfind(AppName, 1, StopRunning) of
-				{_AppName, Id} ->
-				    {_AppName2, Type} =
+				{AppName, Id} ->
+				    {AppName, Type} =
 					lists:keyfind(AppName, 1, StopStarted),
 				    stop_appl(AppName, Id, Type),
 				    NStopRunning = keydelete(AppName, 1, StopRunning),
@@ -1206,14 +1239,21 @@ terminate(Reason, S) ->
 			%% Proc died before link
 			{'EXIT', Id, _} -> ok
 		    after 0 ->
-			    receive
-				{'DOWN', Ref, process, Id, _} -> ok
-			    after ShutdownTimeout ->
-				    exit(Id, kill),
-				    receive
-					{'DOWN', Ref, process, Id, _} -> ok
-				    end
-			    end
+                            (fun F() ->
+                                     receive
+                                         {'DOWN', Ref, process, Id, _} -> ok;
+                                         %% We need to handle any gen_server:call here
+                                         %% and reply to them so that they don't deadlock
+                                         {'$gen_call', From, _Msg} ->
+                                             gen_server:reply(From, {error, terminating}),
+                                             F()
+                                     after ShutdownTimeout ->
+                                             exit(Id, kill),
+                                             receive
+                                                 {'DOWN', Ref, process, Id, _} -> ok
+                                             end
+                                     end
+                             end)()
 		    end;
 	       (_) -> ok
 	    end,
@@ -1257,29 +1297,32 @@ get_loaded(App) ->
 	[{_Key, Appl}] -> {true, Appl};
 	_  -> false
     end.
-    
-do_load_application(Application, S) ->
+
+maybe_load_application(Application, S) ->
     case get_loaded(Application) of
 	{true, _} ->
 	    throw({error, {already_loaded, Application}});
 	false ->
-	    case make_appl(Application) of
-		{ok, Appl} -> load(S, Appl);
-		Error -> Error
-	    end
+	    do_load_application(Application, S)
+    end.
+
+do_load_application(Application, S) ->
+    case make_appl(Application) of
+	{ok, Appl} -> load(S, Appl);
+	Error -> Error
     end.
 
 %% Recursively load the application and its included apps.
 %load(S, {ApplData, ApplEnv, IncApps, Descr, Vsn, Apps}) ->
-load(S, {ApplData, ApplEnv, IncApps, Descr, Id, Vsn, Apps}) ->
+load(S, {ApplData, ApplEnv, IncApps, OptApps, Descr, Id, Vsn, Apps}) ->
     Name = ApplData#appl_data.name,
     ConfEnv = get_env_i(Name, S),
     NewEnv = merge_app_env(ApplEnv, ConfEnv),
     CmdLineEnv = get_cmd_env(Name),
     NewEnv2 = merge_app_env(NewEnv, CmdLineEnv),
     add_env(Name, NewEnv2),
-    Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn, 
-		 appl_data = ApplData, inc_apps = IncApps, apps = Apps},
+    Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn, apps = Apps,
+		 appl_data = ApplData, inc_apps = IncApps, opt_apps = OptApps},
     ets:insert(ac_tab, {{loaded, Name}, Appl}),
     NewS =
 	foldl(fun(App, S1) ->
@@ -1316,13 +1359,13 @@ check_start_cond(AppName, RestartType, Started, Running) ->
 		    {error, {already_started, AppName}};
 		false ->
 		    foreach(
-		      fun(AppName2) ->
-			      case lists:keymember(AppName2, 1, Started) of
-				  true -> ok;
-				  false ->
-				      throw({error, {not_started, AppName2}})
-			      end
-		      end, Appl#appl.apps),
+			fun(AppName2) ->
+			    case lists:keymember(AppName2, 1, Started) orelse
+				     lists:member(AppName2, Appl#appl.opt_apps) of
+				true -> ok;
+				false -> throw({error, {not_started, AppName2}})
+			    end
+		    end, Appl#appl.apps),
 		    {ok, Appl}
 	    end;
 	false ->
@@ -1379,14 +1422,13 @@ start_appl(Appl, S, Type) ->
 	    %% Name = ApplData#appl_data.name,
 	    Running = S#state.running,
 	    foreach(
-	      fun(AppName) ->
-		      case lists:keymember(AppName, 1, Running) of
-			  true ->
-			      ok;
-			  false ->
-			      throw({info, {not_running, AppName}})
-		      end
-	      end, Appl#appl.apps),
+		fun(AppName) ->
+		    case lists:keymember(AppName, 1, Running) orelse
+			     lists:member(AppName, Appl#appl.opt_apps) of
+			true -> ok;
+			false -> throw({info, {not_running, AppName}})
+		    end
+		end, Appl#appl.apps),
 	    case application_master:start_link(ApplData, Type) of
 		{ok, _Pid} = Ok ->
 		    Ok;
@@ -1517,12 +1559,18 @@ make_appl_i({application, Name, Opts}) when is_atom(Name), is_list(Opts) ->
 	end,
     Phases = get_opt(start_phases, Opts, undefined),
     Env = get_opt(env, Opts, []),
+    case check_para(Env, Name) of
+        ok -> ok;
+        {error, Reason} ->
+            throw({error, {invalid_options, Reason}})
+    end,
     MaxP = get_opt(maxP, Opts, infinity),
     MaxT = get_opt(maxT, Opts, infinity),
     IncApps = get_opt(included_applications, Opts, []),
+    OptApps = get_opt(optional_applications, Opts, []),
     {#appl_data{name = Name, regs = Regs, mod = Mod, phases = Phases,
-		mods = Mods, inc_apps = IncApps, maxP = MaxP, maxT = MaxT},
-     Env, IncApps, Descr, Id, Vsn, Apps};
+		mods = Mods, maxP = MaxP, maxT = MaxT},
+     Env, IncApps, OptApps, Descr, Id, Vsn, Apps};
 make_appl_i({application, Name, Opts}) when is_list(Opts) ->
     throw({error,{invalid_name,Name}});
 make_appl_i({application, _Name, Opts}) ->
@@ -1574,7 +1622,7 @@ is_loaded_app(AppName, [{application, AppName, App} | _]) ->
 is_loaded_app(AppName, [_ | T]) -> is_loaded_app(AppName, T);
 is_loaded_app(_AppName, []) -> false.
 
-do_change_appl({ok, {ApplData, Env, IncApps, Descr, Id, Vsn, Apps}},
+do_change_appl({ok, {ApplData, Env, IncApps, OptApps, Descr, Id, Vsn, Apps}},
 	       OldAppl, Config) ->
     AppName = OldAppl#appl.name,
 
@@ -1595,6 +1643,7 @@ do_change_appl({ok, {ApplData, Env, IncApps, Descr, Id, Vsn, Apps}},
 		 id=Id,
 		 vsn=Vsn,
 		 inc_apps=IncApps,
+                 opt_apps=OptApps,
 		 apps=Apps};
 do_change_appl({error, _R} = Error, _Appl, _ConfData) ->
     throw(Error).
@@ -1705,7 +1754,7 @@ check_user() ->
 
 
 %%-----------------------------------------------------------------
-%% Prepare for a release upgrade by reading all the evironment variables.
+%% Prepare for a release upgrade by reading all the environment variables.
 %%-----------------------------------------------------------------
 do_prep_config_change(Apps) ->
     do_prep_config_change(Apps, []).
@@ -1799,48 +1848,109 @@ do_config_diff([{Env, Value} | AppEnvNow], AppEnvBefore, {Changed, New}) ->
     end.
 
 
+conf_param_to_conf({config, FileName}) ->
+    BFName = filename:basename(FileName,".config"),
+    FName = filename:join(filename:dirname(FileName),
+                          BFName ++ ".config"),
+    case load_file(FName) of
+        {ok, NewEnv} ->
+            %% OTP-4867 sys.config may now contain names of other
+            %% .config files as well as configuration parameters.
+            %% Therefore read and merge contents.
+            if
+                BFName =:= "sys" ->
+                    DName = filename:dirname(FName),
+                    {ok, SysEnv, Errors} =
+                        check_conf_sys(NewEnv, [], [], DName),
+                    %% Report first error, if any, and terminate
+                    %% (backwards compatible behaviour)
+                    case Errors of
+                        [] ->
+                            SysEnv;
+                        [{error, {SysFName, Line, Str}}|_] ->
+                            throw({error, {SysFName, Line, Str}})
+                    end;
+                true ->
+                    NewEnv
+            end;
+        {error, {Line, _Mod, Str}} ->
+            throw({error, {FName, Line, Str}})
+    end;
+conf_param_to_conf({configfd, FileDescStrP}) ->
+    FileDescStr = unicode:characters_to_nfc_list(FileDescStrP),
+    IsDigit = fun(C) -> lists:member(C, "0123456789") end,
+    {FdString, FileDescType} = lists:splitwith(IsDigit, FileDescStr),
+    FileDesc =
+        try list_to_integer(FdString)
+        catch
+            error:badarg ->
+                throw({error, {file_descriptor,
+                               FileDescStr,
+                               invalid_file_desc,
+                               "The given file descriptor has incorrect format. "
+                               "The format should be \"FileDescId[.FileType]\". "
+                               "Examples: 3 or 3.config"}})
+        end,
+    case lists:member(FileDescType, [".config", ""])  of
+        false ->
+            throw({error, {file_descriptor,
+                           FileDescStr,
+                           invalid_file_desc,
+                           io_lib:format("Cannot parse file descriptor of type: ~ts",
+                                         [FileDescType])}});
+        true -> ok
+    end,
+    case load_file_descriptor(FileDesc) of
+        {ok, NewEnv} ->
+            %% Load config parameters from included config files
+            BootScript = init:script_name(),
+            DName = filename:dirname(BootScript),
+            {ok, SysEnv, Errors} =
+                check_conf_sys(NewEnv, [], [], DName),
+            case Errors of
+                [] ->
+                    SysEnv;
+                [{error, {SysFName, Line, Str}}|_] ->
+                    throw({error, {SysFName, Line, Str}})
+            end;
+        {error, {Line, _Mod, Str}} ->
+            throw({error, {file_descriptor,
+                           FileDescStr,
+                           Line,
+                           Str}})
+    end.
+
+config_param_to_list({Type, [First | _] = ConfigVals})
+  when
+      is_list(First),
+      Type =:= config orelse Type =:= configfd ->
+    [{Type, Val} || Val <- ConfigVals];
+config_param_to_list({config, Val}) ->
+    [{config, Val}];
+config_param_to_list({configfd, Val}) ->
+    [{configfd, Val}];
+config_param_to_list(_) ->
+    [].
+
+
+
 %%-----------------------------------------------------------------
 %% Read the .config files.
 %%-----------------------------------------------------------------
 check_conf() ->
-    case init:get_argument(config) of
-	{ok, Files} ->
-	    {ok, lists:foldl(
-		   fun(File, Env) ->
-			   BFName = filename:basename(File,".config"),
-			   FName = filename:join(filename:dirname(File),
-						 BFName ++ ".config"),
-			   case load_file(FName) of
-			       {ok, NewEnv} ->
-				   %% OTP-4867
-				   %% sys.config may now contain names of
-				   %% other .config files as well as
-				   %% configuration parameters.
-				   %% Therefore read and merge contents.
-				   if
-				       BFName =:= "sys" ->
-					   DName = filename:dirname(FName),
-					   {ok, SysEnv, Errors} =
-					       check_conf_sys(NewEnv, [], [], DName),
+    ConfigParameters =
+        lists:flatmap(
+          fun config_param_to_list/1,
+          init:get_arguments()),
+    MergedConf =
+        lists:foldl(fun (ConfigParameter, Env) ->
+                            NewEnv = conf_param_to_conf(ConfigParameter),
+                            merge_env(Env, NewEnv)
+                    end,
+                    [],
+                    ConfigParameters),
+    {ok, MergedConf}.
 
-					   %% Report first error, if any, and
-					   %% terminate
-					   %% (backwards compatible behaviour)
-					   case Errors of
-					       [] ->
-						   merge_env(Env, SysEnv);
-					       [{error, {SysFName, Line, Str}}|_] ->
-						   throw({error, {SysFName, Line, Str}})
-					   end;
-				       true ->
-					   merge_env(Env, NewEnv)
-				   end;
-			       {error, {Line, _Mod, Str}} ->
-				   throw({error, {FName, Line, Str}})
-			   end
-		   end, [], lists:append(Files))};
-	_ -> {ok, []}
-    end.
 
 check_conf_sys(Env) ->
     check_conf_sys(Env, [], [], []).
@@ -1886,6 +1996,40 @@ load_file(File) ->
 	    {error, {none, open_file, "configuration file not found"}}
     end.
 
+load_file_descriptor(FileDescriptorId) ->
+    %% We do not want to read from the same file descriptor again if
+    %% init:restart is called so we use the old config obtained from
+    %% the file descriptor
+    case init:get_configfd(FileDescriptorId) of
+        none ->
+            WarningIntervalMs = 20000, % 20 seconds
+            MaxConfSizeBytes = 1024*1024*128, % 134 MB
+            case read_fd_until_end_and_close(FileDescriptorId,
+                                             WarningIntervalMs,
+                                             MaxConfSizeBytes) of
+                {ok, Bin} ->
+                    %% Make sure that there is some whitespace at the end of the string
+                    %% (so that reading a file with no NL following the "." will work).
+                    case file_binary_to_list(Bin) of
+                        {ok, String} ->
+                            case scan_file(String ++ " ") of
+                                {ok, Config} ->
+                                    init:set_configfd(FileDescriptorId, Config),
+                                    {ok, Config};
+                                Error ->
+                                    Error
+                            end;
+                        error ->
+                            {error, {none, scan_file, "bad encoding"}}
+                    end;
+                {error, Reason} ->
+                    {error, {none,
+                             read_from_file_descriptor,
+                             io_lib:format("Could not read from file descriptor: ~s", [Reason])}}
+            end;
+        Config -> {ok, Config}
+    end.
+
 scan_file(Str) ->
     case erl_scan:tokens([], Str, 1) of
 	{done, {ok, Tokens, _}, Left} ->
@@ -1909,6 +2053,61 @@ scan_file(Str) ->
 	{more, _} ->
 	    {error, {none, load_file, "no ending <dot> found"}}
     end.
+
+read_fd_until_end_and_close(FileDescriptorId,
+                            TimeBetweenWarningsMilliseconds,
+                            MaxSizeBytes) ->
+    ReadLimit = 1024,
+    Read =
+        fun Read(Ref, _Fd, _Data, DataSize) when DataSize > MaxSizeBytes ->
+                Reason = io_lib:format("Max size ~w bytes exceeded",
+                                       [MaxSizeBytes]),
+                {Ref, error, Reason};
+            Read(Ref, Fd, Data, DataSize) ->
+                case file:read(Fd, ReadLimit) of
+                    eof ->
+                        {Ref, ok, erlang:iolist_to_binary(Data)};
+                    {ok, Bin} ->
+                        Read(Ref, Fd, [Data, Bin], DataSize + byte_size(Bin));
+                    {error, Reason} ->
+                        {Ref, error, Reason}
+                end
+        end,
+    Receiver = self(),
+    Ref = make_ref(),
+    Reader =
+        spawn(
+          fun() ->
+                  case prim_file:file_desc_to_ref(FileDescriptorId, [read]) of
+                      {ok, Fd} ->
+                          Res = Read(Ref, Fd, [], 0),
+                          prim_file:close(Fd),
+                          Receiver ! Res;
+                      {error, _} ->
+                          Receiver ! {Ref,
+                                      error,
+                                      "Invalid file descriptor"}
+                  end
+          end),
+    Reader ! {reader_ref, Ref},
+    (fun GetResult() ->
+            receive
+                {Ref, ok, Data} ->
+                    {ok, erlang:iolist_to_binary(Data)};
+                {Ref, error, Reason} ->
+                    {error, Reason}
+            after TimeBetweenWarningsMilliseconds ->
+                    Msg =
+                        io_lib:format(
+                          "Slow -configfd file descriptor ~p. "
+                          "The system will continue to read from "
+                          "the file descriptor and will be blocked "
+                          "until end of file is received.",
+                          [FileDescriptorId]),
+                    ?LOG_WARNING(Msg),
+                    GetResult()
+            end
+    end)().
 
 only_ws([C|Cs]) when C =< $\s -> only_ws(Cs);
 only_ws([$%|Cs]) -> only_ws(strip_comment(Cs));   % handle comment

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2003-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 -compile({no_auto_import,[binary_part/2]}).
 -export([id/1,recompile/1,recompile_core/1,parallel/0,
          uniq/0,opt_opts/1,get_data_dir/1,
-         is_cloned_mod/1,smoke_disasm/1,p_run/2,
+         is_cloned_mod/1,smoke_disasm/1,p_run/2,p_run/3,
          highest_opcode/1]).
 
 %% Used by test case that override BIFs.
@@ -38,7 +38,7 @@ recompile(Mod) when is_atom(Mod) ->
 	    %% Re-compile the test suite if the cover server is running.
 	    Beam = code:which(Mod),
 	    Src = filename:rootname(Beam, ".beam") ++ ".erl",
-	    Opts = [bin_opt_info|opt_opts(Mod)],
+	    Opts = [bin_opt_info,recv_opt_info|opt_opts(Mod)],
 	    io:format("Recompiling ~p (~p)\n", [Mod,Opts]),
 	    c:c(Src, [{outdir,filename:dirname(Src)}|Opts])
     end,
@@ -53,7 +53,7 @@ recompile_core(Mod) when is_atom(Mod) ->
             %% Re-compile the test suite if the cover server is running.
             Beam = code:which(Mod),
             Src = filename:rootname(Beam, ".beam"),
-            Opts = [bin_opt_info|opt_opts(Mod)],
+            Opts = [bin_opt_info,recv_opt_info|opt_opts(Mod)],
             io:format("Recompiling ~p (~p)\n", [Mod,Opts]),
             c:c(Src, [from_core,{outdir,filename:dirname(Src)}|Opts])
     end,
@@ -82,22 +82,28 @@ uniq() ->
 
 opt_opts(Mod) ->
     Comp = Mod:module_info(compile),
-    {options,Opts} = lists:keyfind(options, 1, Comp),
+    %% `options` may not be set at all if +deterministic is enabled.
+    Opts = proplists:get_value(options, Comp, []),
     lists:filter(fun
                      (debug_info) -> true;
                      (dialyzer) -> true;
+                     ({feature,_,enable}) -> true;
+                     ({feature,_,disable}) -> true;
                      (inline) -> true;
-                     (no_bsm3) -> true;
+                     (no_bs_create_bin) -> true;
                      (no_bsm_opt) -> true;
+                     (no_bs_match) -> true;
                      (no_copt) -> true;
                      (no_fun_opt) -> true;
+                     (no_init_yregs) -> true;
+                     (no_make_fun3) -> true;
                      (no_module_opt) -> true;
                      (no_postopt) -> true;
-                     (no_put_tuple2) -> true;
                      (no_recv_opt) -> true;
                      (no_share_opt) -> true;
                      (no_shared_fun_wrappers) -> true;
-                     (no_ssa_float) -> true;
+                     (no_ssa_opt_float) -> true;
+                     (no_ssa_opt_ranges) -> true;
                      (no_ssa_opt) -> true;
                      (no_stack_trimming) -> true;
                      (no_swap) -> true;
@@ -114,9 +120,9 @@ get_data_dir(Config) ->
     Opts = [{return,list}],
     Suffixes = ["_no_opt_SUITE",
                 "_no_copt_SUITE",
+                "_no_copt_ssa_SUITE",
                 "_post_opt_SUITE",
                 "_inline_SUITE",
-                "_r21_SUITE",
                 "_no_module_opt_SUITE",
                 "_no_type_opt_SUITE",
                 "_no_ssa_opt_SUITE"],
@@ -128,14 +134,17 @@ get_data_dir(Config) ->
 is_cloned_mod(Mod) ->
     is_cloned_mod_1(atom_to_list(Mod)).
 
-%% Test whether Mod is a cloned module.
+%% Test whether Mod is a cloned module. We don't consider modules
+%% compiled with compatibility for an older release cloned (that
+%% will improve coverage).
 
 is_cloned_mod_1("_no_opt_SUITE") -> true;
 is_cloned_mod_1("_no_copt_SUITE") -> true;
+is_cloned_mod_1("_no_copt_ssa_SUITE") -> true;
 is_cloned_mod_1("_no_ssa_opt_SUITE") -> true;
+is_cloned_mod_1("_no_type_opt_SUITE") -> true;
 is_cloned_mod_1("_post_opt_SUITE") -> true;
 is_cloned_mod_1("_inline_SUITE") -> true;
-is_cloned_mod_1("_21_SUITE") -> true;
 is_cloned_mod_1("_no_module_opt_SUITE") -> true;
 is_cloned_mod_1([_|T]) -> is_cloned_mod_1(T);
 is_cloned_mod_1([]) -> false.
@@ -152,9 +161,20 @@ highest_opcode(Beam) ->
 %%  Will fail the test case if there were any errors.
 
 p_run(Test, List) ->
-    S = erlang:system_info(schedulers),
+    %% Limit the number of parallel processes to avoid running out of
+    %% memory.
+    S = case {erlang:system_info(schedulers),erlang:system_info(wordsize)} of
+            {S0,4} ->
+                min(S0, 2);
+            {S0,8} ->
+                min(S0, 8)
+        end,
     N = S + 1,
-    io:format("p_run: ~p parallel processes\n", [N]),
+    p_run(Test, List, N).
+
+p_run(Test, List, N) ->
+    io:format("p_run: ~p parallel processes; ~p jobs\n",
+              [N,length(List)]),
     p_run_loop(Test, List, N, [], 0, 0).
 
 p_run_loop(_, [], _, [], Errors, Ws) ->

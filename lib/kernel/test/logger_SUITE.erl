@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("kernel/src/logger_internal.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 -define(str,"Log from "++atom_to_list(?FUNCTION_NAME)++
             ":"++integer_to_list(?LINE)).
@@ -37,8 +38,7 @@
 
 
 suite() ->
-    [{timetrap,{seconds,30}},
-     {ct_hooks,[logger_test_lib]}].
+    [{timetrap,{seconds,30}}].
 
 init_per_suite(Config) ->
     case logger:get_handler_config(?STANDARD_HANDLER) of
@@ -68,7 +68,7 @@ init_per_testcase(_TestCase, Config) ->
     [{logger_config,PC}|Config].
 
 end_per_testcase(Case, Config) ->
-    try apply(?MODULE,Case,[cleanup,Config])
+    try erlang:apply(?MODULE,Case,[cleanup,Config])
     catch error:undef -> ok
     end,
     ok.
@@ -76,7 +76,7 @@ end_per_testcase(Case, Config) ->
 groups() ->
     [].
 
-all() -> 
+all() ->
     [start_stop,
      add_remove_handler,
      multiple_handlers,
@@ -91,6 +91,7 @@ all() ->
      set_application_level,
      cache_module_level,
      format_report,
+     filter_successful,
      filter_failed,
      handler_failed,
      config_sanity_check,
@@ -102,7 +103,9 @@ all() ->
      process_metadata,
      app_config,
      kernel_config,
-     pretty_print].
+     pretty_print,
+     pathological,
+     internal_log].
 
 start_stop(_Config) ->
     S = whereis(logger),
@@ -274,7 +277,7 @@ change_config(_Config) ->
     ok = logger:set_primary_config(#{filter_default=>stop}),
     #{level:=notice,filters:=[],filter_default:=stop}=PC1 =
         logger:get_primary_config(),
-    3 = maps:size(PC1),
+    4 = maps:size(PC1),
     %% Check that internal 'handlers' field has not been changed
     MS = [{{{?HANDLER_KEY,'$1'},'_'},[],['$1']}],
     HIds1 = lists:sort(ets:select(?LOGGER_TABLE,MS)), % dirty, internal data
@@ -495,9 +498,13 @@ cache_module_level(cleanup,_Config) ->
 
 format_report(_Config) ->
     {"~ts",["string"]} = logger:format_report("string"),
+    {"~tp",["strin"++$g]} =
+        logger:format_report("strin"++$g), %% improper list
     {"~tp",[term]} = logger:format_report(term),
     {"~tp",[[]]} = logger:format_report([]),
     {"    ~tp: ~tp",[key,value]} = logger:format_report([{key,value}]),
+    {"    ~tp: ~tp",[key,"strin"++$g]} =
+        logger:format_report([{key,"strin"++$g}]), %% improper list
     KeyVals = [{key1,value1},{key2,"value2"},{key3,[]}],
     KeyValRes =
         {"    ~tp: ~tp\n    ~tp: ~ts\n    ~tp: ~tp",
@@ -517,6 +524,58 @@ format_report(_Config) ->
 
     {"~tp",[[]]} = logger:format_report([[],[],[]]),
 
+    ok.
+
+filter_successful(_Config) ->
+    ok = logger:add_handler(h1,?MODULE,#{level=>all,filter_default=>log}),
+    HF = {fun(#{meta:=#{filter:={set_msg,Msg}}} = Log,_) ->
+                  Log#{msg:=Msg};
+             (#{meta:=#{filter:={return,Ret}}},_) ->
+                  Ret
+          end,
+          []},
+    ok = logger:add_handler_filter(h1,hf,HF),
+
+    ?LOG_NOTICE("hello",#{filter=>{return,stop}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_no_log(),
+
+    ?LOG_NOTICE("hello",#{filter=>{return,ignore}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,"hello",?MY_LOC(2)),
+
+    ?LOG_NOTICE("",#{filter=>{set_msg,{'hello',[]}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,'hello',[],?MY_LOC(2)),
+
+    ?LOG_NOTICE("",#{filter=>{set_msg,{"hello",[]}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,"hello",[],?MY_LOC(2)),
+
+    ?LOG_NOTICE("",#{filter=>{set_msg,{<<"hello">>,[]}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,<<"hello">>,[],?MY_LOC(2)),
+
+    ?LOG_NOTICE("",#{filter=>{set_msg,{string,"hello"}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,"hello",?MY_LOC(2)),
+
+    ?LOG_NOTICE("",#{filter=>{set_msg,{string,<<"hello">>}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,<<"hello">>,?MY_LOC(2)),
+
+    logger:notice("",#{filter=>{set_msg,{report,M1=?map_rep}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,M1,#{}),
+
+    logger:notice("",#{filter=>{set_msg,{report,M2=?keyval_rep}}}),
+    {ok,#{filters:=[_]}} = logger:get_handler_config(h1),
+    ok = check_logged(notice,M2,#{}),
+
+    ok.
+
+filter_successful(cleanup,_Config) ->
+    logger:remove_handler(h1),
     ok.
 
 filter_failed(_Config) ->
@@ -844,7 +903,7 @@ via_logger_process(Config) ->
 
     case os:type() of
         {win32,_} ->
-            %% Skip this part on windows - cant change file mode"
+            %% Skip this part on windows - can't change file mode"
             ok;
         _ ->
             %% This should trigger the same thing from erl_prim_loader
@@ -872,14 +931,13 @@ via_logger_process(cleanup, Config) ->
 other_node(_Config) ->
     ok = logger:add_handler(h1,?MODULE,#{level=>notice,filter_default=>log,
                                          tc_proc=>self()}),
-    {ok,Node} = test_server:start_node(?FUNCTION_NAME,slave,[]),
+    {ok,Peer,Node} = ?CT_PEER(),
     rpc:call(Node,logger,error,[Msg=?str,#{}]),
     check_logged(error,Msg,#{}),
+    peer:stop(Peer),
     ok.
 
 other_node(cleanup,_Config) ->
-    Nodes = nodes(),
-    [test_server:stop_node(Node) || Node <- Nodes],
     logger:remove_handler(h1),
     ok.
 
@@ -918,6 +976,20 @@ process_metadata(_Config) ->
     logger:notice(S3=?str,#{custom=>func}),
     check_logged(notice,S3,#{time=>Time,line=>0,custom=>func}),
 
+    %% Test that primary metadata is overwritten by process metadata
+    ok = logger:update_primary_config(
+           #{metadata=>#{time=>Time,custom=>global,global=>added,line=>1}}),
+    logger:notice(S4=?str),
+    check_logged(notice,S4,#{time=>Time,line=>0,custom=>proc,global=>added}),
+
+    %% Test that primary metadata is overwritten by func metadata
+    %% and that primary overwrites location metadata.
+    ok = logger:unset_process_metadata(),
+    logger:notice(S5=?str,#{custom=>func}),
+    check_logged(notice,S5,#{time=>Time,line=>1,custom=>func,global=>added}),
+    ok = logger:set_process_metadata(ProcMeta),
+    ok = logger:update_primary_config(#{metadata=>#{}}),
+
     ProcMeta = logger:get_process_metadata(),
     ok = logger:update_process_metadata(#{custom=>changed,custom2=>added}),
     Expected = ProcMeta#{custom:=changed,custom2=>added},
@@ -937,7 +1009,7 @@ process_metadata(cleanup,_Config) ->
 
 app_config(Config) ->
     %% Start a node with default configuration
-    {ok,_,Node} = logger_test_lib:setup(Config,[]),
+    {ok, _, Peer, Node} = logger_test_lib:setup(Config,[]),
 
     App1Name = app1,
     App1 = {application, App1Name,
@@ -959,51 +1031,50 @@ app_config(Config) ->
     {ok,#{filters:=DF}} = rpc:call(Node,logger,get_handler_config,[default]),
     {ok,#{filters:=[]}} = rpc:call(Node,logger,get_handler_config,[myh]),
 
-    true = test_server:stop_node(Node),
+    ok = peer:stop(Peer),
 
     %% Start a node with no default handler, then add an own default handler
-    {ok,#{handlers:=[#{id:=simple}]},Node} =
-        logger_test_lib:setup(Config,[{logger,[{handler,default,undefined}]}]),
+    {ok, #{handlers := [#{id := simple}]}, Peer2, Node2} =
+        logger_test_lib:setup(Config, [{logger, [{handler, default, undefined}]}]),
 
-    ok = rpc:call(Node,application,load,[App1]),
-    ok = rpc:call(Node,application,set_env,
+    ok = rpc:call(Node2,application,load,[App1]),
+    ok = rpc:call(Node2,application,set_env,
                   [App1Name,logger,[{handler,default,logger_std_h,#{}}]]),
-    ok = rpc:call(Node,logger,add_handlers,[App1Name]),
+    ok = rpc:call(Node2,logger,add_handlers,[App1Name]),
 
     #{handlers:=[#{id:=default,filters:=DF}]} =
-        rpc:call(Node,logger,get_config,[]),
+        rpc:call(Node2,logger,get_config,[]),
 
-    true = test_server:stop_node(Node),
+    ok = peer:stop(Peer2),
 
     %% Start a silent node, then add an own default handler
-    {ok,#{handlers:=[]},Node} =
+    {ok,#{handlers:=[]}, Peer3, Node3} =
         logger_test_lib:setup(Config,[{error_logger,silent}]),
 
     {error,{bad_config,{handler,[{some,bad,config}]}}} =
-        rpc:call(Node,logger,add_handlers,[[{some,bad,config}]]),
-    ok = rpc:call(Node,logger,add_handlers,
+        rpc:call(Node3,logger,add_handlers,[[{some,bad,config}]]),
+    ok = rpc:call(Node3,logger,add_handlers,
                   [[{handler,default,logger_std_h,#{}}]]),
 
     #{handlers:=[#{id:=default,filters:=DF}]} =
-        rpc:call(Node,logger,get_config,[]),
+        rpc:call(Node3,logger,get_config,[]),
 
-    ok.
+    ok = peer:stop(Peer3).
 
-%% This test case is maintly to see code coverage. Note that
+%% This test case is mainly to see code coverage. Note that
 %% logger_env_var_SUITE tests a lot of the same, and checks the
 %% functionality more thoroughly, but since it all happens at node
 %% start, it is not possible to see code coverage in that test.
 kernel_config(Config) ->
     %% Start a node with simple handler only, then simulate kernel
-    %% start by calling internally exported
-    %% internal_init_logger(). This is to test all variants of kernel
-    %% config, including bad config, and see the code coverage.
-    {ok,#{handlers:=[#{id:=simple,filters:=DF}]}=LC,Node} =
+    %% start by calling logger:reconfigure(). This is to test all
+    %% variants of kernel config, including bad config, and see
+    %% the code coverage.
+    {ok,#{handlers:=[#{id:=simple,filters:=DF}]}=LC, Peer, Node} =
         logger_test_lib:setup(Config,[{error_logger,false}]),
 
     %% Same once more, to get coverage
     ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
     LC = rpc:call(Node,logger,get_config,[]),
 
     %% This shall mean the same as above, but using 'logger' parameter
@@ -1011,15 +1082,13 @@ kernel_config(Config) ->
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{handler,default,undefined}]]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
-    LC = rpc:call(Node,logger,get_config,[]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
+    ?assertEqual(LC, rpc:call(Node,logger,get_config,[])),
 
     %% Silent
     ok = rpc:call(Node,application,unset_env,[kernel,logger]),
     ok = rpc:call(Node,application,set_env,[kernel,error_logger,silent]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
@@ -1027,30 +1096,25 @@ kernel_config(Config) ->
     %% Default
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,unset_env,[kernel,logger]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,config:=#{type:=standard_io}}],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
 
     %% error_logger=tty (same as default)
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     ok = rpc:call(Node,application,set_env,[kernel,error_logger,tty]),
     ok = rpc:call(Node,application,unset_env,[kernel,logger]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,config:=#{type:=standard_io}}],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
 
     %% error_logger={file,File}
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     F = filename:join(?config(priv_dir,Config),
                       atom_to_list(?FUNCTION_NAME)++".log"),
     ok = rpc:call(Node,application,set_env,[kernel,error_logger,{file,F}]),
     ok = rpc:call(Node,application,unset_env,[kernel,logger]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,
                    config:=#{type:=file,file:=F,modes:=Modes}}],
@@ -1059,55 +1123,47 @@ kernel_config(Config) ->
 
 
     %% Same, but using 'logger' parameter instead of 'error_logger'
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,set_env,[kernel,logger,
                                             [{handler,default,logger_std_h,
                                               #{config=>#{type=>{file,F}}}}]]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,
                    config:=#{type:=file,file:=F,modes:=Modes}}],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
 
     %% Same, but with type={file,File,Modes}
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     M = [raw,write],
     ok = rpc:call(Node,application,set_env,[kernel,logger,
                                             [{handler,default,logger_std_h,
                                               #{config=>#{type=>{file,F,M}}}}]]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,
                    config:=#{type:=file,file:=F,modes:=[delayed_write|M]}}],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
 
     %% Same, but with disk_log handler
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,set_env,[kernel,logger,
                                             [{handler,default,logger_disk_log_h,
                                               #{config=>#{file=>F}}}]]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=log,filters:=[]},
       handlers:=[#{id:=default,filters:=DF,config:=#{file:=F}}],
       module_levels:=[]} = rpc:call(Node,logger,get_config,[]),
 
     %% Set primary filters and module level. No default handler.
-    ok = rpc:call(Node,logger,remove_handler,[default]),% so it can be added again
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{handler,default,undefined},
                                   {filters,stop,[{f1,{fun(_,_) -> log end,ok}}]},
                                   {module_level,debug,[?MODULE]}]]),
-    ok = rpc:call(Node,logger,internal_init_logger,[]),
-    ok = rpc:call(Node,logger,add_handlers,[kernel]),
+    ok = rpc:call(Node,logger,reconfigure,[]),
     #{primary:=#{filter_default:=stop,filters:=[_]},
-      handlers:=[],
+      handlers:=[#{id:=simple}],
       module_levels:=[{?MODULE,debug}]} = rpc:call(Node,logger,get_config,[]),
 
     %% Bad config
@@ -1115,40 +1171,40 @@ kernel_config(Config) ->
 
     ok = rpc:call(Node,application,set_env,[kernel,error_logger,bad]),
     {error,{bad_config,{kernel,{error_logger,bad}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,unset_env,[kernel,error_logger]),
     ok = rpc:call(Node,application,set_env,[kernel,logger_level,bad]),
     {error,{bad_config,{kernel,{logger_level,bad}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,unset_env,[kernel,logger_level]),
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{filters,stop,[bad]}]]),
     {error,{bad_config,{kernel,{invalid_filters,[bad]}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{filters,stop,[bad]}]]),
     {error,{bad_config,{kernel,{invalid_filters,[bad]}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{filters,stop,[{f1,bad}]}]]),
     {error,{bad_config,{kernel,{invalid_filter,{f1,bad}}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,MF=[{filters,stop,[]},{filters,log,[]}]]),
     {error,{bad_config,{kernel,{multiple_filters,MF}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
     ok = rpc:call(Node,application,set_env,
                   [kernel,logger,[{module_level,bad,[?MODULE]}]]),
     {error,{bad_config,{kernel,{invalid_level,bad}}}} =
-        rpc:call(Node,logger,internal_init_logger,[]),
+        rpc:call(Node,logger,reconfigure,[]),
 
-    ok.
+    ok = peer:stop(Peer).
 
 pretty_print(_Config) ->
     ok = logger:add_handler(?FUNCTION_NAME,logger_std_h,#{}),
@@ -1203,6 +1259,45 @@ pretty_print(_Config) ->
     %% ct:log("~p~n",[IHs]),
     %% ct:log("~p~n",[["Handler configuration: \n"|IHs2]]),
     IHs = ["Handler configuration: \n"|IHs2],
+    ok.
+
+pathological(cleanup,_Config) ->
+    logger:remove_handler(p1),
+    logger:set_primary_config(level,notice),
+    logger:unset_module_level(?MODULE),
+    ok.
+
+pathological(_Config) ->
+    ok = logger:set_primary_config(level,all),
+    ok = logger:add_handler(p1,?MODULE,#{level=>all,filter_default=>log}),
+    logger:notice(string, []),
+    check_logged(notice,"string",[],#{}),
+    logger:notice(report, []),
+    check_logged(notice,"report",[],#{}),
+    ok.
+
+internal_log(_Config) ->
+    register(callback_receiver, self()),
+    {error, {not_found, h1}} = logger:get_handler_config(h1),
+    ok = logger:add_handler(h1, ?MODULE, #{tc_proc => self()}),
+    OriginalMeta = #{
+        mfa => {orig_mod, orig_func, 0},
+        line => 0,
+        file => "path/to/orig_mod.beam",
+        pid => self(),
+        time => logger:timestamp(),
+        gl => group_leader()
+    },
+    OriginalLog = #{
+        level => notice,
+        msg => "Original log",
+        meta => OriginalMeta
+    },
+    Report = [{testing, internal_log}],
+
+    ?LOG_INTERNAL(notice, OriginalLog, Report),
+    ok = check_logged(notice, Report, ?MY_LOC(1)),
+
     ok.
 
 %%%-----------------------------------------------------------------
@@ -1285,7 +1380,7 @@ test_api(Level) ->
     logger:Level("~w: ~w",[Level,fa]),
     ok = check_logged(Level,"~w: ~w",[Level,fa],#{}),
     logger:Level('~w: ~w',[Level,fa]),
-    ok = check_logged(Level,'~w: ~w',[Level,fa],#{}),
+    ok = check_logged(Level,"~w: ~w",[Level,fa],#{}),
     logger:Level(<<"~w: ~w">>,[Level,fa]),
     ok = check_logged(Level,<<"~w: ~w">>,[Level,fa],#{}),
     logger:Level("~w: ~w ~w",[Level,fa,meta],#{my=>meta}),
@@ -1298,7 +1393,7 @@ test_api(Level) ->
     ok = check_logged(Level,<<"~w: ~w ~w">>,[Level,fun_to_fa,meta],#{my=>meta}),
     logger:Level(fun(x) -> {'~w: ~w ~w',[Level,fun_to_fa,meta]} end,x,
                  #{my=>meta}),
-    ok = check_logged(Level,'~w: ~w ~w',[Level,fun_to_fa,meta],#{my=>meta}),
+    ok = check_logged(Level,"~w: ~w ~w",[Level,fun_to_fa,meta],#{my=>meta}),
     logger:Level(fun(x) -> #{Level=>fun_to_r,meta=>true} end,x,
                      #{my=>meta}),
     ok = check_logged(Level,#{Level=>fun_to_r,meta=>true},#{my=>meta}),
@@ -1329,7 +1424,7 @@ test_log_function(Level) ->
     ok = check_logged(Level,<<"~w: ~w ~w">>,[Level,fun_to_fa,meta],#{my=>meta}),
     logger:log(Level,fun(x) -> {'~w: ~w ~w',[Level,fun_to_fa,meta]} end,
                x, #{my=>meta}),
-    ok = check_logged(Level,'~w: ~w ~w',[Level,fun_to_fa,meta],#{my=>meta}),
+    ok = check_logged(Level,"~w: ~w ~w",[Level,fun_to_fa,meta],#{my=>meta}),
     logger:log(Level,fun(x) -> #{Level=>fun_to_r,meta=>true} end,
                x, #{my=>meta}),
     ok = check_logged(Level,#{Level=>fun_to_r,meta=>true},#{my=>meta}),
@@ -1341,6 +1436,16 @@ test_log_function(Level) ->
     logger:log(Level,F2=fun(x) -> erlang:error(fun_that_crashes) end,x,#{}),
     ok = check_logged(Level,"LAZY_FUN CRASH: ~tp; Reason: ~tp",
                       [{F2,x},{error,fun_that_crashes}],#{}),
+    logger:log(Level,fun(x) -> {{"~w: ~w ~w",[Level,fun_to_fa,meta]}, #{my=>override}} end,
+               x, #{my=>meta}),
+    ok = check_logged(Level,"~w: ~w ~w",[Level,fun_to_fa,meta],#{my=>override}),
+    logger:log(Level,fun(x) -> {#{Level=>fun_to_r,meta=>true}, #{my=>override}} end,
+               x, #{my=>meta}),
+    ok = check_logged(Level,#{Level=>fun_to_r,meta=>true},#{my=>override}),
+    logger:log(Level,fun(x) -> {<<"fun_to_s">>,#{my=>override}} end,x,#{my=>meta}),
+    ok = check_logged(Level,<<"fun_to_s">>,#{my=>override}),
+    logger:log(Level, fun(x) -> ignore end, x, #{}),
+    ok = check_no_log(),
     ok.
 
 test_macros(emergency=Level) ->
@@ -1407,4 +1512,10 @@ my_try(Fun) ->
 check_config(crash) ->
     erlang:error({badmatch,3});
 check_config(_) ->
+    ok.
+
+%% this function is also a test. When logger.hrl used non-qualified
+%%  apply/3 call, any module that was implementing apply/3 could
+%%  not use any logging macro
+apply(_, _, _) ->
     ok.

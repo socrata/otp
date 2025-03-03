@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2020</year>
+      <year>1996</year><year>2024</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -146,6 +146,7 @@
     </datatype>
     <datatype>
       <name>edge()</name>
+        <desc><p>Serves as the identifier or "name" of an edge. This is distinct from an edge "label" which attaches ancillary information to the edge rather than identifying the edge itself.</p></desc>
     </datatype>
     <datatype>
       <name name="label"/>
@@ -163,7 +164,7 @@
       <fsummary>Add an edge to a digraph.</fsummary>
       <type name="add_edge_err_rsn"/>
       <desc>
-        <p><c>add_edge/5</c> creates (or modifies) edge <c><anno>E</anno></c>
+        <p><c>add_edge/5</c> creates (or modifies) an edge with the identifier <c><anno>E</anno></c>
           of digraph <c><anno>G</anno></c>, using <c><anno>Label</anno></c> as
           the (new) <seeerl marker="#label">label</seeerl> of the edge. The
           edge is <seeerl marker="#emanate">emanating</seeerl> from
@@ -331,7 +332,7 @@
       <desc>
         <p>Returns a list of all
         edges <seeerl marker="#emanate">emanating</seeerl> from or 
-        <seeerl marker="#incident">incident</seeerl> on<c><anno>V</anno></c>
+        <seeerl marker="#incident">incident</seeerl> on <c><anno>V</anno></c>
         of digraph <c><anno>G</anno></c>, in some unspecified order.</p>
       </desc>
     </func>

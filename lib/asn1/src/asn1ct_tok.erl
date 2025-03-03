@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -171,7 +171,7 @@ collect_string([], _, _) ->
     throw({error,missing_quote_at_eof}).
            
 %% <name> is letters digits hyphens.
-%% Hypen is not the last character. Hypen hyphen is NOT allowed.
+%% Hyphen is not the last character. Hyphen hyphen is NOT allowed.
 %%
 %% <identifier> ::= <lowercase> <name>
 

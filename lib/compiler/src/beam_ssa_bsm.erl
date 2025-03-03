@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -128,15 +128,20 @@ has_bsm_ops(#b_function{bs=Blocks}) ->
 
 hbo_blocks([{_,#b_blk{is=Is}} | Blocks]) ->
     case hbo_is(Is) of
-        false -> hbo_blocks(Blocks);
-        true -> true
+        no -> hbo_blocks(Blocks);
+        yes -> true;
+        nif_start ->
+            %% Disable optimizations for declared -nifs()
+            %% to avoid leaking match contexts as NIF arguments.
+            false
     end;
 hbo_blocks([]) ->
     false.
 
-hbo_is([#b_set{op=bs_start_match} | _]) -> true;
+hbo_is([#b_set{op=bs_start_match} | _]) -> yes;
+hbo_is([#b_set{op=nif_start} | _]) -> nif_start;
 hbo_is([_I | Is]) -> hbo_is(Is);
-hbo_is([]) -> false.
+hbo_is([]) -> no.
 
 %% Checks whether it's legal to make a call with the given argument as a match
 %% context, returning the param_info() of the relevant parameter.
@@ -303,11 +308,12 @@ get_fa(#b_function{ anno = Anno }) ->
                promotions = #{} :: promotion_map() }).
 
 alias_matched_binaries(Blocks0, Counter, AliasMap) when AliasMap =/= #{} ->
-    {Dominators, _} = beam_ssa:dominators(Blocks0),
+    RPO = beam_ssa:rpo(Blocks0),
+    {Dominators, _} = beam_ssa:dominators(RPO, Blocks0),
     State0 = #amb{ dominators = Dominators,
                    match_aliases = AliasMap,
                    cnt = Counter },
-    {Blocks, State} = beam_ssa:mapfold_blocks_rpo(fun amb_1/3, [0], State0,
+    {Blocks, State} = beam_ssa:mapfold_blocks(fun amb_1/3, RPO, State0,
                                                   Blocks0),
     {amb_insert_promotions(Blocks, State), State#amb.cnt};
 alias_matched_binaries(Blocks, Counter, _AliasMap) ->
@@ -421,7 +427,7 @@ is_var_in_args(_Var, []) -> false.
 %%% Subpasses
 %%%
 
-%% Removes superflous chained bs_start_match instructions in the same
+%% Removes superfluous chained bs_start_match instructions in the same
 %% function. When matching on an extracted tail binary, or on a binary we've
 %% already matched on, we reuse the original match context.
 %%
@@ -449,24 +455,45 @@ combine_matches({Fs0, ModInfo}) ->
 combine_matches(#b_function{bs=Blocks0,cnt=Counter0}=F, ModInfo) ->
     case funcinfo_get(F, has_bsm_ops, ModInfo) of
         true ->
-            {Dominators, _} = beam_ssa:dominators(Blocks0),
+            RPO = beam_ssa:rpo(Blocks0),
+            {Dominators, _} = beam_ssa:dominators(RPO, Blocks0),
             {Blocks1, State} =
-                beam_ssa:mapfold_blocks_rpo(
+                beam_ssa:mapfold_blocks(
                   fun(Lbl, #b_blk{is=Is0}=Block0, State0) ->
                           {Is, State} = cm_1(Is0, [], Lbl, State0),
                           {Block0#b_blk{is=Is}, State}
-                  end, [0],
-                  #cm{ definitions = beam_ssa:definitions(Blocks0),
+                  end,
+                  RPO,
+                  #cm{ definitions = beam_ssa:definitions(RPO, Blocks0),
                        dominators = Dominators,
                        blocks = Blocks0 },
                   Blocks0),
 
-            Blocks2 = beam_ssa:rename_vars(State#cm.renames, [0], Blocks1),
+            %% The fun in mapfold_blocks does not update terminators,
+            %% so we can reuse the RPO computed for Blocks0.
+            Blocks2 = beam_ssa:rename_vars(State#cm.renames, RPO, Blocks1),
 
-            {Blocks, Counter} = alias_matched_binaries(Blocks2, Counter0,
-                                                       State#cm.match_aliases),
+            %% Replacing variables with the atom `true` can cause
+            %% branches to phi nodes to be omitted, with the phi nodes
+            %% still referencing the unreachable blocks. Therefore,
+            %% trim now to update the phi nodes.
+            Blocks3 = beam_ssa:trim_unreachable(Blocks2),
 
-            F#b_function{ bs=beam_ssa:trim_unreachable(Blocks),
+            Aliases = State#cm.match_aliases,
+            {Blocks4, Counter} = alias_matched_binaries(Blocks3, Counter0,
+                                                        Aliases),
+            Blocks = if
+                         map_size(Aliases) =:= 0 ->
+                             %% No need to trim because there were no aliases.
+                             Blocks4;
+                         true ->
+                             %% Play it safe. It is unclear whether
+                             %% the call to alias_matched_binaries/3
+                             %% could ever make any blocks
+                             %% unreachable.
+                             beam_ssa:trim_unreachable(Blocks4)
+                     end,
+            F#b_function{ bs=Blocks,
                           cnt=Counter };
         false ->
             F
@@ -669,7 +696,8 @@ aca_handle_convergence(Src, State0, Last0, Blocks0) ->
                        ordsets:from_list(SuccPath),
                        ordsets:from_list(FailPath)),
 
-    case maps:is_key(Src, beam_ssa:uses(ConvergedPaths, Blocks0)) of
+    ConvergedLabels = beam_ssa:rpo(ConvergedPaths, Blocks0),
+    case maps:is_key(Src, beam_ssa:uses(ConvergedLabels, Blocks0)) of
         true ->
             case shortest(SuccPath, FailPath) of
                 left ->
@@ -792,7 +820,7 @@ aca_cs_arg(Arg, VRs) ->
 %% contexts to us.
 
 allow_context_passthrough({Fs, ModInfo0}) ->
-    FsUses = [{F, beam_ssa:uses(F#b_function.bs)} || F <- Fs],
+    FsUses = [{F, beam_ssa:uses(beam_ssa:rpo(Bs), Bs)} || #b_function{bs=Bs}=F <- Fs],
     ModInfo = acp_forward_params(FsUses, ModInfo0),
     {Fs, ModInfo}.
 
@@ -848,11 +876,12 @@ skip_outgoing_tail_extraction({Fs0, ModInfo}) ->
 skip_outgoing_tail_extraction(#b_function{bs=Blocks0}=F, ModInfo) ->
     case funcinfo_get(F, has_bsm_ops, ModInfo) of
         true ->
-            State0 = #sote{ definitions = beam_ssa:definitions(Blocks0),
+            RPO = beam_ssa:rpo(Blocks0),
+            State0 = #sote{ definitions = beam_ssa:definitions(RPO, Blocks0),
                             mod_info = ModInfo },
 
-            {Blocks1, State} = beam_ssa:mapfold_instrs_rpo(
-                                 fun sote_rewrite_calls/2, [0], State0, Blocks0),
+            {Blocks1, State} = beam_ssa:mapfold_instrs(
+                                 fun sote_rewrite_calls/2, RPO, State0, Blocks0),
 
             {Blocks, Counter} = alias_matched_binaries(Blocks1,
                                                        F#b_function.cnt,
@@ -918,12 +947,13 @@ annotate_context_parameters(F, ModInfo) ->
 
 collect_opt_info(Fs) ->
     foldl(fun(#b_function{bs=Blocks}=F, Acc0) ->
-                  UseMap = beam_ssa:uses(Blocks),
+                  RPO = beam_ssa:rpo(Blocks),
+                  UseMap = beam_ssa:uses(RPO, Blocks),
                   Where = beam_ssa:get_anno(location, F, []),
-                  beam_ssa:fold_instrs_rpo(
+                  beam_ssa:fold_instrs(
                     fun(I, Acc) ->
                             collect_opt_info_1(I, Where, UseMap, Acc)
-                    end, [0], Acc0, Blocks)
+                    end, RPO, Acc0, Blocks)
           end, [], Fs).
 
 collect_opt_info_1(#b_set{op=Op,anno=Anno,dst=Dst}=I, Where, UseMap, Acc0) ->
@@ -983,13 +1013,7 @@ add_unopt_binary_info(#b_set{op=Follow,dst=Dst}, Nested, Where, UseMap, Acc0)
     foldl(fun(Use, Acc) ->
                   add_unopt_binary_info(Use, Nested, Where, UseMap, Acc)
           end, Acc0, Uses);
-add_unopt_binary_info(#b_set{op=call,
-                             args=[#b_remote{mod=#b_literal{val=erlang},
-                                             name=#b_literal{val=error}} |
-                                   _Ignored]},
-                      _Nested, _Where, _UseMap, Acc) ->
-    %% There's no nice way to tell compiler-generated exceptions apart from
-    %% user ones so we ignore them all. I doubt anyone cares.
+add_unopt_binary_info(#b_set{op=match_fail}, _Nested, _Where, _UseMap, Acc) ->
     Acc;
 add_unopt_binary_info(#b_switch{anno=Anno}=I, Nested, Where, _UseMap, Acc) ->
     [make_promotion_warning(I, Nested, Anno, Where) | Acc];
@@ -1004,7 +1028,11 @@ make_promotion_warning(I, Nested, Anno, Where) ->
     make_warning({binary_created, I, Nested}, Anno, Where).
 
 make_warning(Term, Anno, Where) ->
-    {File, Line} = maps:get(location, Anno, Where),
+    {File, Line} =
+        case maps:get(location, Anno, Where) of
+            {_, _} = Location -> Location;
+            _ -> {"no_file", none}
+        end,
     {File,[{Line,?MODULE,Term}]}.
 
 format_opt_info(context_reused) ->

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2003-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -84,7 +84,8 @@
 -define(MG,  megaco_test_mg).
 -define(MGC, megaco_test_mgc).
 
--define(MGC_START(Pid, Mid, ET, Verb), ?MGC:start(Pid, Mid, ET, Verb)).
+-define(MGC_START(Pid, Mid, ET, Verb),
+        mgc_start(Pid, Mid, ET, Verb)).
 -define(MGC_STOP(Pid),                 ?MGC:stop(Pid)).
 -define(MGC_GET_STATS(Pid, No),        ?MGC:get_stats(Pid, No)).
 -define(MGC_RESET_STATS(Pid),          ?MGC:reset_stats(Pid)).
@@ -99,8 +100,8 @@
 -define(MGC_ACK_INFO(Pid,To),          ?MGC:ack_info(Pid,To)).
 -define(MGC_REQ_INFO(Pid,To),          ?MGC:req_info(Pid,To)).
 
--define(MG_START(Pid, Mid, Enc, Transp, Conf, Verb), 
-	?MG:start(Pid, Mid, Enc, Transp, Conf, Verb)).
+-define(MG_START(Pid, Mid, Enc, Transp, Conf, Verb),
+        mg_start(Pid, Mid, Enc, Transp, Conf, Verb)).
 -define(MG_STOP(Pid),                ?MG:stop(Pid)).
 -define(MG_GET_STATS(Pid),           ?MG:get_stats(Pid)).
 -define(MG_RESET_STATS(Pid),         ?MG:reset_stats(Pid)).
@@ -330,14 +331,13 @@ do_single_ack([MgcNode, MgNode]) ->
     %% Start the MGC and MGs
     i("[MGC] start"),    
     ET = [{text,tcp}, {text,udp}, {binary,tcp}, {binary,udp}],
-    {ok, Mgc} = 
-	?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
+    Mgc = ?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
 
     i("[MG] start"),    
     %% MgConf0 = [{MgNode, "mg", text, tcp, ?MG_VERBOSITY}],
     MgMid = {deviceName, "mg"},
     MgConfig = [{auto_ack, true}, {trans_timer, 5000}, {trans_ack, true}],
-    {ok, Mg} = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
+    Mg = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
 
     d("MG user info: ~p", [?MG_USER_INFO(Mg, all)]),
 
@@ -381,13 +381,23 @@ multi_ack_timeout(suite) ->
 multi_ack_timeout(doc) ->
     [];
 multi_ack_timeout(Config) when is_list(Config) ->
+    Cond = fun() ->
+                   %% Regardless of other criteria,
+                   %% if the factor is to high => SKIP
+                   case lists:keysearch(megaco_factor, 1, Config) of
+                       {value, {megaco_factor, MF}} when (MF >= 10) ->
+                           ?SKIP({factor_too_high, MF});
+                       {value, _} ->
+                           ok;
+                       false ->
+                           ?SKIP(factor_undefined)
+                   end,
+                   
+                   Skippable = [win32, {unix, [darwin, sunos]}],
+                   Condition = fun() -> ?OS_BASED_SKIP(Skippable) end,
+                   ?NON_PC_TC_MAYBE_SKIP(Config, Condition)
+           end,
     Pre = fun() ->
-                  %% <CONDITIONAL-SKIP>
-                  Skippable = [win32, {unix, [darwin, linux, sunos]}],
-                  Condition = fun() -> ?OS_BASED_SKIP(Skippable) end,
-                  ?NON_PC_TC_MAYBE_SKIP(Config, Condition),
-                  %% </CONDITIONAL-SKIP>
-
                   MgcNode  = make_node_name(mgc),
                   MgNode   = make_node_name(mg),
                   d("start nodes: "
@@ -396,33 +406,53 @@ multi_ack_timeout(Config) when is_list(Config) ->
                     [MgcNode, MgNode]),
                   Nodes = [MgcNode, MgNode],
                   ok = ?START_NODES(Nodes),
-                  Nodes
+                  Factor = case lists:keysearch(megaco_factor, 1, Config) of
+                               {value, {megaco_factor, MF}} ->
+                                   MF;
+                               false ->
+                                   ?SKIP(factor_undefined)
+                           end,
+                  MaxCount =
+                      if
+                          (Factor =:= 1) ->
+                              20;
+                          (Factor =:= 2) ->
+                              15;
+                          (Factor < 5) ->
+                              10;
+                          true ->
+                              5
+                      end,
+                  #{nodes     => Nodes,
+                    max_count => MaxCount,
+                    ttimeout  => ?SECS(10),
+                    timeout   => ?SECS(60)}
           end,
     Case = fun do_multi_ack_timeout/1,
-    Post = fun(Nodes) ->
+    Post = fun(#{nodes := Nodes}) ->
                    d("stop nodes"),
                    ?STOP_NODES(lists:reverse(Nodes))
            end,
-    try_tc(multi_ack_timeout, Pre, Case, Post).
+    try_tc(multi_ack_timeout, Cond, Pre, Case, Post).
 
-do_multi_ack_timeout([MgcNode, MgNode]) ->
-
-    MaxCount = 20,
+do_multi_ack_timeout(#{nodes     := [MgcNode, MgNode],
+                       max_count := MaxCount,
+                       ttimeout  := TTimeout,
+                       timeout   := Timeout}) ->
 
     %% Start the MGC and MGs
     i("[MGC] start"),    
     ET = [{text,tcp}, {text,udp}, {binary,tcp}, {binary,udp}],
-    {ok, Mgc} = 
-	?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
+    Mgc = ?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
 
     i("[MG] start"),    
     %% MgConf0 = [{MgNode, "mg", text, tcp, ?MG_VERBOSITY}],
     MgMid = {deviceName, "mg"},
     MgConfig = [{auto_ack,           true}, 
 		{trans_ack,          true},
-		{trans_timer,        10000}, 
+		{trans_timer,        TTimeout}, 
 		{trans_ack_maxcount, MaxCount + 10}],
-    {ok, Mg} = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
+    Mg = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
 
     d("MG user info: ~p", [?MG_USER_INFO(Mg, all)]),
 
@@ -447,7 +477,7 @@ do_multi_ack_timeout([MgcNode, MgNode]) ->
     ?MG_NOTIF_RAR(Mg),
 
     d("await the ack(s)"),
-    await_ack(Mgc, MaxCount, 60000, ok),
+    await_ack(Mgc, MaxCount, Timeout, ok),
 
     i("wait some time before closing down"),
     sleep(5000),
@@ -496,8 +526,7 @@ do_multi_ack_maxcount([MgcNode, MgNode]) ->
     %% Start the MGC and MGs
     i("[MGC] start"),    
     ET = [{text,tcp}, {text,udp}, {binary,tcp}, {binary,udp}],
-    {ok, Mgc} = 
-	?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
+    Mgc = ?MGC_START(MgcNode, {deviceName, "ctrl"}, ET, ?MGC_VERBOSITY),
 
     i("[MG] start"),    
     %% MgConf0 = [{MgNode, "mg", text, tcp, ?MG_VERBOSITY}],
@@ -506,7 +535,7 @@ do_multi_ack_maxcount([MgcNode, MgNode]) ->
 		%% {trans_timer,    120000}, 
 		%% {trans_ack_maxcount, MaxCount}
 	       ],
-    {ok, Mg} = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
+    Mg = ?MG_START(MgNode, MgMid, text, tcp, MgConfig, ?MG_VERBOSITY),
 
     d("MG user info: ~p", [?MG_USER_INFO(Mg, all)]),
 
@@ -574,14 +603,15 @@ single_trans_req(Config) when is_list(Config) ->
                   ok = ?START_NODES(Nodes),
                   Nodes
           end,
-    Case = fun do_single_trans_req/1,
+    Case = fun(Nodes) -> do_single_trans_req(Config, Nodes) end,
     Post = fun(Nodes) ->
                    d("stop nodes"),
                    ?STOP_NODES(lists:reverse(Nodes))
            end,
     try_tc(single_trans_req, Pre, Case, Post).
 
-do_single_trans_req([MgcNode, MgNode]) ->
+do_single_trans_req(Config,
+                    [MgcNode, MgNode]) ->
 
     d("[MGC] start the simulator "),
     {ok, Mgc} = megaco_test_megaco_generator:start_link("MGC", MgcNode),
@@ -609,7 +639,8 @@ do_single_trans_req([MgcNode, MgNode]) ->
     {ok, Mg} = megaco_test_megaco_generator:start_link("MG", MgNode),
 
     d("[MG] create the event sequence"),
-    MgEvSeq = str_mg_event_sequence(text, tcp),
+    MgEvSeq = str_mg_event_sequence(Config,
+                                    text, tcp),
 
     i("wait some time before starting the MG simulation"),
     sleep(1000),
@@ -861,7 +892,8 @@ str_mgc_notify_reply_ar(Cid, TermId) ->
 	fun str_mg_verify_notify_reply/1).
 -endif.
 
-str_mg_event_sequence(text, tcp) ->
+str_mg_event_sequence(Config,
+                      text, tcp) ->
     Mid = {deviceName,"mg"},
     RI = [
 	  {port,             2944},
@@ -880,7 +912,7 @@ str_mg_event_sequence(text, tcp) ->
 	     megaco_start,
 	     {megaco_start_user, Mid, RI, []},
 	     start_transport,
-	     {megaco_trace, max}, 
+	     ?MEGACO_TRACE(Config, max), % {megaco_trace, max}, 
 	     {megaco_system_info, users},
 	     {megaco_system_info, connections},
 	     connect,
@@ -8823,14 +8855,15 @@ otp_7192_3(Config) when is_list(Config) ->
                   ok = ?START_NODES(Nodes),
                   Nodes
           end,
-    Case = fun do_otp_7192_3/1,
+    Case = fun(Nodes) -> do_otp_7192_3(Config, Nodes) end,
     Post = fun(Nodes) ->
                    d("stop nodes"),
                    ?STOP_NODES(lists:reverse(Nodes))
            end,
     try_tc(otp_7192_3, Pre, Case, Post).
 
-do_otp_7192_3([MgcNode, MgNode]) ->
+do_otp_7192_3(Config,
+              [MgcNode, MgNode]) ->
 
     MgMid = {deviceName,"mg"},
 
@@ -8838,7 +8871,8 @@ do_otp_7192_3([MgcNode, MgNode]) ->
     {ok, Mgc} = megaco_test_megaco_generator:start_link("MGC", MgcNode),
 
     d("[MGC] create the event sequence"),
-    MgcEvSeq = otp72923_mgc_event_sequence(text, udp, MgMid),
+    MgcEvSeq = otp72923_mgc_event_sequence(Config,
+                                           text, udp, MgMid),
 
     i("wait some time before starting the MGC simulation"),
     sleep(1000),
@@ -8907,7 +8941,8 @@ do_otp_7192_3([MgcNode, MgNode]) ->
 	fun otp72923_mgc_verify_handle_disconnect/1).
 -endif.
 
-otp72923_mgc_event_sequence(text, udp, MgMid) ->
+otp72923_mgc_event_sequence(Config,
+                            text, udp, MgMid) ->
     CTRL = self(),
     Mid = {deviceName, "ctrl"},
     RI = [
@@ -8928,7 +8963,7 @@ otp72923_mgc_event_sequence(text, udp, MgMid) ->
     %% DiscoVerify            = ?otp72923_mgc_verify_handle_disconnect_fun(), 
     EvSeq = [
 	     {debug, true},
-	     {megaco_trace, max}, 
+	     ?MEGACO_TRACE(Config, max), % {megaco_trace, max}, 
 	     %% {megaco_trace, disable}, 
 	     megaco_start,
 	     {megaco_start_user, Mid, RI, []},
@@ -9528,18 +9563,24 @@ cre_serviceChangeProf(Name, Ver) when is_list(Name) andalso is_integer(Ver) ->
 await_ack(_User, 0, Timeout, _Expected) ->
     d("await_ack -> done when Timeout = ~p", [Timeout]),
     ok;
-await_ack(User, N, Timeout, Expected) when (N > 0) andalso is_integer(Timeout) ->
-    d("await_ack -> entry with N: ~p, Timeout: ~p", [N,Timeout]),
+await_ack(User, N, Timeout, Expected)
+  when (N > 0) andalso is_integer(Timeout) ->
+    d("await_ack -> entry with N: ~p, Timeout: ~p", [N, Timeout]),
     T = tim(),
     receive
 	{ack_received, User, Expected} ->
 	    d("await_ack -> received another expected ack"),
 	    await_ack(User, N-1, Timeout - (tim() - T), Expected);
 	{ack_received, User, UnExpected} ->
-	    e("await_ack -> received unexpected ack result: ~p", [UnExpected]),
-	    exit({unexpected_ack_result, UnExpected, Expected})
+	    e("await_ack -> received unexpected ack result: ~p"
+              "~n   when"
+              "~n      User:      ~p"
+              "~n      N:         ~p"
+              "~n      Remaining: ~p",
+              [UnExpected, User, N, Timeout - (tim() - T)]),
+	    exit({unexpected_ack_result, User, UnExpected, Expected})
     after Timeout ->
-	    exit({await_ack_timeout, N})
+	    exit({await_ack_timeout, N, User})
     end;
 await_ack(User, N, infinity, Expected) when N > 0 ->
     d("await_ack -> entry with N: ~p", [N]),
@@ -9548,8 +9589,11 @@ await_ack(User, N, infinity, Expected) when N > 0 ->
 	    d("await_ack -> received another ack"),
 	    await_ack(User, N-1, infinity, Expected);
 	{ack_received, User, UnExpected} ->
-	    e("await_ack -> unexpected ack result: ~p", [UnExpected]),
-	    exit({unexpected_ack_result, UnExpected, Expected})
+	    e("await_ack -> unexpected ack result: ~p"
+              "~n   when"
+              "~n      User: ~p"
+              "~n      N:    ~p", [UnExpected, User, N]),
+	    exit({unexpected_ack_result, User, UnExpected, Expected})
     end.
 
 
@@ -9595,11 +9639,64 @@ await_completion(Ids, Timeout) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-try_tc(TCName, Pre, Case, Post) ->
+mgc_start(Pid, Mid, ET, Verb) ->
+    try ?MGC:start(Pid, Mid, ET, Verb) of
+        {ok, MGC} ->
+            MGC;
+        {error, StartReason} ->
+            e("failed starting mgc (error): "
+              "~n      ~p", [StartReason]),
+            ?SKIP({failed_starting, mgc, StartReason})
+    catch
+        exit:{error, timeout} ->
+            e("failed starting mgc (exit): timeout"),
+            ?SKIP({failed_starting, mgc, timeout});
+        exit:{failed_starting, _, StartExitReason} ->
+            e("failed starting mgc (exit): "
+              "~n      ~p", [StartExitReason]),
+            ?SKIP({failed_starting, mgc, StartExitReason})
+    end.
+    
+
+mg_start(Pid, Mid, Enc, Transp, Conf, Verb) ->
+    try ?MG:start(Pid, Mid, Enc, Transp, Conf, Verb) of
+        {ok, MG} ->
+            MG; 
+        {error, Reason} ->
+            e("failed starting mg (error): "
+              "~n      ~p", [Reason]),
+            ?SKIP({failed_starting, mgc, Reason})
+    catch
+        exit:{error, timeout} ->
+            e("failed starting mg (exit): timeout"),
+            ?SKIP({failed_starting, mg, timeout});
+        exit:{failed_starting, _, ExitReason} ->
+            e("failed starting mg (exit): "
+              "~n      ~p", [ExitReason]),
+            ?SKIP({failed_starting, mg, ExitReason})
+    end.
+
+    
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+try_tc(TCName, Pre, Case, Post) when is_atom(TCName)      andalso
+                                     is_function(Pre,  0) andalso
+                                     is_function(Case, 1) andalso
+                                     is_function(Post, 1) ->
     try_tc(TCName, "TEST", ?TEST_VERBOSITY, Pre, Case, Post).
+
+try_tc(TCName, Cond, Pre, Case, Post) when is_atom(TCName)      andalso
+                                           is_function(Cond, 0) andalso
+                                           is_function(Pre,  0) andalso
+                                           is_function(Case, 1) andalso
+                                           is_function(Post, 1) ->
+    try_tc(TCName, "TEST", ?TEST_VERBOSITY, Cond, Pre, Case, Post).
 
 try_tc(TCName, Name, Verbosity, Pre, Case, Post) ->
     ?TRY_TC(TCName, Name, Verbosity, Pre, Case, Post).
+
+try_tc(TCName, Name, Verbosity, Cond, Pre, Case, Post) ->
+    ?TRY_TC(TCName, Name, Verbosity, Cond, Pre, Case, Post).
 
 
 
@@ -9617,8 +9714,8 @@ p(F, A) ->
 	      "~n   " ++ F ++ "~n", 
 	      [?FTS(), self() | A]).
 
-%% e(F) ->
-%%     e(F, []).
+e(F) ->
+    e(F, []).
 
 e(F, A) ->
     print(error, "ERROR", F, A).

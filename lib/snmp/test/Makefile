@@ -2,7 +2,7 @@
 
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 1997-2020. All Rights Reserved.
+# Copyright Ericsson AB 1997-2022. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -135,6 +135,22 @@ endif
 # ----------------------------------------------------
 EBIN = .
 
+ifeq ($(SNMP_WARNING_AS_ERROR),)
+  ERL_COMPILE_FLAGS += -Werror
+else
+  ifeq ($(SNMP_WARNING_AS_ERROR),true)
+    ERL_COMPILE_FLAGS += -Werror
+  endif
+endif
+
+ifeq ($(WARN_UNUSED_VARS),)
+  ERL_COMPILE_FLAGS += +warn_unused_vars
+else
+  ifeq ($(WARN_UNUSED_VARS),true)
+    ERL_COMPILE_FLAGS += +warn_unused_vars
+  endif
+endif
+
 ERL_COMPILE_FLAGS += -I../../snmp/src/app \
                      -I../../snmp/src/misc \
                      -I../../snmp/src/agent \
@@ -145,6 +161,7 @@ ERL_COMPILE_FLAGS += -I../../snmp/src/app \
                      +'{parse_transform,sys_pre_attributes}' \
                      +'{attribute,insert,app_vsn,$(APP_VSN)}' \
                      $(SNMP_FLAGS)
+ERL_COMPILE_FLAGS := $(filter-out +deterministic,$(ERL_COMPILE_FLAGS))
 
 ERL_SNMP_FLAGS = $(SNMP_MIB_FLAGS) \
                  -I../priv/mibs
@@ -160,7 +177,7 @@ $(SNMP_BIN_TARGET_DIR)/%.hrl: $(SNMP_BIN_TARGET_DIR)/%.bin
 # Targets
 # ----------------------------------------------------
 
-tests debug opt: $(BUILDTARGET)
+tests $(TYPES): $(BUILDTARGET)
 
 .PHONY: emakebuild
 

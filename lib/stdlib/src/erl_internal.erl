@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2018. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -78,6 +78,8 @@ guard_bif(is_map_key, 2) -> true;
 guard_bif(length, 1) -> true;
 guard_bif(map_size, 1) -> true;
 guard_bif(map_get, 2) -> true;
+guard_bif(max, 2) -> true;
+guard_bif(min, 2) -> true;
 guard_bif(node, 0) -> true;
 guard_bif(node, 1) -> true;
 guard_bif(round, 1) -> true;
@@ -243,6 +245,8 @@ bif(M, F, A) when is_atom(M), is_atom(F), is_integer(A) -> false.
 %%   (meaning implemented in C) or not.
 
 bif(abs, 1) -> true;
+bif(alias, 0) -> true;
+bif(alias, 1) -> true;
 bif(apply, 2) -> true;
 bif(apply, 3) -> true;
 bif(atom_to_binary, 1) -> true;
@@ -279,6 +283,7 @@ bif(erase, 0) -> true;
 bif(erase, 1) -> true;
 bif(error, 1) -> true;
 bif(error, 2) -> true;
+bif(error, 3) -> true;
 bif(exit, 1) -> true;
 bif(exit, 2) -> true;
 bif(float, 1) -> true;
@@ -347,11 +352,13 @@ bif(max,2) -> true;
 bif(min,2) -> true;
 bif(module_loaded, 1) -> true;
 bif(monitor, 2) -> true;
+bif(monitor, 3) -> true;
 bif(monitor_node, 2) -> true;
 bif(node, 0) -> true;
 bif(node, 1) -> true;
 bif(nodes, 0) -> true;
 bif(nodes, 1) -> true;
+bif(nodes, 2) -> true;
 bif(now, 0) -> true;
 bif(open_port, 2) -> true;
 bif(pid_to_list, 1) -> true;
@@ -410,6 +417,7 @@ bif(tl, 1) -> true;
 bif(trunc, 1) -> true;
 bif(tuple_size, 1) -> true;
 bif(tuple_to_list, 1) -> true;
+bif(unalias, 1) -> true;
 bif(unlink, 1) -> true;
 bif(unregister, 1) -> true;
 bif(whereis, 1) -> true;
@@ -558,6 +566,7 @@ is_type(bool, 0) -> true;
 is_type(boolean, 0) -> true;
 is_type(byte, 0) -> true;
 is_type(char, 0) -> true;
+is_type(dynamic, 0) -> true;
 is_type(float, 0) -> true;
 is_type(function, 0) -> true;
 is_type(identifier, 0) -> true;
@@ -577,6 +586,8 @@ is_type(no_return, 0) -> true;
 is_type(node, 0) -> true;
 is_type(non_neg_integer, 0) -> true;
 is_type(none, 0) -> true;
+is_type(nonempty_binary, 0) -> true;
+is_type(nonempty_bitstring, 0) -> true;
 is_type(nonempty_improper_list, 2) -> true;
 is_type(nonempty_list, 0) -> true;
 is_type(nonempty_list, 1) -> true;

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2014-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2014-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,8 +19,22 @@
 %%
 -module(ssh_upgrade_SUITE).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+         suite/0,
+         all/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_testcase/2,
+         end_per_testcase/2
+        ]).
+
+-export([
+         major_upgrade/1,
+         minor_upgrade/1,
+         upgrade_downgraded/2,
+         upgrade_init/2,
+         upgrade_upgraded/2
+        ]).
 
 -include_lib("common_test/include/ct.hrl").
 -include("ssh_test_lib.hrl").
@@ -84,7 +98,7 @@ minor_upgrade(Config) when is_list(Config) ->
 %%% 
 
 %%%----------------------------------------------------------------
-%%% Initialyze system before upgrade test starts.
+%%% Initialize system before upgrade test starts.
 %%% Called by ct_release_test:upgrade/4
 upgrade_init(CTData, State) -> 
     {ok, AppUp={_, _, Up, _Down}} = ct_release_test:get_appup(CTData, ssh),

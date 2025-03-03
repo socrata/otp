@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2001-2018. All Rights Reserved.
+ * Copyright Ericsson AB 2001-2021. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -158,7 +158,7 @@ static void erl_errno_key_alloc(void)
  * If pthread functions fail we fall back to using fallback_errno
  * so that the main thread (actually not a thread in all ascpects)
  * still will set and get an erl_errno value.
- * Actually this is a bit to nice, it would be preferrable to exit fatal
+ * Actually this is a bit to nice, it would be preferable to exit fatal
  * as we do on windows, but we might break some code with one thread
  * but still compiled with -D_REENTRANT, so we'll leave it here.
  */

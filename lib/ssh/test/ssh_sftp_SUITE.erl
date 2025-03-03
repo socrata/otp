@@ -1,7 +1,7 @@
 %
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,14 +21,71 @@
 %%
 -module(ssh_sftp_SUITE).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+         suite/0,
+         all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2
+        ]).
+
+-export([
+         ascii_filename_ascii_contents_to_tar/1,
+         ascii_filename_unicode_contents_to_tar/1,
+         async_read/1,
+         async_write/1,
+         big_file_to_tar/1,
+         binaries_to_tar/1,
+         block_size_16_crypto_tar/1,
+         block_size_1_crypto_tar/1,
+         create_empty_tar/1,
+         directory_to_tar/1,
+         file_owner_access/1,
+         files_chunked_to_tar/1,
+         files_to_tar/1,
+         links/1,
+         mk_rm_dir/1,
+         null_crypto_tar/1,
+         open_close_dir/1,
+         open_close_file/1,
+         pos_read/1,
+         pos_write/1,
+         position/1,
+         read_6GB/1,
+         read_crypto_tar/1,
+         read_dir/1,
+         read_file/1,
+         read_null_crypto_tar/1,
+         read_tar/1,
+         remove_file/1,
+         rename_file/1,
+         retrieve_attributes/1,
+         set_attributes/1,
+         sftp_nonexistent_subsystem/1,
+         sftp_read_big_file/1,
+         simple_crypto_tar_big/1,
+         simple_crypto_tar_small/1,
+         start_channel_sock/1,
+         stuff/1,
+         unicode_filename_ascii_contents_to_tar/1,
+         unstuff/1,
+         version_option/1,
+         write_big_file/1,
+         write_file/1,
+         write_file_iolist/1
+        ]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("kernel/include/file.hrl").
 -include("ssh_test_lib.hrl").
-						% Default timetrap timeout
--define(default_timeout, ?t:minutes(1)).
+-include_lib("stdlib/include/assert.hrl").
+
+%% Default timetrap timeout
+-define(default_timeout, test_server:minutes(1)).
 
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
@@ -65,7 +122,9 @@ groups() ->
 
      {unicode, [], [{group,erlang_server},
 		    {group,openssh_server},
-		    sftp_nonexistent_subsystem]},
+                    read_6GB,
+		    sftp_nonexistent_subsystem
+                   ]},
 
      {big_recvpkt_size, [], [{group,erlang_server},
 			     {group,openssh_server}]},
@@ -173,22 +232,7 @@ init_per_group(erlang_server, Config) ->
     [{peer, {fmt_host(HostX),PortX}}, {group, erlang_server}, {sftpd, Sftpd} | Config];
 
 init_per_group(openssh_server, Config) ->
-    ct:comment("Begin ~p",[grps(Config)]),
-    Host = ssh_test_lib:hostname(),
-    case (catch ssh_sftp:start_channel(Host,
-				       [{user_interaction, false},
-					{silently_accept_hosts, true}])) of
-	{ok, _ChannelPid, Connection} ->
-	    [{peer, {_HostName,{IPx,Portx}}}] = ssh:connection_info(Connection,[peer]),
-	    ssh:close(Connection),
-	    [{w2l, fun w2l/1},
-             {peer, {fmt_host(IPx),Portx}}, {group, openssh_server} | Config];
-	{error,"Key exchange failed"} ->
-	    {skip, "openssh server doesn't support the tested kex algorithm"};
-	Other ->
-            ct:log("No openssh server. Cause:~n~p~n",[Other]),
-	    {skip, "No openssh daemon (see log in testcase)"} 
-    end;
+    verify_openssh(Config);
 
 init_per_group(remote_tar, Config) ->
     ct:comment("Begin ~p",[grps(Config)]),
@@ -196,16 +240,16 @@ init_per_group(remote_tar, Config) ->
     ct:log("Server (~p) at ~p:~p",[proplists:get_value(group,Config),Host,Port]),
     User = proplists:get_value(user, Config),
     Passwd = proplists:get_value(passwd, Config),
-    {ok, Connection} =
+    Connection =
 	case proplists:get_value(group, Config) of
 	    erlang_server ->
-		ssh:connect(Host, Port,
+		ssh_test_lib:connect(Host, Port,
 			    [{user, User},
 			     {password, Passwd},
 			     {user_interaction, false},
 			     {silently_accept_hosts, true}]);
 	    openssh_server ->
-		ssh:connect(Host, Port,
+		ssh_test_lib:connect(Host, Port,
 			    [{user_interaction, false},
 			     {silently_accept_hosts, true}])
 	end,
@@ -230,7 +274,18 @@ end_per_group(_, Config) ->
     Config.
 
 %%--------------------------------------------------------------------
-
+init_per_testcase(read_6GB, Config) ->
+    case verify_openssh(Config) of
+        Result = {skip, _} ->
+            Result;
+        _ ->
+            case os:type() of
+                {win32, _} ->
+                    {skip, "/dev/zero not available on Windws"};
+                _ ->
+                    init_per_testcase(read_6GB_prepare_openssh_server, Config)
+            end
+    end;
 init_per_testcase(sftp_nonexistent_subsystem, Config) ->
     PrivDir = proplists:get_value(priv_dir, Config),
     SysDir =  proplists:get_value(data_dir, Config),
@@ -243,7 +298,6 @@ init_per_testcase(sftp_nonexistent_subsystem, Config) ->
 				  [{User, Passwd}]}
 				]),
     [{sftpd, Sftpd} | Config];
-
 init_per_testcase(version_option, Config0) ->
     Config = prepare(Config0),
     TmpConfig0 = lists:keydelete(watchdog, 1, Config),
@@ -258,10 +312,11 @@ init_per_testcase(version_option, Config0) ->
 				{user, User},
 				{password, Passwd},
 				{user_interaction, false},
-				{silently_accept_hosts, true}]),
+				{silently_accept_hosts, true},
+                                {save_accepted_host, false}
+                               ]),
     Sftp = {ChannelPid, Connection},
     [{sftp,Sftp}, {watchdog, Dog} | TmpConfig];
-
 init_per_testcase(Case, Config00) ->
     Config0 = prepare(Config00),
     Config1 = lists:keydelete(watchdog, 1, Config0),
@@ -273,16 +328,30 @@ init_per_testcase(Case, Config00) ->
 		   undefined -> [];
 		   Sz -> [{packet_size,Sz}]
 	       end,
+    PrepareOpenSSHServer =
+        fun() ->
+                Host = ssh_test_lib:hostname(),
+        	{ok, ChannelPid, Connection} =
+        	    ssh_sftp:start_channel(Host,
+        				   [{user_interaction, false},
+        				    {silently_accept_hosts, true},
+                                            {save_accepted_host, false}
+                                           | PktSzOpt
+        				   ]),
+        	Sftp = {ChannelPid, Connection},
+        	[{sftp, Sftp}, {watchdog, Dog} | Config2]
+        end,
     Config =
 	case proplists:get_value(group,Config2) of
 	    erlang_server ->
-		{_,Host, Port} =  proplists:get_value(sftpd, Config2),
-		{ok, ChannelPid, Connection}  = 
+		{_,Host, Port} = proplists:get_value(sftpd, Config2),
+		{ok, ChannelPid, Connection} =
 		    ssh_sftp:start_channel(Host, Port,
 					   [{user, User},
 					    {password, Passwd},
 					    {user_interaction, false},
-					    {silently_accept_hosts, true}
+					    {silently_accept_hosts, true},
+                                            {save_accepted_host, false}
 					    | PktSzOpt
 					   ]
 					  ),
@@ -291,17 +360,10 @@ init_per_testcase(Case, Config00) ->
 	    openssh_server when Case == links ->
 		{skip, "known bug in openssh"};
 	    openssh_server ->
-		Host = ssh_test_lib:hostname(),
-		{ok, ChannelPid, Connection} = 
-		    ssh_sftp:start_channel(Host, 
-					   [{user_interaction, false},
-					    {silently_accept_hosts, true}
-					    | PktSzOpt
-					   ]),
-		Sftp = {ChannelPid, Connection},
-		[{sftp, Sftp}, {watchdog, Dog} | Config2]
+                PrepareOpenSSHServer();
+            _ when Case == read_6GB_prepare_openssh_server ->
+                PrepareOpenSSHServer()
 	end,
-
     case catch proplists:get_value(remote_tar,Config) of
 	%% The 'catch' is for the case of Config={skip,...}
 	true ->
@@ -330,8 +392,6 @@ end_per_testcase(Config) ->
 %%--------------------------------------------------------------------
 %% Test Cases --------------------------------------------------------
 %%--------------------------------------------------------------------
-open_close_file() ->
-    [{doc, "Test API functions open/3 and close/2"}].
 open_close_file(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -350,8 +410,6 @@ open_close_file(Server, File, Mode) ->
     ok = ssh_sftp:close(Server, Handle).
 
 %%--------------------------------------------------------------------
-open_close_dir() ->
-    [{doc, "Test API functions opendir/2 and close/2"}].
 open_close_dir(Config) when is_list(Config) ->
     PrivDir = proplists:get_value(sftp_priv_dir, Config),
     SftpPrivDir = w2l(Config, PrivDir),
@@ -364,8 +422,6 @@ open_close_dir(Config) when is_list(Config) ->
     {error, _} =  ssh_sftp:opendir(Sftp, SftpFileName).
 
 %%--------------------------------------------------------------------
-read_file() ->
-    [{doc, "Test API funtion read_file/2"}].
 read_file(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -375,8 +431,6 @@ read_file(Config) when is_list(Config) ->
     {ok, Data} = file:read_file(FileName).
 
 %%--------------------------------------------------------------------
-read_dir() ->
-    [{doc,"Test API function list_dir/2"}].
 read_dir(Config) when is_list(Config) ->
     PrivDir = proplists:get_value(sftp_priv_dir, Config),
     SftpPrivDir = w2l(Config, PrivDir),
@@ -386,8 +440,6 @@ read_dir(Config) when is_list(Config) ->
     ct:log("sftp list dir: ~p~n", [Files]).
 
 %%--------------------------------------------------------------------
-write_file() ->
-    [{doc, "Test API function write_file/2"}].
 write_file(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -398,8 +450,6 @@ write_file(Config) when is_list(Config) ->
     {ok, Expected} = file:read_file(FileName).
 
 %%--------------------------------------------------------------------
-write_file_iolist() ->
-    [{doc, "Test API function write_file/2 with iolists"}].
 write_file_iolist(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -421,8 +471,6 @@ write_file_iolist(Config) when is_list(Config) ->
       ]).
 
 %%--------------------------------------------------------------------
-write_big_file() ->
-    [{doc, "Test API function write_file/2 with big data"}].
 write_big_file(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -435,8 +483,6 @@ write_big_file(Config) when is_list(Config) ->
     {ok, Expected} = file:read_file(FileName).
 
 %%--------------------------------------------------------------------
-sftp_read_big_file() ->
-    [{doc, "Test API function read_file/2 with big data"}].
 sftp_read_big_file(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
@@ -449,8 +495,6 @@ sftp_read_big_file(Config) when is_list(Config) ->
     {ok, Expected} = ssh_sftp:read_file(Sftp, SftpFileName).
 
 %%--------------------------------------------------------------------
-remove_file() ->
-    [{doc,"Test API function delete/2"}].
 remove_file(Config) when is_list(Config) ->
     PrivDir =  proplists:get_value(sftp_priv_dir, Config),
     SftpPrivDir = w2l(Config, PrivDir),
@@ -465,8 +509,6 @@ remove_file(Config) when is_list(Config) ->
     false = lists:member(filename:basename(FileName), NewFiles),
     {error, no_such_file} = ssh_sftp:delete(Sftp, SftpFileName).
 %%--------------------------------------------------------------------
-rename_file() ->
-    [{doc, "Test API function rename_file/2"}].
 rename_file(Config) when is_list(Config) ->
     PrivDir =  proplists:get_value(sftp_priv_dir, Config),
     SftpPrivDir = w2l(Config, PrivDir),
@@ -488,8 +530,6 @@ rename_file(Config) when is_list(Config) ->
     true = lists:member(filename:basename(NewFileName), NewFiles).
 
 %%--------------------------------------------------------------------
-mk_rm_dir() ->
-    [{doc,"Test API functions make_dir/2, del_dir/2"}].
 mk_rm_dir(Config) when is_list(Config) ->
     PrivDir = proplists:get_value(sftp_priv_dir, Config),
     SftpPrivDir = w2l(Config, PrivDir),
@@ -505,8 +545,6 @@ mk_rm_dir(Config) when is_list(Config) ->
     {error, _} = ssh_sftp:del_dir(Sftp, SftpPrivDir).
 
 %%--------------------------------------------------------------------
-links() ->
-    [{doc,"Tests API function make_symlink/3"}].
 links(Config) when is_list(Config) ->
     case os:type() of
 	{win32, _} ->
@@ -523,37 +561,67 @@ links(Config) when is_list(Config) ->
     end.
 
 %%--------------------------------------------------------------------
-retrieve_attributes() ->
-    [{doc, "Test API function read_file_info/3"}].
 retrieve_attributes(Config) when is_list(Config) ->
     FileName = proplists:get_value(filename, Config),
     SftpFileName = w2l(Config, FileName),
-
     {Sftp, _} = proplists:get_value(sftp, Config),
     {ok, FileInfo} = ssh_sftp:read_file_info(Sftp, SftpFileName),
     {ok, NewFileInfo} = file:read_file_info(FileName),
-
-    %% TODO comparison. There are some differences now is that ok?
-    ct:log("SFTP: ~p   FILE: ~p~n", [FileInfo, NewFileInfo]).
+    ct:log("ssh_sftp:read_file_info(~p): ~p~n"
+           "file:read_file_info(~p): ~p",
+           [SftpFileName, FileInfo, FileName, NewFileInfo]),
+    {ExpectedUid, ExpectedGid} =
+        case {os:type(), proplists:get_value(group,Config)} of
+            {{win32, _}, openssh_server} ->
+                %% Windows compiled Erlang is expected will return 0;
+                %% but when Erlang(Windows) client interacts with
+                %% OpenSSH server - value 1000 is received by client
+                %% over SFTP (because OpenSSH is compiled for Linux
+                %% and runs on WSL)
+                {1000, 1000};
+            _ ->
+                {FileInfo#file_info.uid, FileInfo#file_info.gid}
+        end,
+    ?assertEqual(ExpectedUid, NewFileInfo#file_info.uid),
+    ?assertEqual(ExpectedGid, NewFileInfo#file_info.gid),
+    ok.
 
 %%--------------------------------------------------------------------
-set_attributes() ->
-    [{doc,"Test API function write_file_info/3"}].
 set_attributes(Config) when is_list(Config) ->
     FileName = proplists:get_value(testfile, Config),
     SftpFileName = w2l(Config, FileName),
-
     {Sftp, _} = proplists:get_value(sftp, Config),
     {ok,Fd} = file:open(FileName, write),
     io:put_chars(Fd,"foo"),
-    ok = ssh_sftp:write_file_info(Sftp, SftpFileName, #file_info{mode=8#400}),
-    {error, eacces} = file:write_file(FileName, "hello again"),
-    ok = ssh_sftp:write_file_info(Sftp, SftpFileName, #file_info{mode=8#600}),
-    ok = file:write_file(FileName, "hello again").
+    TestWriting =
+        fun(FInfo) ->
+                ok = ssh_sftp:write_file_info(Sftp, SftpFileName,
+                                              FInfo#file_info{mode=8#400}),
+                {error, eacces} = file:write_file(FileName, "hello again"),
+                ok = ssh_sftp:write_file_info(Sftp, SftpFileName,
+                                              FInfo#file_info{mode=8#600}),
+                ok = file:write_file(FileName, "hello again")
+        end,
+    TestWriting(#file_info{}),
+    IsErlangServer =
+        fun() ->
+                TcGroupPath = proplists:get_value(tc_group_path, Config),
+                {_, Path} = lists:unzip(lists:flatten(TcGroupPath)),
+                lists:member(erlang_server, Path)
+        end,
+    case IsErlangServer() of
+        true ->
+            ct:log("Testing with writing a complete #file_info record"),
+            {ok, FileInfo} = file:read_file_info(SftpFileName),
+            TestWriting(FileInfo);
+        _ ->
+            %% with OpenSSH daemon started by other user above instruction end
+            %% up with permission denied
+            ok
+    end,
+    ok.
 
 %%--------------------------------------------------------------------
-file_owner_access() ->
-    [{doc,"Test file user access validity"}].
 file_owner_access(Config) when is_list(Config) ->
     case os:type() of
         {win32, _} ->
@@ -583,8 +651,6 @@ file_owner_access(Config) when is_list(Config) ->
     end.
 
 %%--------------------------------------------------------------------
-async_read() ->
-    [{doc,"Test API aread/3"}].
 async_read(Config) when is_list(Config) ->
     {Sftp, _} = proplists:get_value(sftp, Config),
 
@@ -603,8 +669,6 @@ async_read(Config) when is_list(Config) ->
 	30000 -> ct:fail("timeout ~p:~p",[?MODULE,?LINE])
     end.
 %%--------------------------------------------------------------------
-async_write() ->
-    [{doc,"Test API awrite/3"}].
 async_write(Config) when is_list(Config) ->
     {Sftp, _} = proplists:get_value(sftp, Config),
     FileName = proplists:get_value(testfile, Config),
@@ -622,9 +686,6 @@ async_write(Config) when is_list(Config) ->
     end.
 
 %%--------------------------------------------------------------------
-
-position() ->
-    [{doc, "Test API functions position/3"}].
 position(Config) when is_list(Config) ->
     FileName = proplists:get_value(testfile, Config),
     SftpFileName = w2l(Config, FileName),
@@ -652,9 +713,30 @@ position(Config) when is_list(Config) ->
     {ok, 1} = ssh_sftp:position(Sftp, Handle, cur),
     {ok, "2"} = ssh_sftp:read(Sftp, Handle, 1).
 
+read_6GB(Config) when is_list(Config) ->
+    ct:timetrap(16*?default_timeout),
+    FileName = "/dev/zero",
+    SftpFileName = w2l(Config, FileName),
+    {SftpChannel, _ConnectionRef} = proplists:get_value(sftp, Config),
+    ChunkSize = 65535,
+    N = 100000,
+    {ok, Handle} = ssh_sftp:open(SftpChannel, SftpFileName, [read]),
+    ExpectedList = lists:duplicate(ChunkSize, 0),
+    [begin
+         MBTransferred = io_lib:format("~.2f", [I * ChunkSize / 1048576.0]),
+         case ssh_sftp:read(SftpChannel, Handle, ChunkSize, timer:minutes(1)) of
+             {ok, ExpectedList} ->
+                 [ct:log("~n~s MB read~n", [MBTransferred]) || I rem 10000 == 0];
+             Result ->
+                 ct:log("## After reading ~s MB~n## Unexpected result received = ~p",
+                        [MBTransferred, Result]),
+                 ct:fail(unexpected_reason)
+         end
+     end ||
+        I <- lists:seq(0, N)],
+    ok.
+
 %%--------------------------------------------------------------------
-pos_read() ->
-    [{doc,"Test API functions pread/3 and apread/3"}].
 pos_read(Config) when is_list(Config) ->
     FileName = proplists:get_value(testfile, Config),
     SftpFileName = w2l(Config, FileName),
@@ -682,8 +764,6 @@ pos_read(Config) when is_list(Config) ->
    {ok,Expect1} = ssh_sftp:pread(Sftp, Handle, {bof,0}, Len1).
 
 %%--------------------------------------------------------------------
-pos_write() ->
-    [{doc,"Test API functions pwrite/4 and apwrite/4"}].
 pos_write(Config) when is_list(Config) ->
     FileName = proplists:get_value(testfile, Config),
     SftpFileName = w2l(Config, FileName),
@@ -723,7 +803,8 @@ start_channel_sock(Config) ->
 	end,
 
     Opts = [{user_interaction, false},
-	    {silently_accept_hosts, true}
+	    {silently_accept_hosts, true},
+            {save_accepted_host, false}
 	    | LoginOpts],
 
     {Host,Port} = proplists:get_value(peer, Config),
@@ -762,13 +843,11 @@ start_channel_sock(Config) ->
     %% Test that the socket is closed when the Connection closes
     ok = ssh:close(Conn),
     timer:sleep(400), %% Until the stop sequence is fixed
-    {error,einval} = inet:getopts(Sock, [active]),
+    {error,_} = inet:getopts(Sock, [active]),
 
     ok.
 
 %%--------------------------------------------------------------------
-sftp_nonexistent_subsystem() ->
-    [{doc, "Try to execute sftp subsystem on a server that does not support it"}].
 sftp_nonexistent_subsystem(Config) when is_list(Config) ->
     {_,Host, Port} =  proplists:get_value(sftpd, Config),
     User = proplists:get_value(user, Config),
@@ -778,11 +857,11 @@ sftp_nonexistent_subsystem(Config) when is_list(Config) ->
 			       [{user_interaction, false},
 				{user, User},
 				{password, Passwd},
-				{silently_accept_hosts, true}]).
+				{silently_accept_hosts, true},
+                                {save_accepted_host, false}
+                               ]).
 
 %%--------------------------------------------------------------------
-version_option()  ->
-    [{doc, "Test API option sftp_vsn"}].
 version_option(Config) when is_list(Config) ->
     open_close_dir(Config).
 
@@ -1065,39 +1144,8 @@ cipher_crypto_tar(Cipher, Config) ->
 %%--------------------------------------------------------------------
 %% Internal functions ------------------------------------------------
 %%--------------------------------------------------------------------
-old_prepare(Config0) ->
-    PrivDir = proplists:get_value(priv_dir, Config0),
-    Dir = filename:join(PrivDir, ssh_test_lib:random_chars(10)),
-    file:make_dir(Dir),
-    ct:log("~p:~p created the directory~nsftp_priv_dir = ~p", [?MODULE,?LINE,Dir]),
-    Keys = [filename,
-	    testfile,
-	    linktest,
-	    tar_filename],
-    Config1 = foldl_keydelete(Keys, Config0),
-    Config2 = lists:foldl(fun({Key,Name}, ConfAcc) ->
-                                  [{Key, filename:join(Dir,Name)} | ConfAcc]
-			  end,
-			  Config1,
-			  lists:zip(Keys, [proplists:get_value(K,Config0) || K<-Keys])),
-
-    catch ct:log("~p:~p Prepared filenames (Key -> Value):~n~ts",
-                 [?MODULE,?LINE,
-                  [io_lib:format("~p -> ~ts~n", [K,V]) || {K,V} <- Config2,
-                                                          lists:member(K, Keys)]]),
-
-    DataDir =  proplists:get_value(data_dir, Config2),
-    FilenameSrc = filename:join(DataDir, "sftp.txt"),
-    FilenameDst = proplists:get_value(filename, Config2),
-    {ok,_} = file:copy(FilenameSrc, FilenameDst),
-    [{sftp_priv_dir,Dir} | Config2].
-
-
 have_unicode_support() -> (file:native_name_encoding() == utf8) andalso ("四" == [22235]).
 
-
-make_data_sub_dir(Config, SubDir) ->
-    make_data_sub_dir(Config, SubDir, SubDir).
 
 make_data_sub_dir(Config, SubDirSrc, SubDirDst) ->
     SrcDir = filename:join(proplists:get_value(data_dir, Config),
@@ -1246,4 +1294,22 @@ w2l(Config, P) ->
     W2L = proplists:get_value(w2l, Config, fun(X) -> X end),
     W2L(P).
 
-    
+verify_openssh(Config) ->
+    ct:comment("Begin ~p",[grps(Config)]),
+    Host = ssh_test_lib:hostname(),
+    case (catch ssh_sftp:start_channel(Host,
+				       [{user_interaction, false},
+					{silently_accept_hosts, true},
+                                        {save_accepted_host, false}
+                                       ])) of
+	{ok, _ChannelPid, Connection} ->
+	    [{peer, {_HostName,{IPx,Portx}}}] = ssh:connection_info(Connection,[peer]),
+	    ssh:close(Connection),
+	    [{w2l, fun w2l/1},
+             {peer, {fmt_host(IPx),Portx}}, {group, openssh_server} | Config];
+	{error,"Key exchange failed"} ->
+	    {skip, "openssh server doesn't support the tested kex algorithm"};
+	Other ->
+            ct:log("No openssh server. Cause:~n~p~n",[Other]),
+	    {skip, "No openssh daemon (see log in testcase)"}
+    end.

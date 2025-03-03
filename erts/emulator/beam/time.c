@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2024. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -134,7 +134,7 @@
  * will be triggered at once. The circular list of the slot will
  * be moved to the 'sentinel' field while bumping these timers
  * as when bumping an ordinary wheel slot. A yielding bump
- * operation and cancelation of timers is handled the same way
+ * operation and cancellation of timers is handled the same way
  * as if the timer was in a wheel slot.
  *
  * -- Searching for Next Timeout --
@@ -194,6 +194,9 @@
 
 #if 0
 #  define ERTS_TW_HARD_DEBUG
+#endif
+#if 0
+#  define ERTS_TW_DEBUG
 #endif
 
 #if defined(ERTS_TW_HARD_DEBUG) && !defined(ERTS_TW_DEBUG)
@@ -480,6 +483,8 @@ find_next_timeout(ErtsSchedulerData *esdp, ErtsTimerWheel *tiw)
 
     ERTS_HARD_DBG_CHK_WHEELS(tiw, 0);
 
+    ERTS_TW_ASSERT(tiw->at_once.nto == 0);
+    ERTS_TW_ASSERT(tiw->nto == tiw->soon.nto + tiw->later.nto);
     ERTS_TW_ASSERT(tiw->yield_slot == ERTS_TW_SLOT_INACTIVE);
 
     if (tiw->nto == 0) { /* no timeouts in wheel */
@@ -608,7 +613,22 @@ find_next_timeout(ErtsSchedulerData *esdp, ErtsTimerWheel *tiw)
     }
 
 done: {
-        ErtsMonotonicTime min_timeout;
+        ErtsMonotonicTime min_timeout, timeout_pos_limit;
+
+        timeout_pos_limit = tiw->pos + ERTS_CLKTCKS_WEEK;
+        if (min_timeout_pos > timeout_pos_limit) {
+            /*
+             * We never expose a timeout larger than a week in order to avoid
+             * issues with primitives that have a limited maximum timeout
+             * time (for example, poll() with a timeout in milliseconds passed
+             * in a variable of type 'int' which is around 3,5 weeks). The
+             * overhead, in case all timers are very far in the future, will
+             * be that the scheduler once a week will have to check if we got
+             * any timeouts closer in time than a week...
+             */
+            min_timeout_pos = timeout_pos_limit;
+            true_min_timeout = 0;
+        }
 
         min_timeout = ERTS_CLKTCKS_TO_MONOTONIC(min_timeout_pos);
         tiw->next_timeout_pos = min_timeout_pos;
@@ -866,6 +886,8 @@ erts_bump_timers(ErtsTimerWheel *tiw, ErtsMonotonicTime curr_time)
 	    }
 
 	    if (tiw->pos >= bump_to) {
+                if (tiw->at_once.nto)
+                    continue;
                 ERTS_MSACC_POP_STATE_M_X();
 		break;
             }

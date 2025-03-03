@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -191,8 +191,8 @@ find(Mod, GrNames, all, [{testcase,TC,[Prop]} | Gs], Known,
 %% Check if test case should be saved
 find(Mod, GrNames, TCs, [TC | Gs], Known, Defs, FindAll)
   when is_atom(TC) orelse
-       ((size(TC) == 3) andalso (element(1,TC) == testcase)) orelse
-       ((size(TC) == 2) and (element(1,TC) /= group)) ->
+       ((tuple_size(TC) == 3) andalso (element(1,TC) == testcase)) orelse
+       ((tuple_size(TC) == 2) andalso (element(1,TC) /= group)) ->
     Case =
         case TC of
             _ when is_atom(TC) ->
@@ -229,7 +229,7 @@ find(Mod, GrNames, TCs, [TC | Gs], Known, Defs, FindAll)
 	    [Case | find(Mod, GrNames, TCs, Gs, Known, Defs, FindAll)]
     end;
 
-%% Unexpeted term in group list
+%% Unexpected term in group list
 find(Mod, _GrNames, _TCs, [BadTerm | _Gs], Known, _Defs, _FindAll) ->
     Where = if length(Known) == 0 ->
 		    atom_to_list(Mod)++":groups/0";
@@ -333,8 +333,7 @@ modify_tc_list1(GrSpecTs, TSCs) ->
 					  false -> []
 				      end
 			      end;
-                         (Test) when is_tuple(Test),
-				     (size(Test) > 2) ->
+                         (Test) when tuple_size(Test) > 2 ->
 			      [Test];
 			 (Test={group,_}) ->
 			      [Test];
@@ -550,11 +549,11 @@ search_and_override([Conf = {conf,Props,Init,Tests,End}], ORSpec, Mod) ->
     Suite = ?val(suite, Props),
     case lists:keysearch(Name, 1, ORSpec) of
 	{value,{Name,default}} ->
-	    [Conf];
+	    [{conf, Props, Init,  search_and_override(Tests, ORSpec, Mod),End}];
 	{value,{Name,ORProps}} ->
-	    [{conf,InsProps(Name,Suite,ORProps),Init,Tests,End}];
+	    [{conf,InsProps(Name,Suite,ORProps),Init, search_and_override(Tests, ORSpec, Mod),End}];
 	{value,{Name,default,[]}} ->
-	    [Conf];
+	    [{conf, Props, Init,  search_and_override(Tests, ORSpec, Mod),End}];
 	{value,{Name,default,SubORSpec}} ->
 	    override_props([Conf], SubORSpec, Name,Mod);
 	{value,{Name,ORProps,SubORSpec}} ->
@@ -562,7 +561,8 @@ search_and_override([Conf = {conf,Props,Init,Tests,End}], ORSpec, Mod) ->
 			    Init,Tests,End}], SubORSpec, Name,Mod);
 	_ ->
 	    [{conf,Props,Init,search_and_override(Tests,ORSpec,Mod),End}]
-    end.
+    end;
+search_and_override(Tests, _, _) -> Tests.
 
 %% Modify the Tests element according to the override specification
 override_props([{conf,Props,Init,Tests,End} | Confs], SubORSpec, Name,Mod) ->

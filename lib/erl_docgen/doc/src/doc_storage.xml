@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>1997</year><year>2016</year>
+      <year>1997</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -34,7 +34,7 @@
     <p><seeguide marker="kernel:eep48_chapter">EEP-48</seeguide>
       defines a common documentation storage format for module documentation in the Erlang/OTP
       ecosystem. Erl_Docgen can generate documentation in this format from XML files following
-      the DTD's descibed in the other User's Guides in this application.</p>
+      the DTD's described in the other User's Guides in this application.</p>
     <p>Some special considerations have to be taken when writing documentation that
       should also be available through EEP-48 style storage.</p>
     <list>
@@ -59,9 +59,10 @@
 -type chunk_element_attrs() :: [chunk_element_attr()].
 -type chunk_element_attr() :: {atom(),unicode:unicode_binary()}.
 -type chunk_element_type() :: chunk_element_inline_type() | chunk_element_block_type().
--type chunk_element_inline_type() :: a | code |  em | i.
+-type chunk_element_inline_type() :: a | code | strong | b | em | i.
 -type chunk_element_block_type() :: p | 'div' | br | pre | ul |
-                              ol | li | dl | dt | dd | h1 | h2 | h3.
+                                    ol | li | dl | dt | dd |
+                                    h1 | h2 | h3 | h4 | h5 | h6.
       </code>
       <p>The different element types follow their HTML meaning when rendered.
         The following are some general rules for how the chunk elements are allowed

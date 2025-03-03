@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -53,12 +53,14 @@
 
 -import(lists, [reverse/1]).
 
--record(state, {socket, port_no = -1, name = ""}).
+-record(state, {socket, port_no = -1, name = "", family}).
 -type state() :: #state{}.
 
 -include("inet_int.hrl").
 -include("erl_epmd.hrl").
 -include_lib("kernel/include/inet.hrl").
+
+-define(RECONNECT_TIME, 2000).
 
 %%%----------------------------------------------------------------------
 %%% API
@@ -79,7 +81,7 @@ stop() ->
 %% return {port, P, Version} | noport
 %%
 
--spec port_please(Name, Host) -> {ok, Port, Version} | noport when
+-spec port_please(Name, Host) -> {port, Port, Version} | noport | closed | {error, term()} when
 	  Name :: atom() | string(),
 	  Host :: atom() | string() | inet:ip_address(),
 	  Port :: non_neg_integer(),
@@ -88,48 +90,50 @@ stop() ->
 port_please(Node, Host) ->
   port_please(Node, Host, infinity).
 
--spec port_please(Name, Host, Timeout) -> {port, Port, Version} | noport when
+-spec port_please(Name, Host, Timeout) -> {port, Port, Version} | noport | closed | {error, term()} when
 	  Name :: atom() | string(),
 	  Host :: atom() | string() | inet:ip_address(),
 	  Timeout :: non_neg_integer() | infinity,
 	  Port :: non_neg_integer(),
 	  Version :: non_neg_integer().
 
-port_please(Node, HostName, Timeout) when is_atom(HostName) ->
-  port_please1(Node, atom_to_list(HostName), Timeout);
-port_please(Node, HostName, Timeout) when is_list(HostName) ->
-  port_please1(Node, HostName, Timeout);
-port_please(Node, EpmdAddr, Timeout) ->
-  get_port(Node, EpmdAddr, Timeout).
+port_please(Node, HostName, Timeout) ->
+    case listen_port_please(Node, HostName) of
+        {ok, 0} ->
+            case getepmdbyname(HostName, Timeout) of
+                {ok, EpmdAddr} ->
+                    get_port(Node, EpmdAddr, Timeout);
+                _Error ->
+                    ?port_please_failure2(_Error),
+                    noport
+            end;
+        {ok, Prt} ->
+            %% We don't know which dist version the other node is running
+            %% so return the low version so that we can talk to older nodes
+            {port, Prt, ?epmd_dist_low}
+    end.
 
-port_please1(Node, HostName, Timeout) ->
-  Family = case inet_db:res_option(inet6) of
-             true ->
-               inet6;
-             false ->
-               inet
-           end,
-  case inet:gethostbyname(HostName, Family, Timeout) of
-      {ok,#hostent{ h_addr_list = [EpmdAddr | _]}} ->
-          case get_port(Node, EpmdAddr, Timeout) of
-              noport ->
-                  case listen_port_please(Node, HostName) of
-                      {ok, 0} ->
-                          noport;
-                      {ok, Prt} ->
-                          {port, Prt, 5}
-                  end;
-               Reply ->
-                  Reply
-          end;
-      _Else ->
-          ?port_please_failure2(_Else),
-          noport
-  end.
+getepmdbyname(HostName, Timeout) when is_atom(HostName) ->
+    getepmdbyname(atom_to_list(HostName), Timeout);
+getepmdbyname(HostName, Timeout) when is_list(HostName) ->
+    Family = case inet_db:res_option(inet6) of
+                 true ->
+                     inet6;
+                 false ->
+                     inet
+             end,
+    case inet:gethostbyname(HostName, Family, Timeout) of
+        {ok,#hostent{ h_addr_list = [EpmdAddr | _]}} ->
+            {ok, EpmdAddr};
+        Else ->
+            Else
+    end;
+getepmdbyname(HostName, _Timeout) ->
+    {ok, HostName}.
 
 -spec listen_port_please(Name, Host) -> {ok, Port} when
-      Name :: atom(),
-      Host :: string() | inet:ip_address(),
+      Name :: atom() | string(),
+      Host :: atom() | string() | inet:ip_address(),
       Port :: non_neg_integer().
 listen_port_please(_Name, _Host) ->
     try
@@ -157,15 +161,13 @@ names() ->
       Port :: non_neg_integer(),
       Reason :: address | file:posix().
 
-names(HostName) when is_atom(HostName); is_list(HostName) ->
-  case inet:gethostbyname(HostName) of
-    {ok,#hostent{ h_addr_list = [EpmdAddr | _]}} ->
-      get_names(EpmdAddr);
-    Else ->
-      Else
-  end;
-names(EpmdAddr) ->
-  get_names(EpmdAddr).
+names(HostName) ->
+    case getepmdbyname(HostName, infinity) of
+        {ok,EpmdAddr} ->
+            get_names(EpmdAddr);
+        Else ->
+            Else
+    end.
 
 -spec register_node(Name, Port) -> Result when
 	  Name :: string(),
@@ -228,10 +230,18 @@ handle_call({register, Name, PortNo, Family}, _From, State) ->
 		{alive, Socket, Creation} ->
 		    S = State#state{socket = Socket,
 				    port_no = PortNo,
-				    name = Name},
+				    name = Name,
+				    family = Family},
 		    {reply, {ok, Creation}, S};
-		Error ->
-		    {reply, Error, State}
+                Error ->
+                    case init:get_argument(erl_epmd_port) of
+                        {ok, _} ->
+                            {reply, {ok, -1}, State#state{ socket = -1,
+                                                           port_no = PortNo,
+                                                           name = Name} };
+                        error ->
+                            {reply, Error, State}
+                    end
 	    end;
 	_ ->
 	    {reply, {error, already_registered}, State}
@@ -256,7 +266,17 @@ handle_cast(_, State) ->
 -spec handle_info(term(), state()) -> {'noreply', state()}.
 
 handle_info({tcp_closed, Socket}, State) when State#state.socket =:= Socket ->
+    erlang:send_after(?RECONNECT_TIME, self(), reconnect),
     {noreply, State#state{socket = -1}};
+handle_info(reconnect, State) when State#state.socket =:= -1 ->
+    case do_register_node(State#state.name, State#state.port_no, State#state.family) of
+	{alive, Socket, _Creation} ->
+            %% ignore the received creation
+            {noreply, State#state{socket = Socket}};
+	_Error ->
+	    erlang:send_after(?RECONNECT_TIME, self(), reconnect),
+	    {noreply, State}
+    end;
 handle_info(_, State) ->
     {noreply, State}.
 
@@ -336,7 +356,7 @@ do_register_node(NodeName, TcpPort, Family) ->
                     Error
             end;
 	Error ->
-	    Error
+            Error
     end.
 
 epmd_dist_high() ->
@@ -416,9 +436,8 @@ get_port(Node, EpmdAddress, Timeout) ->
 		    ?port_please_failure2(_Error),
 		    noport
 	    end;
-	_Error -> 
-	    ?port_please_failure2(_Error),
-	    noport
+	_Error ->
+            noport
     end.
 
 

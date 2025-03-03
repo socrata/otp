@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 20016-2018. All Rights Reserved.
+%% Copyright Ericsson AB 20016-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@
 
 %%----------------------------------------------------------------------
 %% Purpose: Manages ssl sessions and trusted certifacates
+%% (Note: See the document internal_doc/pem_and_cert_cache.md for additional
+%% information)
 %%----------------------------------------------------------------------
 
 -module(ssl_pem_cache).
@@ -50,7 +52,6 @@
 	 }).
 
 -define(CLEAR_PEM_CACHE, 120000).
--define(DEFAULT_MAX_SESSION_CACHE, 1000).
 
 %%====================================================================
 %% API
@@ -154,7 +155,8 @@ init([Name]) ->
 handle_call({unconditionally_clear_pem_cache, _},_, 
 	    #state{pem_cache = PemCache} = State) ->
     ssl_pkix_db:clear(PemCache),
-    {reply, ok,  State}.
+    Result = ssl_manager:refresh_trusted_db(ssl_manager_type()),
+    {reply, Result,  State}.
 
 %%--------------------------------------------------------------------
 -spec  handle_cast(msg(), #state{}) -> {noreply, #state{}}.
@@ -170,6 +172,7 @@ handle_cast({cache_pem, File, Content}, #state{pem_cache = Db} = State) ->
 
 handle_cast({invalidate_pem, File}, #state{pem_cache = Db} = State) ->
     ssl_pkix_db:remove(File, Db),
+    ssl_manager:refresh_trusted_db(ssl_manager_type(), File),
     {noreply, State}.
 
 
@@ -252,4 +255,12 @@ bypass_cache() ->
 	    Bool;
 	_ ->
 	    false
+    end.
+
+ssl_manager_type() ->
+    case get(ssl_pem_cache) of
+        ?MODULE ->
+            normal;
+        _ ->
+            dist
     end.

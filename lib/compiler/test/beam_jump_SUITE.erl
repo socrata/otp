@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2016-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2016-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,12 +18,13 @@
 %% %CopyrightEnd%
 %%
 -module(beam_jump_SUITE).
+-feature(maybe_expr, enable).
 
 -export([all/0,suite/0,groups/0,init_per_suite/1,end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
 	 undefined_label/1,ambiguous_catch_try_state/1,
          unsafe_move_elimination/1,build_tuple/1,
-         coverage/1,call_sharing/1]).
+         coverage/1,call_sharing/1,undecided_allocation/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]}].
@@ -38,7 +39,8 @@ groups() ->
        unsafe_move_elimination,
        build_tuple,
        coverage,
-       call_sharing
+       call_sharing,
+       undecided_allocation
       ]}].
 
 init_per_suite(Config) ->
@@ -79,6 +81,8 @@ ambiguous_catch_try_state(Config) ->
 
     {'EXIT',{{badmatch,0},_}} = (catch ambiguous_catch_try_state_2()),
     {'EXIT',{{badmatch,0},_}} = (catch ambiguous_catch_try_state_3()),
+
+    {'EXIT',{badarg,_}} = catch ambiguous_catch_try_state_4(),
 
     ok.
 
@@ -168,7 +172,7 @@ expects_h(7, Atom) ->
     ok.
 
 %% When compiled with +no_copt, beam_validator would complain about
-%% ambigous try/catch state.
+%% ambiguous try/catch state.
 ambiguous_catch_try_state_1(<<42:false>>) ->
     %% The beam_ssa_bsm pass will duplicate the entire second clause.
     %% beam_jump will share the blocks with the build_stacktrace
@@ -227,11 +231,18 @@ ambiguous_catch_try_state_3() ->
     end.
 
 
+ambiguous_catch_try_state_4() ->
+    0.0 = try binary_to_float(garbage_collect() orelse ((1.0 = tuple_to_list(ok)) -- ok))
+          after
+              ok
+          end.
+
 -record(message2, {id, p1}).
 -record(message3, {id, p1, p2}).
 
 build_tuple(_Config) ->
-    {'EXIT',{{badrecord,message3},_}} = (catch do_build_tuple(#message2{})),
+    Message2 = #message2{},
+    {'EXIT',{{badrecord,Message2},_}} = (catch do_build_tuple(#message2{})),
     ok.
 
 do_build_tuple(Message) ->
@@ -251,6 +262,10 @@ coverage(_Config) ->
 
     error = coverage_3(#{key => <<"child">>}),
     error = coverage_3(#{}),
+
+    ok = coverage_4(whatever),
+    -0.5 = coverage_4(any),
+
     ok.
 
 coverage_1(Var) ->
@@ -285,6 +300,15 @@ coverage_3(#{key := <<child>>}) when false ->
 coverage_3(#{}) ->
     error.
 
+%% Cover beam_jump:value_to_literal/1.
+coverage_4(whatever) ->
+    maybe
+        coverage_4(ok),
+        ok
+    end;
+coverage_4(_) ->
+    (bnot 0) / 2.
+
 %% ERIERL-478: The validator failed to validate argument types when calls were
 %% shared and the types at the common block turned out wider than the join of
 %% each individual call site.
@@ -316,6 +340,87 @@ cs_1(Key) ->
 
 cs_2(I) -> I.
 
+undecided_allocation(_Config) ->
+    ok = catch undecided_allocation_1(<<10:(3*7)>>),
+    {'EXIT',{{badrecord,<<0>>},_}} = catch undecided_allocation_1(8),
+
+    {bar,1} = undecided_allocation_2(id(<<"bar">>)),
+    {foo,2} = undecided_allocation_2(id(<<"foo">>)),
+    {'EXIT',_} = catch undecided_allocation_2(id(<<"foobar">>)),
+    {'EXIT',{{badmatch,error},_}} = catch undecided_allocation_2(id("foo,bar")),
+    {'EXIT',_} = catch undecided_allocation_2(id(foobar)),
+    {'EXIT',_} = catch undecided_allocation_2(id(make_ref())),
+
+    ok = undecided_allocation_3(id(<<0>>), gurka),
+    {'EXIT', {badarith, _}} = catch undecided_allocation_3(id(<<>>), gurka),
+
+    ok.
+
+-record(rec, {}).
+undecided_allocation_1(<<10:3/integer-unit:7>>) ->
+    ok;
+undecided_allocation_1(V) ->
+    %% The record update operation would be duplicated by the beam_ssa_bssm
+    %% pass, and beam_jump would incorrectly share the resulting calls to
+    %% error/1, causing beam_validator to issue the following diagnostic
+    %% when this module was compiled with the no_type_opt option:
+    %%
+    %%  Internal consistency check failed - please report this bug.
+    %%  Instruction: {call_ext,1,{extfunc,erlang,error,1}}
+    %%  Error:       {allocated,undecided}:
+
+    <<
+      <<0>> || <<0:V>> <= <<0>>
+    >>#rec{},
+    if whatever -> [] end.
+
+undecided_allocation_2(Order) ->
+    {_, _} =
+        case Order of
+            <<"bar">> ->
+                {bar, 1};
+            <<"foo">> ->
+                {foo, 2};
+            S ->
+                case string:split("foo", "o") of
+                    [] ->
+                        ok;
+                    _ ->
+                        %% The beam_ssa_bsm pass will duplicate this code,
+                        %% and beam_jump would undo the duplication by sharing
+                        %% the code that calls lists:flatten/1. The problem was
+                        %% that the stack frames had different sizes for the
+                        %% two calls to lists:flatten/1. The diagnostic would be:
+                        %%
+                        %%  Internal consistency check failed - please report this bug.
+                        %%  Instruction: {call_ext,1,{extfunc,lists,flatten,1}}
+                        %%  Error:       {allocated,undecided}:
+
+                        lists:flatten(
+                            case S of
+                                Y when is_binary(Y) -> Y;
+                                Y -> string:split(Y, ",")
+                            end
+                        )
+                end,
+                error
+        end.
+
+%% GH-6571: bs_init_writable can only be shared when the stack frame size is
+%% known.
+undecided_allocation_3(<<_>>, _) ->
+    ok;
+undecided_allocation_3(X, _) ->
+    case 0 + get_keys() of
+        X ->
+            ok;
+        _ ->
+            (node() orelse garbage_collect()) =:=
+                case <<0 || false>> of
+                    #{} ->
+                        ok
+                end
+    end.
 
 id(I) ->
     I.

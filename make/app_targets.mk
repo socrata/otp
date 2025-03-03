@@ -1,7 +1,7 @@
 # 
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 1997-2019. All Rights Reserved.
+# Copyright Ericsson AB 1997-2023. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,8 +22,11 @@ APPLICATION ?= $(basename $(notdir $(PWD)))
 
 .PHONY: test info gclean dialyzer dialyzer_plt dclean
 
+ifndef NO_TEST_TARGET
 test:
-	$(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
+	TEST_NEEDS_RELEASE=$(TEST_NEEDS_RELEASE) TYPE=$(TYPE) \
+	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
+endif
 
 info:
 	@echo "$(APPLICATION)_VSN:   $(VSN)"
@@ -49,7 +52,7 @@ $(DIA_PLT_DIR):
 
 $(DIA_PLT): $(DIA_PLT_DIR)
 	@echo "Building $(APPLICATION) plt file"
-	@$(ERL_TOP)/bin/dialyzer --build_plt \
+	@dialyzer --build_plt \
                   --output_plt $@ \
 		  --apps $(sort $(DIA_PLT_APPS) $(DIA_DEFAULT_PLT_APPS)) \
 		  --output $(DIA_ANALYSIS) \

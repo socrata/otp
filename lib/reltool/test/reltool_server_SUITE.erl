@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2009-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -281,9 +281,6 @@ get_config(_Config) ->
 		    {excl_sys_filters,[]},
 		    {incl_app_filters,[".*"]},
 		    {excl_app_filters,[]},
-		    {incl_archive_filters,[".*"]},
-		    {excl_archive_filters,["^include$","^priv$"]},
-		    {archive_opts,[]},
 		    {rel_app_type,permanent},
 		    {app_file,keep},
 		    {debug_info,keep}]}},
@@ -312,9 +309,6 @@ get_config(_Config) ->
 		    {excl_sys_filters,[]},
 		    {incl_app_filters,[".*"]},
 		    {excl_app_filters,[]},
-		    {incl_archive_filters,[".*"]},
-		    {excl_archive_filters,["^include$","^priv$"]},
-		    {archive_opts,[]},
 		    {rel_app_type,permanent},
 		    {app_file,keep},
 		    {debug_info,keep}]}},
@@ -401,7 +395,8 @@ create_release_sort(Config) ->
     RelVsn = "1.0",
     %% Application z (.app file):
     %%     includes [tools, mnesia]
-    %%     uses [kernel, stdlib, sasl, inets]
+    %%     uses [kernel, stdlib, sasl, inets, unknown]
+    %% where unknown is optional dependency
     Sys =
         {sys,
          [
@@ -623,7 +618,8 @@ create_script_sort(Config) ->
     LibDir = filename:join(DataDir,"sort_apps"),
     %% Application z (.app file):
     %%     includes [tools, mnesia]
-    %%     uses [kernel, stdlib, sasl, inets]
+    %%     uses [kernel, stdlib, sasl, inets, unknown]
+    %% where unknown is optional dependency
     Sys =
         {sys,
          [
@@ -1250,7 +1246,7 @@ create_slim(Config) ->
     TargetRelDir = filename:join(TargetDir,"releases"),
     TargetRelVsnDir = filename:join(TargetRelDir,RelVsn),
 
-    {ok,["a-1.0.ez"]} = file:list_dir(TargetLibDir),
+    {ok,["a-1.0"]} = file:list_dir(TargetLibDir),
 
     RootDir = code:root_dir(),
     Erl = filename:join([RootDir, "bin", "erl"]),
@@ -1333,16 +1329,14 @@ otp_9229_dupl_mod_exclude_app(Config) ->
     {ok, Node} = ?msym({ok, _}, start_node(?NODE_NAME, Erl)),
 
     AbsTargetDir = filename:absname(TargetDir),
-    XArchive = "x-1.0.ez",
-    AbsXArchive = filename:join([AbsTargetDir,lib,XArchive]),
-    XEbin = ["ebin","x-1.0",XArchive],
-    YArchive = "y-1.0.ez",
-    AbsYArchive = filename:join([AbsTargetDir,lib,YArchive]),
+    AbsX = filename:join([AbsTargetDir,lib,"x-1.0"]),
+    XEbin = ["ebin","x-1.0"],
+    AbsY = filename:join([AbsTargetDir,lib,"y-1.0"]),
 
-    ?m(true, filelib:is_file(AbsXArchive)),
+    ?m(true, filelib:is_file(AbsX)),
     ?m(XEbin, mod_path(Node,x)),
     ?m(XEbin, mod_path(Node,mylib)),
-    ?m(false, filelib:is_file(AbsYArchive)),
+    ?m(false, filelib:is_file(AbsY)),
     ?m(non_existing, mod_path(Node,y)),
 
     ?msym(ok, stop_node(Node)),
@@ -1380,17 +1374,15 @@ otp_9229_dupl_mod_exclude_mod(Config) ->
     {ok, Node} = ?msym({ok, _}, start_node(?NODE_NAME, Erl)),
 
     AbsTargetDir = filename:absname(TargetDir),
-    XArchive = "x-1.0.ez",
-    AbsXArchive = filename:join([AbsTargetDir,lib,XArchive]),
-    XEbin = ["ebin","x-1.0",XArchive],
-    YArchive = "y-1.0.ez",
-    AbsYArchive = filename:join([AbsTargetDir,lib,YArchive]),
-    YEbin = ["ebin","y-1.0",YArchive],
+    AbsX = filename:join([AbsTargetDir,lib,"x-1.0"]),
+    XEbin = ["ebin","x-1.0"],
+    AbsY = filename:join([AbsTargetDir,lib,"y-1.0"]),
+    YEbin = ["ebin","y-1.0"],
 
-    ?m(true, filelib:is_file(AbsXArchive)),
+    ?m(true, filelib:is_file(AbsX)),
     ?m(XEbin, mod_path(Node,x)),
     ?m(XEbin, mod_path(Node,mylib)),
-    ?m(true, filelib:is_file(AbsYArchive)),
+    ?m(true, filelib:is_file(AbsY)),
     ?m(YEbin, mod_path(Node,y)),
 
     %% Remove path to XEbin and check that mylib is not located in YEbin
@@ -2195,9 +2187,6 @@ save_config(Config) ->
 		     {excl_sys_filters,[]},
 		     {incl_app_filters,[".*"]},
 		     {excl_app_filters,[]},
-		     {incl_archive_filters,[".*"]},
-		     {excl_archive_filters,["^include$","^priv$"]},
-		     {archive_opts,[]},
 		     {rel_app_type,permanent},
 		     {app_file,keep},
 		     {debug_info,keep}]}]},
@@ -2236,9 +2225,6 @@ save_config(Config) ->
 		     {excl_sys_filters,[]},
 		     {incl_app_filters,[".*"]},
 		     {excl_app_filters,[]},
-		     {incl_archive_filters,[".*"]},
-		     {excl_archive_filters,["^include$","^priv$"]},
-		     {archive_opts,[]},
 		     {rel_app_type,permanent},
 		     {app_file,keep},
 		     {debug_info,keep}]}]},
@@ -2437,7 +2423,6 @@ dep_in_app_not_xref(Config) ->
          [
 	  {lib_dirs,[filename:join(datadir(Config),"dep_in_app_not_xref")]},
 	  {incl_cond,exclude},
-	  {incl_archive_filters,[]},
 	  {erts,[{incl_cond,exclude}]},
           {boot_rel, RelName},
           {rel, RelName, RelVsn, [kernel, stdlib]},
@@ -2720,7 +2705,7 @@ os_cmd(Cmd) when is_list(Cmd) ->
         []->
             {99, []};
         Return->
-            %% Find the position of the status code wich is last in the string
+            %% Find the position of the status code which is last in the string
             %% prepended with #
             case string:split(Return, "$#", trailing) of
                 [_] -> %% This happens only if the sh command pipe is somehow interrupted
@@ -2772,7 +2757,7 @@ stop_node(Node) ->
     wait_for_node_down(Node,50).
 
 wait_for_node_down(Node,0) ->
-    test_server:fail({cant_terminate_node,Node});
+    ct:fail({cant_terminate_node,Node});
 wait_for_node_down(Node,N) ->
     case net_adm:ping(Node) of
 	pong ->
@@ -2834,7 +2819,7 @@ wait_for_app(_Node, Name, 0) ->
 wait_for_app(Node, Name, N) when is_integer(N), N > 0 ->
     case rpc:call(Node,application,which_applications,[]) of
 	{badrpc,Reason} ->
-	    test_server:fail({failed_to_get_applications,Reason});
+	    ct:fail({failed_to_get_applications,Reason});
 	Apps ->
 	    case lists:member(Name,Apps) of
 		false ->

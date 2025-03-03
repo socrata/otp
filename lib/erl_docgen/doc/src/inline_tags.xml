@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>1997</year><year>2016</year>
+      <year>1997</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -122,8 +122,8 @@
         <p>Points to an Erlang module or a custom <seeguide marker="#markerTAG">marker</seeguide>
           within a module. Example:</p>
         <pre><![CDATA[
-<seeerl marker="stdlib:string">string(3)</seemfa>,
-<seeerl marker="stdlib:string#oldapi">Old API in string</seemfa>
+<seeerl marker="stdlib:string">string(3)</seeerl>,
+<seeerl marker="stdlib:string#oldapi">Old API in string</seeerl>
 ]]></pre>
         results in: <seeerl marker="stdlib:string">string(3)</seeerl>,<seeerl marker="stdlib:string#oldapi">Old API in string</seeerl>.
       </item>
@@ -133,7 +133,7 @@
         These links must point to types documented in a &lt;datatypes&gt; section.
         Example:</p>
         <pre><![CDATA[
-<seetype marker="stdlib:string#oldapi">string::grapheme_cluster()</seetype>
+<seetype marker="stdlib:string#grapheme_cluster">string::grapheme_cluster()</seetype>
 ]]></pre>
         results in: <seetype marker="stdlib:string#grapheme_cluster">string::grapheme_cluster()</seetype>.
       </item>

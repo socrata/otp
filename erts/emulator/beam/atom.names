@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1996-2020. All Rights Reserved.
+# Copyright Ericsson AB 1996-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -59,9 +59,10 @@ atom nocatch
 atom undefined_function
 atom undefined_lambda
 
-# Secret internal atom that can never be found by string lookup
-# and should never leak out to be seen by the user.
-atom ErtsSecretAtom='3RT$'
+#
+# Other commonly used atoms.
+#
+atom nil no none
 
 # All other atoms.  Try to keep the order alphabetic.
 #
@@ -73,9 +74,11 @@ atom abort
 atom abs_path
 atom absoluteURI
 atom ac
+atom access
 atom active
 atom active_tasks
 atom active_tasks_all
+atom alias
 atom alive
 atom all
 atom all_but_first
@@ -88,6 +91,7 @@ atom allocator
 atom allocator_sizes
 atom alloc_util_allocators
 atom allow_passive_connect
+atom already_exists
 atom already_loaded
 atom amd64
 atom anchored
@@ -102,6 +106,7 @@ atom arg0
 atom arity
 atom asn1
 atom async
+atom async_dist
 atom asynchronous
 atom atom
 atom atom_used
@@ -116,11 +121,14 @@ atom await_sched_wall_time_modifications
 atom awaiting_load
 atom awaiting_unload
 atom backtrace backtrace_depth
-atom badarg badarith badarity badfile badfun badkey badmap badmatch badsig
-atom badopt
+atom badarg badarith badarity badfile badfun badkey badmap badmatch
+atom badrecord badsig
+atom badopt badtype
+atom bad_map_iterator
 atom bag
 atom band
 atom big
+atom bif_handle_signals_return
 atom bif_return_trap
 atom binary
 atom binary_copy_trap
@@ -143,6 +151,7 @@ atom bsl
 atom bsr
 atom bsr_anycrlf
 atom bsr_unicode
+atom build_flavor
 atom build_type
 atom busy
 atom busy_dist_port
@@ -151,18 +160,24 @@ atom busy_limits_msgq
 atom busy_port
 atom call
 atom call_count
+atom call_error_handler
+atom call_memory
 atom call_time
+atom call_trace_return
 atom caller
+atom caller_line
 atom capture
 atom case_clause
 atom caseless
 atom catchlevel
+atom cause
 atom cd
 atom cdr
 atom cflags
 atom CHANGE='CHANGE'
 atom characters_to_binary_int
 atom characters_to_list_int
+atom check_gc
 atom clear
 atom clock_service
 atom close
@@ -180,8 +195,10 @@ atom convert_time_unit
 atom connect
 atom connected
 atom connection_closed
+atom connection_id
 atom const
 atom context_switches
+atom continue_exit
 atom control
 atom copy
 atom copy_literals
@@ -201,6 +218,8 @@ atom decentralized_counters
 atom decimals
 atom default
 atom delay_trap
+atom demonitor
+atom deterministic
 atom dictionary
 atom dirty_bif_exception
 atom dirty_bif_result
@@ -233,22 +252,29 @@ atom dsend_continue_trap
 atom duplicate_bag
 atom duplicated
 atom dupnames
+atom dynamic_node_name
 atom einval
-atom elib_malloc
+atom emu_flavor
+atom emu_type
 atom emulator
 atom enable_trace
 atom enabled
 atom endian
 atom env
+atom ensure_at_least ensure_exactly
 atom eof
 atom eol
 atom Eq='=:='
 atom Eqeq='=='
+atom erl_erts_errors
 atom erl_init
+atom erl_kernel_errors
+atom erl_stdlib_errors
 atom erl_tracer
 atom erlang
 atom erl_signal_server
 atom error_handler
+atom error_info
 atom error_logger
 atom error_only
 atom erts_code_purger
@@ -282,11 +308,14 @@ atom flags
 atom flush
 atom flush_monitor_messages
 atom force
+atom format_bs_fail
 atom format_cpu_topology
 atom free
 atom fullsweep_after
+atom function
 atom functions
 atom function_clause
+atom garbage_collect
 atom garbage_collecting
 atom garbage_collection
 atom garbage_collection_info
@@ -298,10 +327,10 @@ atom gc_minor_start
 atom Ge='>='
 atom generational
 atom get_all_trap
-atom get_iovec
 atom get_internal_state_blocked
 atom get_seq_token
 atom get_size
+atom get_tail
 atom get_tcw
 atom gather_gc_info_result
 atom gather_io_bytes
@@ -325,7 +354,6 @@ atom heir
 atom hidden
 atom hide
 atom high
-atom hipe_architecture
 atom http httph https http_response http_request http_header http_eoh http_error http_bin httph_bin
 atom id
 atom if_clause
@@ -333,6 +361,7 @@ atom ignore
 atom in
 atom in_exiting
 atom inactive
+atom include_shared_binaries
 atom incomplete
 atom inconsistent
 atom index
@@ -340,9 +369,11 @@ atom infinity
 atom info
 atom info_msg
 atom info_trap
+atom inherit
 atom init
 atom initial_call
 atom input
+atom integer
 atom internal
 atom internal_error
 atom instruction_counts
@@ -461,6 +492,7 @@ atom nodeup
 atom noeol
 atom noproc
 atom normal
+atom normal_exit
 atom nosuspend
 atom no_fail
 atom no_float
@@ -473,6 +505,7 @@ atom not_a_list
 atom not_loaded
 atom not_loaded_by_this_process
 atom not_pending
+atom not_owner
 atom not_purged
 atom notalive
 atom notbol
@@ -502,11 +535,13 @@ atom out
 atom out_exited
 atom out_exiting
 atom output
+atom outstanding_system_requests_limit
 atom overlapped_io
 atom owner
 atom packet
 atom packet_size
 atom parallelism
+atom parent
 atom Plus='+'
 atom PlusPlus='++'
 atom pause
@@ -523,11 +558,13 @@ atom port_count
 atom port_limit
 atom port_op
 atom positive
+atom position
 atom prepare
 atom prepare_on_load
 atom print
 atom priority
 atom private
+atom private_append
 atom process
 atom processes
 atom processes_used
@@ -542,14 +579,13 @@ atom protected
 atom protection
 atom ptab_list_continue
 atom public
-atom purify
-atom quantify
 atom queue_size
 atom raw
 atom re
 atom re_pattern
 atom re_run_trap
 atom read_concurrency
+atom ready_error
 atom ready_input
 atom ready_output
 atom reason
@@ -562,6 +598,7 @@ atom registered_name
 atom reload
 atom rem
 atom reply
+atom reply_demonitor
 atom reply_tag
 atom report_errors
 atom reset
@@ -570,7 +607,10 @@ atom restart
 atom resume
 atom return_from
 atom return_to
+atom return_to_trace
 atom return_trace
+atom reuse
+atom run_process
 atom run_queue
 atom run_queue_lengths
 atom run_queue_lengths_all
@@ -609,7 +649,10 @@ atom set_on_spawn
 atom set_seq_token
 atom set_tcw
 atom set_tcw_fake
+atom short
+atom shutdown
 atom sighup
+atom signed
 atom sigterm
 atom sigusr1
 atom sigusr2
@@ -624,12 +667,14 @@ atom sigtstp
 atom sigquit
 atom silent
 atom size
+atom skip
 atom spawn_executable
 atom spawn_driver
 atom spawn_init
 atom spawn_reply
 atom spawn_request
 atom spawn_request_yield
+atom spawn_service
 atom spawned
 atom ssl_tls
 atom stack_size
@@ -651,6 +696,8 @@ atom system_limit
 atom system_version
 atom system_architecture
 atom table
+atom table_type
+atom tag
 atom term_to_binary_trap
 atom this
 atom thread_pool_size
@@ -679,6 +726,7 @@ atom true
 atom type
 atom ucompile
 atom ucp
+atom explicit_unalias
 atom undef
 atom ungreedy
 atom unicode
@@ -686,14 +734,16 @@ atom unregister
 atom urun
 atom use_stdio
 atom used
-atom utf8
+atom utf8 utf16 utf32
 atom unblock
 atom unblock_normal
 atom uniq
+atom unit
 atom unless_suspending
 atom unloaded
 atom unloaded_only
 atom unload_cancelled
+atom unsafe
 atom value
 atom version
 atom visible
@@ -709,3 +759,5 @@ atom x86
 atom yes
 atom yield
 atom nifs
+atom auto
+atom debug_hash_fixed_number_of_locks

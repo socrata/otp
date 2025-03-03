@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,8 +23,27 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+         suite/0,
+         all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2,
+         pbdkdf1/0,
+         pbdkdf1/1,
+         pbdkdf2/0,
+         pbdkdf2/1,
+         old_pbe/0,
+         old_pbe/1,
+         pbes1/0,
+         pbes1/1,
+         pbes2/0,
+         pbes2/1
+        ]).
 
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
@@ -200,12 +219,24 @@ pbdkdf2(Config) when is_list(Config) ->
 pbes1() ->
     [{doc,"Tests encode/decode EncryptedPrivateKeyInfo encrypted with different ciphers using PBES1"}].
 pbes1(Config) when is_list(Config) ->
-    decode_encode_key_file("pbes1_des_cbc_md5_enc_key.pem", "password", "DES-CBC", Config).
+    case lists:member(des_cbc, crypto:supports(ciphers))
+        andalso lists:member(md5, crypto:supports(hashs))
+    of
+        true ->
+            decode_encode_key_file("pbes1_des_cbc_md5_enc_key.pem", "password", "DES-CBC", Config);
+        false ->
+            {skip, alg_not_supported}
+    end.
 
 pbes2() ->
     [{doc,"Tests encode/decode EncryptedPrivateKeyInfo encrypted with different ciphers using PBES2"}].
 pbes2(Config) when is_list(Config) ->
-    decode_encode_key_file("pbes2_des_cbc_enc_key.pem", "password", "DES-CBC", Config),
+    case lists:member(des_cbc, crypto:supports(ciphers)) of
+        true ->
+            decode_encode_key_file("pbes2_des_cbc_enc_key.pem", "password", "DES-CBC", Config);
+        false ->
+            ok
+    end,
     decode_encode_key_file("pbes2_des_ede3_cbc_enc_key.pem", "password", "DES-EDE3-CBC", Config),  
     decode_encode_key_file("pbes2_aes_128_enc_key.pem", "password", "AES-128-CBC", Config),   
     decode_encode_key_file("pbes2_aes_192_enc_key.pem", "password", "AES-192-CBC", Config),   

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,8 @@
 #define FUN_EXT           'u'
 #define ATOM_UTF8_EXT     'v'
 #define SMALL_ATOM_UTF8_EXT 'w'
+#define V4_PORT_EXT       'x'
+#define LOCAL_EXT         'y'
 
 #define DIST_HEADER       'D'
 #define DIST_FRAG_HEADER  'E'
@@ -66,6 +68,7 @@
 #define ATOM_INTERNAL_REF3 'K'
 #define BINARY_INTERNAL_REF 'J'
 #define BIT_BINARY_INTERNAL_REF 'L'
+#define MAGIC_REF_INTERNAL_REF 'N'
 #define COMPRESSED        'P'
 
 #if 0
@@ -144,6 +147,7 @@ typedef struct erl_dist_external {
     Uint32 flags;
     Uint32 connection_id;
     ErtsDistExternalData *data;
+    struct ErtsMonLnkDist__ *mld;   /* copied from DistEntry.mld */
     ErtsAtomTranslationTable attab;
 } ErtsDistExternal;
 
@@ -185,7 +189,7 @@ int erts_encode_dist_ext(Eterm, byte **, Uint64, ErtsAtomCacheMap *,
                          struct TTBEncodeContext_ *, Uint *,
                          Sint *);
 ErtsExtSzRes erts_encode_ext_size(Eterm, Uint *szp);
-ErtsExtSzRes erts_encode_ext_size_2(Eterm, unsigned, Uint *szp);
+ErtsExtSzRes erts_encode_ext_size_2(Eterm, Uint64, Uint *szp);
 Uint erts_encode_ext_size_ets(Eterm);
 void erts_encode_ext(Eterm, byte **);
 byte* erts_encode_ext_ets(Eterm, byte *, struct erl_off_heap_header** ext_off_heap);
@@ -209,10 +213,10 @@ ErtsPrepDistExtRes erts_prepare_dist_ext(ErtsDistExternal *, byte *, Uint, struc
 Sint erts_decode_dist_ext_size(ErtsDistExternal *, int, int);
 Eterm erts_decode_dist_ext(ErtsHeapFactory*, ErtsDistExternal *, int);
 
-Sint erts_decode_ext_size(byte*, Uint);
-Sint erts_decode_ext_size_ets(byte*, Uint);
-Eterm erts_decode_ext(ErtsHeapFactory*, byte**, Uint32 flags);
-Eterm erts_decode_ext_ets(ErtsHeapFactory*, byte*);
+Sint erts_decode_ext_size(const byte*, Uint);
+Sint erts_decode_ext_size_ets(const byte*, Uint);
+Eterm erts_decode_ext(ErtsHeapFactory*, const byte**, Uint32 flags);
+Eterm erts_decode_ext_ets(ErtsHeapFactory*, const byte*);
 
 Eterm erts_term_to_binary(Process* p, Eterm Term, int level, Uint64 flags);
 Eterm erts_debug_term_to_binary(Process *p, Eterm term, Eterm opts);

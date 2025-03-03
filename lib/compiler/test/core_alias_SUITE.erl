@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@
 
 -export([all/0, suite/0, groups/0,init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
-         tuples/1, cons/1]).
+         tuples/1, cons/1, catastrophic_runtime/1,
+         coverage/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -32,7 +33,7 @@ all() ->
 
 groups() ->
     [{p,[parallel],
-      [tuples, cons]}].
+      [tuples, cons, catastrophic_runtime, coverage]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -192,3 +193,37 @@ unaliased_literal_cons_body([nested,[ok|value]=X]) ->
 unaliased_different_var_cons([nested,[ok|value]=X], Y) ->
     io:format("~p~n", [X]),
     [nested,Y].
+
+catastrophic_runtime(Config) ->
+    ct:timetrap({minutes, 6}),
+    Depth = 16000,
+
+    PrivDir = proplists:get_value(priv_dir,Config),
+    Path = filename:join(PrivDir, "catastrophic_runtime.erl"),
+
+    Term = catastrophic_runtime_1(Depth),
+    Source = ["-module(catastrophic_runtime). t(Value) -> ", Term, "."],
+    ok = file:write_file(Path, Source),
+
+    {ok, catastrophic_runtime} = compile:file(Path, [return_error]),
+    file:delete(Path),
+
+    ok.
+
+catastrophic_runtime_1(0) ->
+    <<"Value">>;
+catastrophic_runtime_1(N) ->
+    Nested = catastrophic_runtime_1(N - 1),
+    Integer = integer_to_binary(N),
+    Eq = [<<"{{'.',[],[erlang,'=:=']},[],[Value, \"">>, Integer, <<"\"]}">>],
+    [<<"{{'.',[],[erlang,atom]},[],[">>, Nested, <<",">>, Eq, <<"]}">>].
+
+coverage(_Config) ->
+    State = id({undefined,undefined}),
+    {State, "Can't detect character encoding due to lack of indata"} =
+        too_deep(State),
+    ok.
+
+too_deep({_,undefined} = State) ->
+    {State, "Can't detect character encoding due to lack of indata"}.
+

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2006-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2006-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@
 #include "erl_misc_utils.h"
 
 #if !defined(__WIN32__) /* UNIX */
+#  include <stdarg.h>
 #  include <stdio.h>
 #  include <sys/types.h>
 #  include <sys/param.h>
@@ -40,15 +41,9 @@
 #  ifdef SYS_SELECT_H
 #    include <sys/select.h>
 #  endif
-#  if TIME_WITH_SYS_TIME
-#     include <sys/time.h>
-#     include <time.h>
-#  else
-#     if HAVE_SYS_TIME_H
-#         include <sys/time.h>
-#     else
-#         include <time.h>
-#     endif
+#  include <time.h>
+#  ifdef HAVE_SYS_TIME_H
+#    include <sys/time.h>
 #  endif
 #  include <string.h>
 #  include <stdio.h>
@@ -122,6 +117,13 @@
 #ifdef __FreeBSD__
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#endif
+
+#ifdef DEBUG
+#include <assert.h>
+#define ASSERT(X) assert(X)
+#else
+#define ASSERT(X) do {} while(0)
 #endif
 
 /* Simplify include for static functions */
@@ -239,7 +241,7 @@ erts_cpu_info_create(void)
     cpuinfo->online = -1;
     cpuinfo->available = -1;
     cpuinfo->quota = -1;
-    erts_cpu_info_update(cpuinfo);
+    erts_cpu_info_update(cpuinfo, 1);
     return cpuinfo;
 }
 
@@ -264,7 +266,8 @@ erts_cpu_info_destroy(erts_cpu_info_t *cpuinfo)
 }
 
 int
-erts_cpu_info_update(erts_cpu_info_t *cpuinfo)
+erts_cpu_info_update(erts_cpu_info_t *cpuinfo,
+                     int skip_read_topology)
 {
     int changed = 0;
     int configured = 0;
@@ -410,6 +413,8 @@ erts_cpu_info_update(erts_cpu_info_t *cpuinfo)
 
     if (available > online)
 	available = online;
+    else if (available == 0) /* shouldn't happen */
+        available = online;
 
     if (cpuinfo->available != available)
 	changed = 1;
@@ -427,7 +432,9 @@ erts_cpu_info_update(erts_cpu_info_t *cpuinfo)
     old_topology_size = cpuinfo->topology_size;
     cpuinfo->topology = NULL;
 
-    read_topology(cpuinfo);
+    if (!skip_read_topology) {
+        read_topology(cpuinfo);
+    }
 
     if (cpuinfo->topology_size != old_topology_size
 	|| (old_topology_size != 0
@@ -1060,56 +1067,78 @@ str_combine(const char *a, const char *b) {
     return result;
 }
 
-static const char*
-get_cgroup_v1_base_dir(const char *controller) {
-    char line_buf[5 << 10];
-    FILE *var_file;
+enum cgroup_version_t {
+    ERTS_CGROUP_NONE,
+    ERTS_CGROUP_V1,
+    ERTS_CGROUP_V2
+};
 
-    var_file = fopen("/proc/self/cgroup", "r");
+static enum cgroup_version_t
+get_cgroup_child_path(const char *controller, const char **out) {
+    FILE *cgroup_file = fopen("/proc/self/cgroup", "r");
+    enum cgroup_version_t version = ERTS_CGROUP_NONE;
 
-    if (var_file == NULL) {
-        return NULL;
-    }
+    if (cgroup_file != NULL) {
+        char line_buf[5 << 10];
 
-    while (fgets(line_buf, sizeof(line_buf), var_file)) {
-        /* sscanf_s requires C11, so we use hardcoded sizes (rather than rely
-         * on macros like MAXPATHLEN) so we can specify them directly in the
-         * format string. */
-        char base_dir[4 << 10];
-        char controllers[256];
+        while (fgets(line_buf, sizeof(line_buf), cgroup_file)) {
+            /* sscanf_s requires C11, so we use hardcoded sizes (rather than
+             * rely on macros like MAXPATHLEN) so we can specify them directly
+             * in the format string. */
+            char child_dir[4 << 10];
+            char controllers[256];
 
-        if (sscanf(line_buf, "%*d:%255[^:]:%4095s\n",
-                   controllers, base_dir) != 2) {
-            continue;
+            if (sscanf(line_buf, "%*d:%255[^:]:%4095s\n",
+                       controllers, child_dir) == 2) {
+                if (csv_contains(controllers, controller, ',')) {
+                    if (version == ERTS_CGROUP_V2) {
+                        free((void*)*out);
+                    }
+
+                    /* A controller can only exist in one hierarchy, so we can
+                     * safely exit once found. */
+                    *out = strdup(child_dir);
+                    version = ERTS_CGROUP_V1;
+                    break;
+                }
+            } else if (sscanf(line_buf, "%*d::%4095s\n", child_dir) == 1) {
+                ASSERT(version == ERTS_CGROUP_NONE); /* Silence codechecker */
+                /* An empty controller list means that this is the unified v2
+                 * hierarchy, under which all associated controllers can be
+                 * found. We don't know if the given controller is one of them,
+                 * though, so we need to keep looking in case it's under a v1
+                 * hierarchy. */
+                *out = strdup(child_dir);
+                version = ERTS_CGROUP_V2;
+            }
         }
 
-        if (csv_contains(controllers, controller, ',')) {
-            fclose(var_file);
-            return strdup(base_dir);
-        }
+        fclose(cgroup_file);
     }
 
-    fclose(var_file);
-    return NULL;
+    return version;
 }
 
-static const char*
-get_cgroup_path(const char *controller) {
-    char line_buf[10 << 10];
-    FILE *var_file;
+static enum cgroup_version_t
+get_cgroup_path(const char *controller,
+                const char **out) {
+    enum cgroup_version_t version;
+    char mount_line[10 << 10];
+    const char *mount_format;
+    const char *child_path;
+    FILE *mount_file;
 
-    var_file = fopen("/proc/self/mountinfo", "r");
-
-    if (var_file == NULL) {
-        return NULL;
+    mount_file = fopen("/proc/self/mountinfo", "r");
+    if (mount_file == NULL) {
+        return ERTS_CGROUP_NONE;
     }
 
-    while (fgets(line_buf, sizeof(line_buf), var_file)) {
-        char mount_path[4 << 10];
-        char root_path[4 << 10];
-        char fs_flags[512];
-        char fs_type[64];
-
+    version = get_cgroup_child_path(controller, &child_path);
+    switch (version) {
+    case ERTS_CGROUP_NONE:
+        fclose(mount_file);
+        return ERTS_CGROUP_NONE;
+    case ERTS_CGROUP_V1:
         /* Format:
          *    [Mount id] [Parent id] [Major] [Minor] [Root] [Mounted at]    \
          *    [Mount flags] ... (options terminated by a single hyphen) ... \
@@ -1119,108 +1148,160 @@ get_cgroup_path(const char *controller) {
          *
          * This fails if any of the fs options contain a hyphen, but this is
          * not likely to happen on a cgroup, so we just skip such lines. */
-        if (sscanf(line_buf,
-                   "%*d %*d %*d:%*d %4095s %4095s %*s %*[^-]- "
-                   "%63s %*s %511[^\n]\n",
-                   root_path, mount_path,
-                   fs_type, fs_flags) != 4) {
+        mount_format = "%*d %*d %*d:%*d %4095s %4095s %*s%*[^-]- "
+                       "cgroup %*s %511[^\n]\n";
+        break;
+    case ERTS_CGROUP_V2:
+        mount_format = "%*d %*d %*d:%*d %4095s %4095s %*s%*[^-]- "
+                       "cgroup2 %*s %511[^\n]\n";
+        break;
+    }
+
+    /* As a controller can only belong to one hierarchy, regardless of
+     * version, we'll go through all mounted filesystems one by one until
+     * the controller is found. */
+    *out = NULL;
+    while (fgets(mount_line, sizeof(mount_line), mount_file)) {
+        char mount_path[4 << 10];
+        char root_path[4 << 10];
+        char fs_flags[512];
+
+        if (sscanf(mount_line,
+                   mount_format,
+                   root_path,
+                   mount_path,
+                   fs_flags) != 3) {
             continue;
         }
 
-        if (!strcmp(fs_type, "cgroup2")) {
+        if (version == ERTS_CGROUP_V2) {
             char controllers[256];
+            const char *group_dir;
             const char *cgc_path;
 
-            cgc_path = str_combine(mount_path, "/cgroup.controllers");
+            group_dir = str_combine(mount_path, child_path);
+            cgc_path = str_combine(group_dir, "/cgroup.controllers");
+
             if (read_file(cgc_path, controllers, sizeof(controllers)) > 0) {
                 if (csv_contains(controllers, controller, ' ')) {
                     free((void*)cgc_path);
-                    fclose(var_file);
-                    return strdup(mount_path);
+                    *out = group_dir;
+                    break;
                 }
             }
+
+            free((void*)group_dir);
             free((void*)cgc_path);
-        } else if (!strcmp(fs_type, "cgroup")) {
+        } else if (version == ERTS_CGROUP_V1) {
             if (csv_contains(fs_flags, controller, ',')) {
-                const char *base_dir = get_cgroup_v1_base_dir(controller);
-
-                if (base_dir) {
-                    const char *result;
-
-                    if (strcmp(root_path, base_dir)) {
-                        result = str_combine(mount_path, base_dir);
-                    } else {
-                        result = strdup(mount_path);
-                    }
-
-                    free((void*)base_dir);
-                    fclose(var_file);
-                    return result;
+                if (strcmp(root_path, child_path)) {
+                    *out = str_combine(mount_path, child_path);
+                } else {
+                    *out = strdup(mount_path);
                 }
+
+                break;
             }
         }
     }
 
-    fclose(var_file);
-    return NULL;
+    free((void*)child_path);
+    fclose(mount_file);
+
+    if (*out != NULL) {
+        return version;
+    }
+
+    return ERTS_CGROUP_NONE;
 }
 
-static int read_cgroup_var(const char *group_path, const char *var_name,
-                           ssize_t *out) {
+static int read_cgroup_interface(const char *group_path, const char *if_name,
+                                 int arg_count, const char *format, ...) {
     const char *var_path;
-    int res;
+    FILE *var_file;
 
-    var_path = str_combine(group_path, var_name);
-    res = 0;
+    var_path = str_combine(group_path, if_name);
+    var_file = fopen(var_path, "r");
+    free((void*)var_path);
 
-    if (var_path) {
-        FILE *var_file = fopen(var_path, "r");
-        free((void*)var_path);
+    if (var_file != NULL) {
+        va_list va_args;
+        int res;
 
-        if (var_file) {
-            if (fscanf(var_file, "%zi", out) == 1) {
-                res = 1;
-            }
-            fclose(var_file);
+        va_start(va_args, format);
+
+        res = (vfscanf(var_file, format, va_args) == arg_count);
+        fclose(var_file);
+
+        va_end(va_args);
+
+        return res;
+    }
+
+    return 0;
+}
+
+static int calculate_cpu_quota(int limit,
+                               ssize_t cfs_quota_us,
+                               ssize_t cfs_period_us) {
+    if (cfs_period_us > 0 && cfs_quota_us > 0) {
+        size_t quota = cfs_quota_us / cfs_period_us;
+
+        if (quota == 0) {
+            quota = 1;
+        }
+
+        if (quota <= (size_t)limit) {
+            return quota;
         }
     }
 
-    return res;
+    return limit;
 }
 
 /* CPU quotas are read from the cgroup configuration, which can be pretty hairy
  * as we need to support both v1 and v2, and it's possible for both versions to
  * be active at the same time. */
-
 static int
 read_cpu_quota(int limit)
 {
-    const char *cgroup_path = get_cgroup_path("cpu");
+    ssize_t cfs_period_us, cfs_quota_us;
+    const char *cgroup_path;
 
-    if (cgroup_path) {
-        ssize_t cfs_period_us, cfs_quota_us;
-        int succeeded;
+    switch (get_cgroup_path("cpu", &cgroup_path)) {
+    case ERTS_CGROUP_V1:
+        {
+            int succeeded = read_cgroup_interface(cgroup_path,
+                                                  "/cpu.cfs_quota_us",
+                                                  1, "%zi", &cfs_quota_us) &&
+                            read_cgroup_interface(cgroup_path,
+                                                  "/cpu.cfs_period_us",
+                                                  1, "%zi", &cfs_period_us);
+            free((void*)cgroup_path);
 
-        cfs_period_us = -1;
-        cfs_quota_us = -1;
-
-        succeeded =
-            read_cgroup_var(cgroup_path, "/cpu.cfs_quota_us", &cfs_quota_us) &&
-            read_cgroup_var(cgroup_path, "/cpu.cfs_period_us", &cfs_period_us);
+            if (succeeded) {
+                return calculate_cpu_quota(limit, cfs_quota_us, cfs_period_us);
+            }
+        }
+        break;
+    case ERTS_CGROUP_V2:
+        if (read_cgroup_interface(cgroup_path, "/cpu.max",
+                                  1, "max %zi", &cfs_period_us)) {
+            /* No quota, just return our upper limit. */
+            free((void*)cgroup_path);
+            return limit;
+        } else if (read_cgroup_interface(cgroup_path, "/cpu.max",
+                                         2, "%zi %zi",
+                                         &cfs_quota_us,
+                                         &cfs_period_us)) {
+            free((void*)cgroup_path);
+            return calculate_cpu_quota(limit, cfs_quota_us, cfs_period_us);
+        }
 
         free((void*)cgroup_path);
-
-        if (succeeded) {
-            if (cfs_period_us > 0 && cfs_quota_us > 0) {
-                size_t quota = cfs_quota_us / cfs_period_us;
-
-                if (quota > 0 && quota <= (size_t)limit) {
-                    return quota;
-                }
-            }
-
-            return limit;
-        }
+        break;
+    default:
+        break;
     }
 
     return 0;

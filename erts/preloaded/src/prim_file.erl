@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2000-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,7 +27,11 @@
          pread/2, pread/3, pwrite/2, pwrite/3]).
 
 %% OTP internal.
--export([ipread_s32bu_p32bu/3, sendfile/8, altname/1, get_handle/1]).
+
+-export([file_desc_to_ref/2]).
+
+-export([ipread_s32bu_p32bu/3, sendfile/8, internal_get_nif_resource/1,
+         altname/1, get_handle/1]).
 
 -export([read_file/1, write_file/2]).
 
@@ -59,6 +63,17 @@
          internal_native2name/1,
          internal_normalize_utf8/1,
          is_translatable/1]).
+
+-nifs([open_nif/2, close_nif/1, read_nif/2, write_nif/2, pread_nif/3,
+       pwrite_nif/3, seek_nif/3, sync_nif/2, truncate_nif/1, allocate_nif/3,
+       advise_nif/4, read_handle_info_nif/1,
+       make_hard_link_nif/2, make_soft_link_nif/2, rename_nif/2,
+       read_info_nif/2, set_permissions_nif/2, set_owner_nif/3, set_time_nif/4,
+       read_link_nif/1, list_dir_nif/1, make_dir_nif/1, del_file_nif/1,
+       del_dir_nif/1, get_device_cwd_nif/1, set_cwd_nif/1, get_cwd_nif/0,
+       ipread_s32bu_p32bu_nif/3, read_file_nif/1,
+       get_handle_nif/1, delayed_close_nif/1, altname_nif/1,
+       file_desc_to_ref_nif/1]).
 
 -type prim_file_name() :: string() | unicode:unicode_binary().
 -type prim_file_name_error() :: 'error' | 'ignore' | 'warning'.
@@ -116,6 +131,14 @@ open(Name, Modes) ->
     %% the public file interface, which has leaked through for ages because of
     %% "raw files."
     try open_nif(encode_path(Name), Modes) of
+        {ok, Ref} -> {ok, make_fd(Ref, Modes)};
+        {error, Reason} -> {error, Reason}
+    catch
+        error:badarg -> {error, badarg}
+    end.
+
+file_desc_to_ref(FileDescriptorId, Modes) ->
+    try file_desc_to_ref_nif(FileDescriptorId) of
         {ok, Ref} -> {ok, make_fd(Ref, Modes)};
         {error, Reason} -> {error, Reason}
     catch
@@ -395,6 +418,10 @@ sendfile(Fd, Socket, Offset, Bytes, _ChunkSize, [], [], _Flags) ->
 sendfile(_Fd, _Socket, _Offset, _Bytes, _ChunkSize, _Headers, _Trailers, _Flags) ->
     {error, enotsup}.
 
+internal_get_nif_resource(Fd) ->
+    #{ handle := FRef } = get_fd_data(Fd),
+    FRef.
+
 %% Undocumented internal function that reads a data block with indirection.
 %%
 %% This is only used once in DETS and can easily be emulated with pread/2, but
@@ -473,6 +500,8 @@ fill_fd_option_map([_Ignored | Modes], Map) ->
     fill_fd_option_map(Modes, Map).
 
 open_nif(_Name, _Modes) ->
+    erlang:nif_error(undef).
+file_desc_to_ref_nif(_FD) ->
     erlang:nif_error(undef).
 close_nif(_FileRef) ->
     erlang:nif_error(undef).
@@ -624,6 +653,8 @@ read_handle_info_1(Fd, TimeType) ->
         error:_ -> {error, badarg}
     end.
 
+adjust_times(FileInfo, posix) ->
+    FileInfo;
 adjust_times(FileInfo, TimeType) ->
     CTime = from_posix_seconds(FileInfo#file_info.ctime, TimeType),
     MTime = from_posix_seconds(FileInfo#file_info.mtime, TimeType),
@@ -848,8 +879,6 @@ is_path_translatable(Path) ->
 %% We want to use posix time in all prim but erl_prim_loader makes that tricky
 %% It is probably needed to redo the whole erl_prim_loader
 
-from_posix_seconds(Seconds, posix) when is_integer(Seconds) ->
-    Seconds;
 from_posix_seconds(Seconds, universal) when is_integer(Seconds) ->
     erlang:posixtime_to_universaltime(Seconds);
 from_posix_seconds(Seconds, local) when is_integer(Seconds) ->

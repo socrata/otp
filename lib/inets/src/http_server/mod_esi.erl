@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,7 +35,9 @@
 
 -define(VMODULE,"ESI").
 -define(DEFAULT_ERL_TIMEOUT,15).
-
+-define(ERROR_404,
+        [{status, {404, ModData#mod.request_uri, "Not found"}} |
+         ModData#mod.data]).
 
 %%%=========================================================================
 %%%  API 
@@ -170,12 +172,12 @@ erl(#mod{method = Method} = ModData, ESIBody, Modules)
 	    case httpd_util:split(FuncAndInput,"[\?/]",2) of
 		{ok, [FunctionName, Input]} ->
 		    generate_webpage(ModData, ESIBody, Modules, 
-				     list_to_atom(ModuleName), 
-				     FunctionName, Input, 
+				     ModuleName,
+				     FunctionName, Input,
 				     script_elements(FuncAndInput, Input));
 		{ok, [FunctionName]} ->
 		    generate_webpage(ModData, ESIBody, Modules, 
-				     list_to_atom(ModuleName),
+				     ModuleName,
 				     FunctionName, "", 
 				     script_elements(FuncAndInput, ""));
 		{ok, BadRequest} ->
@@ -186,19 +188,20 @@ erl(#mod{method = Method} = ModData, ESIBody, Modules)
 	    {proceed, [{status,{400, none, BadRequest}} | ModData#mod.data]}
     end;
 
-erl(#mod{method = "PUT", entity_body = Body} = ModData,
-    ESIBody, Modules) ->
+erl(#mod{method = Method, entity_body = Body} = ModData,
+    ESIBody, Modules) when Method =:= "PUT" orelse
+                           Method =:= "PATCH" ->
     case httpd_util:split(ESIBody,":|%3A|/",2) of
 	{ok, [ModuleName, FuncAndInput]} ->                
 	    case httpd_util:split(FuncAndInput,"[\?/]",2) of
 		{ok, [FunctionName, Input]} ->
 		    generate_webpage(ModData, ESIBody, Modules,
-				     list_to_atom(ModuleName),
+				     ModuleName,
 				     FunctionName, {Input,Body},
 				     script_elements(FuncAndInput, Input));
 		{ok, [FunctionName]} ->
 		    generate_webpage(ModData, ESIBody, Modules,
-				     list_to_atom(ModuleName),
+				     ModuleName,
 				     FunctionName, {undefined,Body},
 				     script_elements(FuncAndInput, ""));
 		{ok, BadRequest} ->
@@ -213,42 +216,56 @@ erl(#mod{method = "POST", entity_body = Body} = ModData, ESIBody, Modules) ->
     case httpd_util:split(ESIBody,":|%3A|/",2) of
 	{ok,[ModuleName, Function]} ->
 	    generate_webpage(ModData, ESIBody, Modules, 
-			     list_to_atom(ModuleName), 
+			     ModuleName,
 			     Function, Body, []);
 	{ok, BadRequest} ->
 	    {proceed,[{status, {400, none, BadRequest}} | ModData#mod.data]}
-    end;
+    end.
 
-erl(#mod{request_uri  = ReqUri, 
-	 method       = "PATCH",
-         http_version = Version, 
-	 data         = Data}, _ESIBody, _Modules) ->
-    {proceed, [{status,{501,{"PATCH", ReqUri, Version},
-			?NICE("Erl mechanism doesn't support method PATCH")}}|
-	       Data]}.
+generate_webpage(ModData, ESIBody, AllowedModules0, ModuleString, FunctionString,
+		 Input, ScriptElements)
+  when is_list(ModuleString), is_list(FunctionString) ->
+    case convert_to_atoms(ModuleString, FunctionString, ModData) of
+        {ok, Module, Function} ->
+            verify_module(ModData, ESIBody, AllowedModules0, Module, Function,
+                          Input, ScriptElements);
+        Result ->
+            Result
+    end.
 
-generate_webpage(ModData, ESIBody, [all], Module, FunctionName,
-		 Input, ScriptElements) ->
-    generate_webpage(ModData, ESIBody, [Module], Module,
-		     FunctionName, Input, ScriptElements);
-generate_webpage(ModData, ESIBody, Modules, Module, FunctionName,
-		 Input, ScriptElements) ->
-    Function = list_to_atom(FunctionName),
-    case lists:member(Module, Modules) of
-	true ->
-	    Env = httpd_script_env:create_env(esi, ModData, ScriptElements),
-	    case erl_scheme_webpage_chunk(Module, Function, 
-					  Env, Input, ModData) of
-		{error, erl_scheme_webpage_chunk_undefined} ->
-                    {proceed, [{status, {404, ModData#mod.request_uri, "Not found"}}
-                               | ModData#mod.data]};
-		ResponseResult ->
-		    ResponseResult
-	    end;
-	false ->
-	    {proceed, [{status, {403, ModData#mod.request_uri,
-				 ?NICE("Client not authorized to evaluate: "
-				       ++  ESIBody)}} | ModData#mod.data]}
+convert_to_atoms(ModuleString, FunctionString, ModData) ->
+    try
+        Module = list_to_existing_atom(ModuleString),
+        _ = code:ensure_loaded(Module),
+        Function = list_to_existing_atom(FunctionString),
+        {ok, Module, Function}
+    catch
+        error:badarg:_Stacktrace ->
+            {proceed, ?ERROR_404}
+    end.
+
+verify_module(ModData, _ESIBody, [all], Module, Function, Input, ScriptElements) ->
+    do_generate_webpage(ModData, Module, Function, Input, ScriptElements);
+verify_module(ModData, ESIBody, Allowed, Module, Function, Input, ScriptElements) ->
+    case lists:member(Module, Allowed) of
+        true ->
+            do_generate_webpage(ModData, Module, Function, Input, ScriptElements);
+        _ ->
+            Error403 =
+                [{status,
+                  {403, ModData#mod.request_uri,
+                   ?NICE("Client not authorized to evaluate: " ++ ESIBody)}} |
+                 ModData#mod.data],
+            {proceed, Error403}
+    end.
+
+do_generate_webpage(ModData, Module, Function, Input, ScriptElements) ->
+    Env = httpd_script_env:create_env(esi, ModData, ScriptElements),
+    case erl_scheme_webpage_chunk(Module, Function, Env, Input, ModData) of
+        {error, erl_scheme_webpage_chunk_undefined} ->
+            {proceed, ?ERROR_404};
+        ResponseResult ->
+            ResponseResult
     end.
 
 %% API that allows the dynamic wepage to be sent back to the client 
@@ -280,7 +297,7 @@ deliver_webpage_chunk(#mod{config_db = Db} = ModData, Pid) ->
     deliver_webpage_chunk(ModData, Pid, Timeout).
 
 deliver_webpage_chunk(#mod{config_db = Db} = ModData, Pid, Timeout) ->
-    case receive_headers(Timeout) of
+    case receive_headers(Pid, Timeout) of
 	{error, Reason} ->
 	    %% Happens when webpage generator callback/3 is undefined
 	    {error, Reason}; 
@@ -317,17 +334,17 @@ deliver_webpage_chunk(#mod{config_db = Db} = ModData, Pid, Timeout) ->
 	    {proceed,[{response, {already_sent, 504, 0}} | ModData#mod.data]}
     end.
 
-receive_headers(Timeout) ->
+receive_headers(Pid, Timeout) ->
     receive
 	{esi_data, Chunk} ->
 	    httpd_esi:parse_headers(lists:flatten(Chunk));		
 	{ok, Chunk} ->
 	    httpd_esi:parse_headers(lists:flatten(Chunk));		
-	{'EXIT', Pid, erl_scheme_webpage_chunk_undefined} when is_pid(Pid) ->
+	{'EXIT', Pid, erl_scheme_webpage_chunk_undefined} ->
 	    {error, erl_scheme_webpage_chunk_undefined};
-	{'EXIT', Pid, {continue, _} = Continue} when is_pid(Pid) ->
+	{'EXIT', Pid, {continue, _} = Continue} ->
             Continue;
-        {'EXIT', Pid, Reason} when is_pid(Pid) ->
+        {'EXIT', Pid, Reason} ->
 	    exit({mod_esi_linked_process_died, Pid, Reason})
     after Timeout ->
 	    timeout

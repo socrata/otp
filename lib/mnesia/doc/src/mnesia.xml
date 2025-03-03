@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2020</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -772,7 +772,7 @@ mnesia:change_table_copy_type(person, node(), disc_copies)</code>
               table is aborted, unless a majority of the table
               replicas are available for the commit. When used on a
               fragmented table, all fragments are given the same
-              the same majority setting.</p>
+              majority setting.</p>
           </item>
           <item>
             <p><c>{ram_copies, Nodelist}</c>, where
@@ -1153,7 +1153,7 @@ mnesia:create_table(person,
           or negative number. However, counters can never become less
           than zero. There are two significant differences between
           this function and the action of first reading the record,
-          performing the arithmetics, and then writing the record:</p>
+          performing the arithmetic, and then writing the record:</p>
         <list type="bulleted">
           <item>It is much more efficient.
           </item>
@@ -1166,7 +1166,7 @@ mnesia:create_table(person,
           simultaneously, both updates take effect without the
           risk of losing one of the updates. The new value
           <c>NewVal</c> of the counter is returned.</p>
-        <p>If <c>Key</c> do not exists, a new record is created with
+        <p>If <c>Key</c> does not exist, a new record is created with
           value <c>Incr</c> if it is larger than 0, otherwise it is
           set to 0.</p>
       </desc>
@@ -1341,6 +1341,7 @@ mnesia:create_table(person,
     </func>
     <func>
       <name name="foldl" arity="3" since=""/>
+      <name name="foldl" arity="4" since=""/>
       <fsummary>Calls <c>Function</c> for each record in <c>Table</c>.</fsummary>
       <desc>
       <marker id="foldl"></marker>
@@ -1354,6 +1355,7 @@ mnesia:create_table(person,
     </func>
     <func>
       <name name="foldr" arity="3" since=""/>
+      <name name="foldr" arity="4" since=""/>
       <fsummary>Calls <c>Function</c> for each record in <c>Table</c>.</fsummary>
       <desc>
       <marker id="foldr"></marker>
@@ -1461,14 +1463,6 @@ mnesia:create_table(person,
       <marker id="install_fallback_1"></marker>
         <p>Calls <c>mnesia:install_fallback(Opaque, Args)</c>, where
           <c>Args</c> is <c>[{scope, global}]</c>.</p>
-      </desc>
-    </func>
-    <func>
-      <name name="install_fallback" arity="1" since=""/>
-      <fsummary>Installs a backup as fallback.</fsummary>
-      <desc>
-        <p>Calls <c>mnesia:install_fallback(Opaque, Args)</c>, where
-          <c>Args</c> is <c>[{scope, global}, {module, BackupMod}]</c>.</p>
       </desc>
     </func>
     <func>
@@ -2617,6 +2611,7 @@ mnesia:create_table(employee,
         </list>
       </desc>
     </func>
+
     <func>
       <name name="transaction" arity="1" since=""/>
       <name name="transaction" arity="2" clause_i="1" since=""/>
@@ -2645,8 +2640,8 @@ mnesia:create_table(employee,
 add_family({family, F, M, Children}) ->
     ChildOids = lists:map(fun oid/1, Children),
     Trans = fun() ->
-        mnesia:write(F#person{children = ChildOids},
-        mnesia:write(M#person{children = ChildOids},
+        mnesia:write(F#person{children = ChildOids}),
+        mnesia:write(M#person{children = ChildOids}),
         Write = fun(Child) -> mnesia:write(Child) end,
         lists:foreach(Write, Children)
     end,
@@ -2682,13 +2677,20 @@ raise(Name, Amount) ->
           several processes running on different nodes can concurrently
           execute the function <c>raise/2</c> without interfering
           with each other.</p>
-        <p>Since Mnesia detects deadlocks, a transaction can be
-          restarted any number of times. This function attempts a
-          restart as specified in <c>Retries</c>. <c>Retries</c> must
-          be an integer greater than 0 or the atom <c>infinity</c>.
-          Default is <c>infinity</c>.</p>
+        <p>
+          Since Mnesia detects deadlocks, a transaction can be
+          restarted any number of times and therefore the <c>Fun</c> shall not
+          have any side effects such as waiting for specific messages.
+          This function attempts a restart as many times as specified in <c>Retries</c>.
+          <c>Retries</c> must be an integer greater than 0 or the atom <c>infinity</c>,
+          default is <c>infinity</c>.
+          Mnesia uses <c>exit</c> exceptions to signal that a transaction needs to be
+          restarted, thus a <c>Fun</c> must not catch <c>exit</c> exceptions with reason
+          <c>{aborted, term()}</c>.
+        </p>
       </desc>
     </func>
+
     <func>
       <name name="transform_table" arity="4" since=""/>
       <fsummary>Changes format on all records in table <c>Tab</c>.</fsummary>
@@ -2963,7 +2965,7 @@ raise(Name, Amount) ->
         <p><c>-mnesia dump_log_write_threshold Max</c>.
           <c>Max</c> is an integer that specifies the maximum
           number of writes allowed to the transaction log before
-          a new dump of the log is performed. Default is <c>100</c>
+          a new dump of the log is performed. Default is <c>1000</c>
           log writes.</p>
       </item>
       <item>
@@ -3036,6 +3038,11 @@ raise(Name, Amount) ->
           <c>9</c> means maximum compression. Before setting it to a
           non-zero value, ensure that the remote nodes
           understand this configuration.</p>
+      </item>
+      <item>
+        <p><c>-mnesia max_transfer_size Number</c>. Specifies the estimated size
+          in bytes of a single packet of data to be used when copying a table from the local
+          node to another one. Default is <c>64000</c>.</p>
       </item>
       <item>
         <p><c>-mnesia schema_location Loc</c>. Controls where

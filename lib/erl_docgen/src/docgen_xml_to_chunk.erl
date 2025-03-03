@@ -1,7 +1,7 @@
 %% -*- erlang -*-
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,14 +31,24 @@
 main([_Application, FromBeam, _Escript, ToChunk]) ->
     %% The given module is not documented, generate a hidden beam chunk file
     Name = filename:basename(filename:rootname(FromBeam)) ++ ".erl",
+    {ok, {_Module, [{exports, Exports}]}} = beam_lib:chunks(FromBeam, [exports]),
 
-    EmptyDocs = #docs_v1{ anno = erl_anno:set_file(Name, erl_anno:new(0)),
-                          module_doc = hidden, docs = []},
+    Anno = erl_anno:set_file(Name, erl_anno:new(0)),
+
+    EmptyDocs = add_hidden_docs(
+                  Exports,
+                  #docs_v1{ anno = Anno,
+                            module_doc = hidden,
+                            docs = []}),
     ok = file:write_file(ToChunk, term_to_binary(EmptyDocs,[compressed])),
     ok;
-main([Application, FromXML, FromBeam, _Escript, ToChunk]) ->
+main([Application, FromXML, FromBeam, Escript, ToChunk]) ->
     _ = erlang:process_flag(max_heap_size,20 * 1000 * 1000),
     case docs(Application, FromXML, FromBeam) of
+        {error, not_erlref} ->
+            %% The XML files was not a erlref, so we generate
+            %% a hidden entry for this module.
+            main([Application, FromBeam, Escript, ToChunk]);
         {error, Reason} ->
             io:format("Failed to create chunks: ~p~n",[Reason]),
             erlang:halt(1);
@@ -68,7 +78,7 @@ main([Application, FromXML, FromBeam, _Escript, ToChunk]) ->
             erlang:halt(1),
             ok;
         Docs ->
-            ok = file:write_file(ToChunk, term_to_binary(Docs,[compressed]))
+            ok = file:write_file(ToChunk, term_to_binary(Docs, [compressed]))
     end.
 
 %% Error handling
@@ -179,7 +189,7 @@ build_dom({endElement, _Uri, LocalName, _QName},
             MappedCName =
                 case CName of
                     title ->
-                        lists:nth(SectionDepth+1,[h1,h2,h3]);
+                        lists:nth(SectionDepth+1,[h1,h2,h3,h4,h5,h6]);
                     section when SectionDepth > 0 ->
                         'div';
                     CName -> CName
@@ -228,7 +238,7 @@ build_dom({ignorableWhitespace, String},
           #state{dom=[{Name,_,_} = _E|_]} = State) ->
     case lists:member(Name,
                       [p,pre,input,code,quote,warning,
-                       note,dont,do,c,i,em,strong,
+                       note,change,dont,do,c,b,i,em,strong,
                        seemfa,seeerl,seetype,seeapp,
                        seecom,seecref,seefile,seeguide,
                        tag,item]) of
@@ -269,16 +279,33 @@ docs(Application, OTPXml, FromBEAM)->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             {ok, {Module, Chunks}} = beam_lib:chunks(FromBEAM,[exports,abstract_code]),
-            Dom = get_dom(Tree),
-            put(application, Application),
-            put(module, filename:basename(filename:rootname(FromBEAM))),
-            NewDom = transform(Dom,[]),
-            Chunk = to_chunk(NewDom, OTPXml, Module, proplists:get_value(abstract_code, Chunks)),
-            verify_chunk(Module,proplists:get_value(exports, Chunks), Chunk),
-            Chunk;
+            case get_dom(Tree) of
+                [{erlref,_,_}] = Dom ->
+                    put(application, Application),
+                    put(module, filename:basename(filename:rootname(FromBEAM))),
+                    NewDom = transform(Dom, []),
+                    Chunk = add_hidden_docs(
+                              proplists:get_value(exports, Chunks),
+                              to_chunk(NewDom, OTPXml, Module,
+                                       proplists:get_value(abstract_code, Chunks))),
+                    verify_chunk(Module, proplists:get_value(exports, Chunks), Chunk),
+                    Chunk;
+                _Else ->
+                    {error,not_erlref}
+            end;
         Else ->
             {error,Else}
     end.
+
+%% Create hidden function entries for any exported functions that
+%% does not have any documentation.
+add_hidden_docs(Exports, #docs_v1{ anno = Anno, docs = Docs } = Chunk) ->
+    HiddenFuncs =
+        [{{function, F, A}, Anno,
+          [iolist_to_binary(io_lib:format("~p/~p", [F, A]))],
+          hidden, #{}} || {F, A} <- Exports, F =/= module_info,
+                          lists:keysearch({function, F, A}, 1, Docs) == false ],
+    Chunk#docs_v1{ docs = HiddenFuncs ++ Docs }.
 
 verify_chunk(M, Exports, #docs_v1{ docs = Docs } = Doc) ->
 
@@ -340,12 +367,25 @@ transform([{pre,Attr,Content}|T],Acc) ->
 
 %% transform <funcs> with <func> as children
 transform([{funcs,_Attr,Content}|T],Acc) ->
-    Fns = {functions,[],transform_funcs(Content, [])},
+    FnAttr =
+        case lists:keyfind(fsdescription, 1, Content) of
+            false -> [];
+            {fsdescription, _, FSDescr} ->
+                {_, _, Title} = lists:keyfind(h1, 1, FSDescr),
+                [{title, unicode:characters_to_binary(Title)}]
+        end,
+    Fns = {functions, FnAttr, transform_funcs(Content, [])},
     transform(T,[Fns|Acc]);
 %% transform <datatypes> with <datatype> as children
 transform([{datatypes,_Attr,Content}|T],Acc) ->
     Dts = transform(Content, []),
-    transform(T,[{datatypes,[],Dts}|Acc]);
+    DtAttr =
+        case lists:keyfind(datatype_title, 1, Content) of
+            false -> [];
+            {datatype_title, _, Title} ->
+                [{title,unicode:characters_to_binary(Title)}]
+        end,
+    transform(T,[{datatypes,DtAttr,Dts}|Acc]);
 transform([{datatype,_Attr,Content}|T],Acc) ->
     transform(T,transform_datatype(Content, []) ++ Acc);
 %% Ignore <datatype_title>
@@ -354,17 +394,15 @@ transform([{datatype_title,_Attr,_Content}|T],Acc) ->
 %% transform <desc>Content</desc> to Content
 transform([{desc,_Attr,Content}|T],Acc) ->
     transform(T,[transform(Content,[])|Acc]);
-transform([{strong,Attr,Content}|T],Acc) ->
-    transform([{em,Attr,Content}|T],Acc);
 %% transform <marker id="name"/>  to <a id="name"/>....
 transform([{marker,Attrs,Content}|T],Acc) ->
     transform(T,[{a,a2b(Attrs),transform(Content,[])}|Acc]);
 %% transform <url href="external URL"> Content</url> to <a href....
 transform([{url,Attrs,Content}|T],Acc) ->
     transform(T,[{a,a2b(Attrs),transform(Content,[])}|Acc]);
-%% transform note/warning/do/don't to <p class="thing">
+%% transform note/change/warning/do/don't to <p class="thing">
 transform([{What,[],Content}|T],Acc)
-  when What =:= note; What =:= warning; What =:= do; What =:= dont ->
+  when What =:= note; What =:= change; What =:= warning; What =:= do; What =:= dont ->
     WhatP = {'div',[{class,atom_to_binary(What)}], transform(Content,[])},
     transform(T,[WhatP|Acc]);
 
@@ -460,12 +498,22 @@ transform_types(Dom,Acc) ->
 
 transform_taglist(Attr,Content) ->
     Items =
-        lists:map(fun({tag,A,C}) ->
-                          {dt,A,C};
+        lists:map(fun({tag,_A,_C}=Tag) ->
+                          transform_tag(Tag);
                      ({item,A,C}) ->
                           {dd,A,C}
                   end, Content),
     {dl,Attr,Items}.
+
+transform_tag({tag, Attr0, C}) ->
+    Attr1 = lists:map(fun({since,Vsn}) ->
+                              {since,
+                               unicode:characters_to_binary(Vsn)};
+                         (A) ->
+                              A
+                      end,
+                      Attr0),
+    {dt,Attr1,C}.
 
 %% if we have {func,[],[{name,...},{name,....},...]}
 %% we convert it to one {func,[],[{name,...}] per arity lowest first.
@@ -525,7 +573,7 @@ func2func({func,Attr,Contents}) ->
                 _ = VerifyNameList(NameList,fun([]) -> ok end),
 
                 FAs = [TagsToFA(FAttr) || {name,FAttr,[]} <- NameList ],
-                SortedFAs = lists:usort(FAs),
+                SortedFAs = lists:reverse(lists:usort(FAs)),
                 FAClauses = lists:usort([{TagsToFA(FAttr),proplists:get_value(clause_i,FAttr)}
                                          || {name,FAttr,[]} <- NameList ]),
 
@@ -549,7 +597,7 @@ func2func({func,Attr,Contents}) ->
                           fun(FA) ->
                                   MakeFunc(FA, MD, [])
                           end, tl(SortedFAs)),
-                [Base | Equiv];
+                lists:reverse([Base | Equiv]);
             NameList ->
                 %% Manual style function docs
                 FAs = lists:foldl(
@@ -564,7 +612,7 @@ func2func({func,Attr,Contents}) ->
 
                 _ = VerifyNameList(NameList,fun([_|_]) -> ok end),
 
-                SortedFAs = lists:usort(maps:to_list(FAs)),
+                SortedFAs = lists:reverse(lists:usort(maps:to_list(FAs))),
 
                 {{BaseF, BaseA}, BaseSig} = hd(SortedFAs),
 
@@ -573,12 +621,14 @@ func2func({func,Attr,Contents}) ->
                                   {meta,SinceMD}],
                         ContentsNoName},
 
+                {EquivKind, EquivF} = func_to_atom(BaseF),
+
                 Equiv = [{function,
                           [{name,F},{arity,A},
                            {signature,Signature},
-                           {meta,SinceMD#{ equiv => {function,list_to_atom(BaseF),BaseA}}}],[]}
+                           {meta,SinceMD#{ equiv => {EquivKind,EquivF,BaseA}}}],[]}
                          || {{F,A},Signature} <- tl(SortedFAs)],
-                [Base | Equiv]
+                lists:reverse([Base | Equiv])
         end,
     transform(Functions,[]).
 
@@ -641,16 +691,21 @@ transform_datatype(Dom,_Acc) ->
 
 transform_see({See,[{marker,Marker}],Content}) ->
     AbsMarker =
-        case string:lexemes(Marker,"#") of
-            [Link] -> [get(application),":",get(module),"#",Link];
-            [AppMod, Link] ->
-                case string:lexemes(AppMod,":") of
-                    [Mod] -> [get(application),":",Mod,"#",Link];
-                    [App, Mod] -> [App,":",Mod,"#",Link]
-                end
+        case string:split(Marker, "#") of
+            [AppFile] -> marker_defaults(AppFile);
+            [AppFile, Anchor] -> [marker_defaults(AppFile), "#", Anchor]
         end,
+
     {a, [{href,iolist_to_binary(AbsMarker)},
          {rel,<<"https://erlang.org/doc/link/",(atom_to_binary(See))/binary>>}], Content}.
+
+marker_defaults("") ->
+    [get(application), ":", get(module)];
+marker_defaults(AppFile) ->
+    case string:split(AppFile, ":") of
+        [File] -> [get(application), ":", File];
+        [App, File] -> [App, ":", File]
+    end.
 
 to_chunk(Dom, Source, Module, AST) ->
     [{module,MAttr,Mcontent}] = Dom,
@@ -659,6 +714,8 @@ to_chunk(Dom, Source, Module, AST) ->
                    fun({Tag,_,Content}) when Tag =:= description;
                                              Tag =:= section ->
                            Content;
+                      ({modulesummary, _, Content}) ->
+                           [{p, [], Content}];
                       ({_,_,_}) ->
                            []
                    end, Mcontent),
@@ -669,72 +726,97 @@ to_chunk(Dom, Source, Module, AST) ->
 
     Anno = erl_anno:set_file(atom_to_list(Module)++".erl",erl_anno:new(0)),
 
-    Types = lists:flatten([Types || {datatypes,[],Types} <- Mcontent]),
-
     TypeEntries =
-        lists:map(
-          fun({datatype,Attr,Descr}) ->
-                  {function, TypeName} = func_to_atom(proplists:get_value(name,Attr)),
-                  TypeArity = case proplists:get_value(n_vars,Attr) of
-                                  undefined ->
-                                      find_type_arity(TypeName, TypeMap);
-                                  Arity ->
-                                      list_to_integer(Arity)
-                              end,
-                  TypeArgs = lists:join(",",[lists:concat(["Arg",I]) || I <- lists:seq(1,TypeArity)]),
-                  PlaceholderSig = io_lib:format("-type ~p(~s) :: term().",[TypeName,TypeArgs]),
-                  TypeSignature = proplists:get_value(
-                                    signature,Attr,[iolist_to_binary(PlaceholderSig)]),
-                  MetaSig =
-                      case maps:get({TypeName, TypeArity}, TypeMap, undefined) of
-                          undefined ->
-                              #{};
-                          Sig ->
-                              #{ signature => [Sig] }
-                      end,
+        lists:flatmap(
+          fun({datatypes, DTsAttr, Types}) ->
+                  TitleMD = case proplists:get_value(title, DTsAttr) of
+                                undefined -> #{};
+                                Title ->
+                                    #{ title => Title }
+                            end,
+                  lists:map(
+                    fun({datatype,Attr,Descr}) ->
+                            {function, TypeName} = func_to_atom(proplists:get_value(name,Attr)),
+                            TypeArity = case proplists:get_value(n_vars,Attr) of
+                                            undefined ->
+                                                find_type_arity(TypeName, TypeMap);
+                                            Arity ->
+                                                list_to_integer(Arity)
+                                        end,
+                            TypeArgs = lists:join(",",[lists:concat(["Arg",I]) || I <- lists:seq(1,TypeArity)]),
+                            {TypeSignature, MetaSig} =
+                                case proplists:get_value(signature,Attr) of
+                                    undefined ->
+                                        PlaceholderSig =
+                                            iolist_to_binary(
+                                              io_lib:format("-type ~p(~s) :: term().",
+                                                            [TypeName,TypeArgs])),
+                                        {[PlaceholderSig],
+                                         case maps:get({TypeName, TypeArity}, TypeMap, undefined) of
+                                             undefined ->
+                                                 TitleMD#{};
+                                             Sig ->
+                                                 TitleMD#{ signature => [Sig] }
+                                         end};
+                                    Signature ->
+                                        {Signature, TitleMD#{}}
+                                end,
 
-                  MetaDepr
-                      = case otp_internal:obsolete_type(Module, TypeName, TypeArity) of
-                            {deprecated, Text} ->
-                                MetaSig#{ deprecated =>
-                                              unicode:characters_to_binary(
-                                                erl_lint:format_error({deprecated_type,{Module,TypeName,TypeArity}, Text})) };
-                            %% Commented out to make dialyzer happy
-                            %% {deprecated, Replacement, Rel} ->
-                            %%     MetaSig#{ deprecated =>
-                            %%                   unicode:characters_to_binary(
-                            %%                     erl_lint:format_error({deprecated_type,{Module,TypeName,TypeArity}, Replacement, Rel})) };
-                            no ->
-                                MetaSig
-                        end,
+                            MetaDepr
+                                = case apply(otp_internal,obsolete_type,[Module, TypeName, TypeArity]) of
+                                      %% apply/3 in order to silence dialyzer
+                                      {deprecated, Text} ->
+                                          MetaSig#{ deprecated =>
+                                                        unicode:characters_to_binary(
+                                                          erl_lint:format_error({deprecated_type,{Module,TypeName,TypeArity}, Text})) };
+                                      {deprecated, Replacement, Rel} ->
+                                          MetaSig#{ deprecated =>
+                                                        unicode:characters_to_binary(
+                                                          erl_lint:format_error({deprecated_type,{Module,TypeName,TypeArity}, Replacement, Rel})) };
+                                      {removed, _Text} ->
+                                          %% Just skip
+                                          MetaSig;
+                                      no ->
+                                          MetaSig
+                                  end,
 
-                  docs_v1_entry(type, Anno, TypeName, TypeArity, TypeSignature, MetaDepr, Descr)
-          end, Types),
-
-    Functions = lists:flatten([Functions || {functions,[],Functions} <- Mcontent]),
+                            docs_v1_entry(type, Anno, TypeName, TypeArity, TypeSignature, MetaDepr, Descr)
+                    end, Types);
+             (_) -> []
+          end, Mcontent),
 
     FuncEntrys =
-        lists:map(
-          fun({function,Attr,Fdoc}) ->
-                  {Type, Name} = func_to_atom(proplists:get_value(name,Attr)),
-                  Arity = proplists:get_value(arity,Attr),
-                  Signature = proplists:get_value(signature,Attr),
-                  FMeta = proplists:get_value(meta,Attr),
-                  MetaWSpec = add_spec(AST,FMeta),
-                  MetaDepr
-                      = case otp_internal:obsolete(Module, Name, Arity) of
-                            {deprecated, Text} ->
-                                MetaWSpec#{ deprecated =>
-                                                unicode:characters_to_binary(
-                                                  erl_lint:format_error({deprecated,{Module,Name,Arity}, Text})) };
-                            {deprecated, Replacement, Rel} ->
-                                MetaWSpec#{ deprecated =>
-                                                unicode:characters_to_binary(
-                                                  erl_lint:format_error({deprecated,{Module,Name,Arity}, Replacement, Rel})) };
-                            _ -> MetaWSpec
-                        end,
-                  docs_v1_entry(Type, Anno, Name, Arity, Signature, MetaDepr, Fdoc)
-          end, Functions),
+        lists:flatmap(
+          fun({functions, FsAttr, Functions}) ->
+                  TitleMD = case proplists:get_value(title, FsAttr) of
+                                undefined -> #{};
+                                Title ->
+                                    #{ title => Title }
+                            end,
+                  lists:map(
+                    fun({function,Attr,Fdoc}) ->
+                            {Type, Name} = func_to_atom(proplists:get_value(name,Attr)),
+                            Arity = proplists:get_value(arity,Attr),
+                            Signature = proplists:get_value(signature,Attr),
+                            FMeta = maps:merge(proplists:get_value(meta,Attr),TitleMD),
+                            MetaWSpec = add_spec(AST,FMeta),
+                            MetaDepr
+                                = case apply(otp_internal,obsolete,[Module, Name, Arity]) of
+                                      %% apply/3 in order to silence dialyzer
+                                      {deprecated, Text} ->
+                                          MetaWSpec#{ deprecated =>
+                                                          unicode:characters_to_binary(
+                                                            erl_lint:format_error({deprecated,{Module,Name,Arity}, Text})) };
+                                      {deprecated, Replacement, Rel} ->
+                                          MetaWSpec#{ deprecated =>
+                                                          unicode:characters_to_binary(
+                                                            erl_lint:format_error({deprecated,{Module,Name,Arity}, Replacement, Rel})) };
+                                      _ -> MetaWSpec
+                                  end,
+                            docs_v1_entry(Type, Anno, Name, Arity, Signature, MetaDepr, Fdoc)
+                    end, Functions);
+             (_) -> []
+          end, Mcontent),
 
     docs_v1(ModuleDocs, Anno, TypeMeta, FuncEntrys ++ TypeEntries).
 

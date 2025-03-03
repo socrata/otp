@@ -2,7 +2,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -695,7 +695,7 @@ check_object(S,_ObjDef,#'Object'{classname=ClassRef,def=ObjectDef}) ->
 	    {po,{object,DefObj},ArgsList} ->
 		{_,Object} = get_referenced_type(S,DefObj),%DefObj is a 
 		%%#'Externalvaluereference' or a #'Externaltypereference'
-		%% Maybe this call should be catched and in case of an exception
+		%% Maybe this call should be caught and in case of an exception
 		%% a not initialized parameterized object should be returned.
 		instantiate_po(S,ClassDef,Object,ArgsList);
 	    {pv,{simpledefinedvalue,ObjRef},ArgList} ->
@@ -1170,7 +1170,7 @@ gen_incl1(_,_,[]) ->
 gen_incl1(S,Fields,[C|CFields]) ->
     case element(1,C) of
 	typefield ->
-	    true; %% should check that field is OPTIONAL or DEFUALT if
+	    true; %% should check that field is OPTIONAL or DEFAULT if
                   %% the object lacks this field
 	objectfield ->
 	    case lists:keysearch(element(2,C),1,Fields) of
@@ -1855,8 +1855,8 @@ validate_oid(S, OidType, [{'NamedNumber',_Name,Value}|Vrest], Acc)
     validate_oid(S, OidType, Vrest, [Value|Acc]);
 validate_oid(S, OidType, [#'Externalvaluereference'{}=Id|Vrest], Acc) ->
     NeededOidType = case Acc of
-			[] -> o_id;
-			[_|_] -> rel_oid
+			[] when OidType =:= o_id -> o_id;
+			_ -> rel_oid
 		    end,
     try get_oid_value(S, NeededOidType, true, Id) of
 	Val when is_integer(Val) ->
@@ -2294,9 +2294,8 @@ use_maps(#state{options=Opts}) ->
 
 create_map_value(Components, ListOfVals) ->
     Zipped = lists:zip(Components, ListOfVals),
-    L = [{Name,V} || {#'ComponentType'{name=Name},V} <- Zipped,
-                     V =/= asn1_NOVALUE],
-    maps:from_list(L).
+    #{Name => V || {#'ComponentType'{name=Name},V} <- Zipped,
+                   V =/= asn1_NOVALUE}.
 
 normalize_seq_or_set(SorS, S,
 		     [{#seqtag{val=Cname},V}|Vs],
@@ -2409,7 +2408,7 @@ normalize_s_of(SorS,S,Value,Type,NameList)
 %% character string list case
 normalize_restrictedstring(S,[H|T],CType) when is_list(H);is_tuple(H) ->
     [normalize_restrictedstring(S,H,CType)|normalize_restrictedstring(S,T,CType)];
-%% character sting case
+%% character string case
 normalize_restrictedstring(_S,CString,_) when is_list(CString) ->
     CString;
 %% definedvalue case or argument in a parameterized type
@@ -2490,22 +2489,22 @@ check_ptype(S,Type,Ts) when is_record(Ts,type) ->
     NewDef= 
 	case Def of 
 	    Seq when is_record(Seq,'SEQUENCE') ->
-		Components = expand_components(S,Seq#'SEQUENCE'.components),
-		#newt{type=Seq#'SEQUENCE'{pname=get_datastr_name(Type),
-					  components = Components}};
+			Components = expand_components(S,Seq#'SEQUENCE'.components),			
+			#newt{type=Seq#'SEQUENCE'{pname=get_datastr_name(Type),
+									components = Components}};
 	    Set when is_record(Set,'SET') ->
-		Components = expand_components(S,Set#'SET'.components),
-		#newt{type=Set#'SET'{pname=get_datastr_name(Type),
+			Components = expand_components(S,Set#'SET'.components),
+			#newt{type=Set#'SET'{pname=get_datastr_name(Type),
 				     components = Components}};
 	    _Other ->
-		#newt{}
+			#newt{}
 	end,
     Ts2 = case NewDef of
 	      #newt{type=unchanged} ->
-		  Ts;
+		  	Ts;
 	      #newt{type=TDef}->
-		  Ts#type{def=TDef}
-	  end,
+		  	Ts#type{def=TDef}
+	end,
     Ts2;
 %% parameterized class
 check_ptype(_S,_PTDef,Ts) when is_record(Ts,objectclass) ->
@@ -2816,7 +2815,7 @@ check_type(S=#state{recordtopname=TopName},Type,Ts) when is_record(Ts,type) ->
 				inlined=yes};
 
 	    #'ObjectClassFieldType'{classname=ClRef0}=OCFT0 ->
-		%% this case occures in a SEQUENCE when 
+		%% this case occurs in a SEQUENCE when 
 		%% the type of the component is a ObjectClassFieldType
 		ClRef = match_parameter(S, ClRef0),
 		OCFT = OCFT0#'ObjectClassFieldType'{classname=ClRef},
@@ -3427,10 +3426,10 @@ check_componentrelation(S, {objectset,Opos,Objset0}, Id) ->
 %%% creating sets, and maintained by the intersection and union
 %%% operators.
 %%%
-%%% Example of invalid set representaions:
+%%% Example of invalid set representations:
 %%%
 %%%   [{range,0,10},{range,5,10}]    %Overlapping ranges
-%%%   [{range,0,5},{range,6,10}]     %Adjancent ranges
+%%%   [{range,0,5},{range,6,10}]     %Adjacent ranges
 %%%   [{range,10,20},{a_range,100}]  %Not sorted
 %%%
 
@@ -3560,6 +3559,20 @@ range_union_1([]) ->
 finish_constraints(Cs) ->
     finish_constraints_1(Cs, fun smart_collapse/1).
 
+finish_constraints_1([{element_set,{'SizeConstraint',
+                                    {element_set,Root,none}},
+                       {set,[]}=Set}|T],
+                     Collapse) ->
+    %% Rewrite:
+    %%
+    %%     (SIZE (Lower..Upper), ...)
+    %%
+    %% to:
+    %%
+    %%     (SIZE (Lower..Upper, ...))
+
+    C = {element_set,{'SizeConstraint',{element_set,Root,Set}},none},
+    finish_constraints_1([C|T], Collapse);
 finish_constraints_1([{element_set,{Tag,{element_set,_,_}=Set0},none}|T],
 		     Collapse0) ->
     Collapse = collapse_fun(Tag),
@@ -4388,38 +4401,18 @@ check_sequence(S,Type,Comps)  ->
 	    %% type
 	    {CRelInf,NewComps2} = componentrelation_leadingattr(S,NewComps),
 
-	    %% CompListWithTblInf has got a lot unecessary info about
+	    %% CompListWithTblInf has got a lot unnecessary info about
 	    %% the involved class removed, as the class of the object
 	    %% set.
 	    CompListWithTblInf = get_tableconstraint_info(S,Type,NewComps2),
 
 	    NewComps3 = textual_order(CompListWithTblInf),
 	    NewComps4 = simplify_comps(NewComps3),
-	    CompListTuple = complist_as_tuple(NewComps4),
+	    CompListTuple = asn1ct_gen:complist_as_tuple(NewComps4),
 	    {CRelInf,CompListTuple};
 	Dupl ->
 	    asn1_error(S, {duplicate_identifier, error_value(hd(Dupl))})
     end.
-
-complist_as_tuple(CompList) ->
-    complist_as_tuple(CompList, [], [], [], root).
-
-complist_as_tuple([#'EXTENSIONMARK'{}|T], Acc, Ext, Acc2, root) ->
-    complist_as_tuple(T, Acc, Ext, Acc2, ext);
-complist_as_tuple([#'EXTENSIONMARK'{}|T], Acc, Ext, Acc2, ext) ->
-    complist_as_tuple(T, Acc, Ext, Acc2, root2);
-complist_as_tuple([C|T], Acc, Ext, Acc2, root) ->
-    complist_as_tuple(T, [C|Acc], Ext, Acc2, root);
-complist_as_tuple([C|T], Acc, Ext, Acc2, ext) ->
-    complist_as_tuple(T, Acc, [C|Ext], Acc2, ext);
-complist_as_tuple([C|T], Acc, Ext, Acc2, root2) ->
-    complist_as_tuple(T, Acc, Ext, [C|Acc2], root2);
-complist_as_tuple([], Acc, _Ext, _Acc2, root) ->
-    lists:reverse(Acc);
-complist_as_tuple([], Acc, Ext, _Acc2, ext) ->
-    {lists:reverse(Acc),lists:reverse(Ext)};
-complist_as_tuple([], Acc, Ext, Acc2, root2) ->
-    {lists:reverse(Acc),lists:reverse(Ext),lists:reverse(Acc2)}.
 
 expand_components(S, [{'COMPONENTS OF',Type}|T]) ->
     CompList = expand_components2(S,get_referenced_type(S,Type#type.def)),
@@ -4427,7 +4420,12 @@ expand_components(S, [{'COMPONENTS OF',Type}|T]) ->
 expand_components(S,[H|T]) ->
     [H|expand_components(S,T)];
 expand_components(_,[]) ->
-    [].
+    [];
+expand_components(S, {Acc,Ext,Acc2}) ->
+    expand_components(S,Acc ++ Ext ++ Acc2);
+expand_components(S, {Acc,Ext}) ->
+    expand_components(S, Acc ++ Ext).
+
 expand_components2(_S,{_,#typedef{typespec=#type{def=Seq}}}) 
   when is_record(Seq,'SEQUENCE') ->
     case Seq#'SEQUENCE'.components of
@@ -4464,7 +4462,7 @@ take_only_rootset([H|T]) ->
     [H|take_only_rootset(T)].
 
 check_unique_sequence_tags(S,CompList) ->
-    TagComps = case complist_as_tuple(CompList) of
+    TagComps = case asn1ct_gen:complist_as_tuple(CompList) of
 		   {R1,Ext,R2} ->
 		       R1 ++ [C#'ComponentType'{prop='OPTIONAL'}||
 				 C = #'ComponentType'{} <- Ext]++R2;
@@ -4727,7 +4725,7 @@ check_choice(S,Type,Components) when is_list(Components) ->
 				     end,NewComps),
 	    NewComps3 = simplify_comps(NewComps2),
 	    check_unique_tags(S, NewComps3),
-	    complist_as_tuple(NewComps3);
+	    asn1ct_gen:complist_as_tuple(NewComps3);
 	Dupl ->
 	    asn1_error(S, {duplicate_identifier,error_value(hd(Dupl))})
     end;
@@ -4936,7 +4934,7 @@ componentrelation_leadingattr(S,CompList) ->
     %% get_simple_table_if_used/2 should find out whether there are any
     %% component relation constraints in the entire tree of Cs1 that
     %% relates to this level. It returns information about the simple
-    %% table constraint necessary for the the call to
+    %% table constraint necessary for the call to
     %% componentrelation_leadingattr/6. The step when the leading
     %% attribute and the syntax tree is modified to support the code
     %% generating.
@@ -5198,7 +5196,7 @@ any_component_relation(_,[],_,_,Acc) ->
 %% evaluate_atpath/4 finds out whether the at notation refers to the
 %% search level. The list of referenced names in the AtNot list shall
 %% begin with a name that exists on the level it refers to. If the
-%% found AtPath is refering to the same sub-branch as the simple table
+%% found AtPath is referring to the same sub-branch as the simple table
 %% has, then there shall not be any leading attribute info on this
 %% level.
 evaluate_atpath(_,[],Cnames,{innermost,AtPath=[Ref|_Refs]}) ->
@@ -5369,7 +5367,7 @@ innertype_comprel1(S,T = #type{def=Def,constraint=Cons,tablecinf=TCI},Path) ->
 	case lists:keyfind(componentrelation, 1, Cons) of
 	    {_,{_,_,ObjectSet},AtList} ->
 		%% This AtList must have an "outermost" at sign to be
-		%% relevent here.
+		%% relevant here.
 		[{_,AL=[#'Externalvaluereference'{value=_Attr}|_R1]}|_R2] 
 		    = AtList,
 		ClassDef = get_ObjectClassFieldType_classdef(S,Def),

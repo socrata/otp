@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2020. All Rights Reserved.
+# Copyright Ericsson AB 1997-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ XMLDIR := $(XMLDIR)/design_principles
 # ----------------------------------------------------
 # Release directory specification
 # ----------------------------------------------------
-RELSYSDIR = "$(RELEASE_PATH)/doc/design_principles"
+RELSYSDIR = $(RELEASE_PATH)/doc/design_principles
 
 # ----------------------------------------------------
 # Target Specs
@@ -56,13 +56,14 @@ GIF_FILES = \
 	dist4.gif \
 	dist5.gif \
 	inclappls.gif \
-	sup4.gif \
-	sup5.gif \
 	sup6.gif
 
 SVG_FILES = \
 	code_lock.svg \
-	code_lock_2.svg
+	code_lock_2.svg \
+	sup-one_for_all.svg \
+	sup-one_for_one.svg \
+	sup-rest_for_one.svg
 
 IMAGE_FILES = $(GIF_FILES) $(SVG_FILES)
 
@@ -121,7 +122,7 @@ include $(ERL_TOP)/make/otp_release_targets.mk
 release_html_spec: html
 	$(INSTALL_DIR) "$(RELSYSDIR)"
 	$(INSTALL_DATA) $(IMAGE_FILES) $(EXTRA_FILES) $(HTMLDIR)/*.html \
-		$(RELSYSDIR)
+		"$(RELSYSDIR)"
 
 release_docs_spec: $(DOC_TARGETS:%=release_%_spec)
 

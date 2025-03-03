@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -199,8 +199,11 @@
       Args::term(),
       Flag::trace | log | {logfile, string()} | statistics | debug,
       Options::[{timeout, timeout()} | {debug, [Flag]}].
+start(Mod, Args, Options)
+  when is_atom(Mod), is_list(Options) ->
+    gen_response(gen:start(?MODULE, nolink, Mod, Args, [get(?WXE_IDENTIFIER)|Options]));
 start(Mod, Args, Options) ->
-    gen_response(gen:start(?MODULE, nolink, Mod, Args, [get(?WXE_IDENTIFIER)|Options])).
+    error(badarg, [Mod, Args, Options]).
 
 %% @doc Starts a generic wx_object server and invokes Mod:init(Args) in the
 %% new process.
@@ -210,8 +213,11 @@ start(Mod, Args, Options) ->
       Args::term(),
       Flag::trace | log | {logfile, string()} | statistics | debug,
       Options::[{timeout, timeout()} | {debug, [Flag]}].
+start(Name, Mod, Args, Options)
+  when is_tuple(Name), is_atom(Mod), is_list(Options) ->
+    gen_response(gen:start(?MODULE, nolink, Name, Mod, Args, [get(?WXE_IDENTIFIER)|Options]));
 start(Name, Mod, Args, Options) ->
-    gen_response(gen:start(?MODULE, nolink, Name, Mod, Args, [get(?WXE_IDENTIFIER)|Options])).
+    error(badarg, [Name, Mod, Args, Options]).
 
 %% @doc Starts a generic wx_object server and invokes Mod:init(Args) in the
 %% new process.
@@ -220,8 +226,11 @@ start(Name, Mod, Args, Options) ->
       Args::term(),
       Flag::trace | log | {logfile, string()} | statistics | debug,
       Options::[{timeout, timeout()} | {debug, [Flag]}].
+start_link(Mod, Args, Options)
+  when is_atom(Mod), is_list(Options) ->
+    gen_response(gen:start(?MODULE, link, Mod, Args, [get(?WXE_IDENTIFIER)|Options]));
 start_link(Mod, Args, Options) ->
-    gen_response(gen:start(?MODULE, link, Mod, Args, [get(?WXE_IDENTIFIER)|Options])).
+    error(badarg, [Mod, Args, Options]).
 
 %% @doc Starts a generic wx_object server and invokes Mod:init(Args) in the
 %% new process.
@@ -231,11 +240,14 @@ start_link(Mod, Args, Options) ->
       Args::term(),
       Flag::trace | log | {logfile, string()} | statistics | debug,
       Options::[{timeout, timeout()} | {debug, [Flag]}].
+start_link(Name, Mod, Args, Options)
+  when is_tuple(Name), is_atom(Mod), is_list(Options) ->
+    gen_response(gen:start(?MODULE, link, Name, Mod, Args, [get(?WXE_IDENTIFIER)|Options]));
 start_link(Name, Mod, Args, Options) ->
-    gen_response(gen:start(?MODULE, link, Name, Mod, Args, [get(?WXE_IDENTIFIER)|Options])).
+    error(badarg, [Name, Mod, Args, Options]).
 
 gen_response({ok, Pid}) ->
-    receive {ack, Pid, Ref = #wx_ref{}} -> Ref end;
+    receive {started, Pid, Ref = #wx_ref{}} -> Ref end;
 gen_response(Reply) ->
     Reply.
 
@@ -407,30 +419,23 @@ init_it(Starter, Parent, Name, Mod, Args, [WxEnv|Options]) ->
 	{#wx_ref{} = Ref, State, Timeout} ->
 	    init_it2(Ref, Starter, Parent, Name, State, Mod, Timeout, Debug);
 	{stop, Reason} ->
-	    proc_lib:init_ack(Starter, {error, Reason}),
 	    exit(Reason);
 	ignore ->
-	    proc_lib:init_ack(Starter, ignore),
-	    exit(normal);
+	    proc_lib:init_fail(Starter, ignore, {exit, normal});
 	{'EXIT', Reason} ->
-	    proc_lib:init_ack(Starter, {error, Reason}),
 	    exit(Reason);
 	Else ->
-	    Error = {bad_return_value, Else},
-	    proc_lib:init_ack(Starter, {error, Error}),
-	    exit(Error)
+	    exit({bad_return_value, Else})
     end.
 %% @hidden
 init_it2(Ref, Starter, Parent, Name, State, Mod, Timeout, Debug) ->
     ok = wxe_util:register_pid(Ref),
     case ?CLASS_T(Ref#wx_ref.type, wxWindow) of
 	false -> 
-	    Reason = {Ref, "not a wxWindow subclass"},
-	    proc_lib:init_ack(Starter, {error, Reason}),
-	    exit(Reason);
+	    exit({Ref, "not a wxWindow subclass"});
 	true ->
 	    proc_lib:init_ack(Starter, {ok, self()}),
-	    proc_lib:init_ack(Starter, Ref#wx_ref{state=self()}),
+	    Starter ! {started, self(), Ref#wx_ref{state=self()}},
 	    loop(Parent, Name, State, Mod, Timeout, Debug)
     end.    
 

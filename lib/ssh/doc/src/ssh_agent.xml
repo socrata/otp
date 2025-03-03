@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2018</year><year>2018</year>
+      <year>2018</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -52,7 +52,7 @@
     </code>
     <p>
       The agent communication is established through a UNIX domain socket. By default, the socket path
-      will be fetched from the <c>SSH_AUTH_SOCK</c> enviroment variable, which is the default socket path in the agent
+      will be fetched from the <c>SSH_AUTH_SOCK</c> environment variable, which is the default socket path in the agent
       implementation of
       <url href="http://www.openssh.com">OpenSSH</url>.
     </p>
@@ -101,8 +101,8 @@
 
   <funcs>
     <func>
-      <name since="" name="add_host_key" arity="3"/>
-      <name since="" name="add_host_key" arity="4"/>
+      <name since="OTP 23.0" name="add_host_key" arity="3"/>
+      <name since="OTP 23.0" name="add_host_key" arity="4"/>
       <fsummary></fsummary>
       <desc>
         <p>
@@ -112,8 +112,8 @@
     </func>
 
     <func>
-      <name since="" name="is_host_key" arity="4"/>
-      <name since="" name="is_host_key" arity="5"/>
+      <name since="OTP 23.0" name="is_host_key" arity="4"/>
+      <name since="OTP 23.0" name="is_host_key" arity="5"/>
       <fsummary></fsummary>
       <desc>
         <p>
@@ -123,7 +123,7 @@
     </func>
 
     <func>
-      <name since="" name="user_key" arity="2"/>
+      <name since="OTP 23.0" name="user_key" arity="2"/>
       <fsummary></fsummary>
       <desc>
         <p><strong>Types and description</strong></p>

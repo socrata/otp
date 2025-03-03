@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,15 +32,18 @@
 #include "erl_sys_driver.h"
 #include "global.h"
 #include "erl_threads.h"
-#include "../../drivers/win32/win_con.h"
 #include "erl_cpu_topology.h"
 #include <malloc.h>
+
+#if defined(__WIN32__) && !defined(WINDOWS_H_INCLUDES_WINSOCK2_H)
+#include <winsock2.h>
+#endif
 
 void erts_sys_init_float(void);
 
 void erl_start(int, char**);
-void erts_exit(int n, char*, ...);
-void erl_error(char*, va_list);
+void erts_exit(int n, const char*, ...);
+void erl_error(const char*, va_list);
 
 /*
  * Microsoft-specific function to map a WIN32 error code to a Posix errno.
@@ -76,8 +79,8 @@ static BOOL create_child_process(wchar_t *, HANDLE, HANDLE,
 				 wchar_t **, int *);
 static int create_pipe(LPHANDLE, LPHANDLE, BOOL, BOOL);
 static int application_type(const wchar_t* originalName, wchar_t fullPath[MAX_PATH],
-			   BOOL search_in_path, BOOL handle_quotes,
-			   int *error_return);
+                            BOOL search_in_path, BOOL handle_quotes,
+                            int *error_return);
 static void *build_env_block(const erts_osenv_t *env);
 
 HANDLE erts_service_event;
@@ -124,9 +127,11 @@ BOOL WINAPI ctrl_handler(DWORD dwCtrlType);
 
 static int max_files = 1024;
 
-static BOOL use_named_pipes;
-static BOOL win_console = FALSE;
+static DWORD dwOriginalOutMode = 0;
+static DWORD dwOriginalInMode = 0;
+static DWORD dwOriginalErrMode = 0;
 
+static BOOL use_named_pipes;
 
 static OSVERSIONINFO int_os_version;	/* Version information for Win32. */
 
@@ -205,10 +210,9 @@ erts_sys_misc_mem_sz(void)
  */
 void sys_tty_reset(int exit_code)
 {
-    if (exit_code == ERTS_ERROR_EXIT)
-	ConWaitForExit();
-    else
-	ConNormalExit();
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), dwOriginalInMode);
+    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), dwOriginalOutMode);
+    SetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), dwOriginalErrMode);
 }
 
 void erl_sys_args(int* argc, char** argv)
@@ -307,22 +311,11 @@ int erts_set_signal(Eterm signal, Eterm type) {
 static void
 init_console(void)
 {
-    char* mode = erts_read_env("ERL_CONSOLE_MODE");
-
-    if (!mode || strcmp(mode, "window") == 0) {
-	win_console = TRUE;
-	ConInit();
-	/*nohup = 0;*/
-    } else if (strncmp(mode, "tty:", 4) == 0) {
-	if (mode[5] == 'c') {
-	    setvbuf(stdout, NULL, _IONBF, 0);
-	}
-	if (mode[6] == 'c') {
-	    setvbuf(stderr, NULL, _IONBF, 0);
-	}
-    }
-
-    erts_free_read_env(mode);
+    GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &dwOriginalOutMode);
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &dwOriginalInMode);
+    GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &dwOriginalErrMode);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
 }
 
 int sys_max_files(void) 
@@ -704,11 +697,11 @@ release_driver_data(DriverData* dp)
     else
 #endif
     {
-	/* This is a workaround for the fact that CancelIo cant cancel
-	   requests issued by another thread and that we cant use
+	/* This is a workaround for the fact that CancelIo can't cancel
+	   requests issued by another thread and that we can't use
 	   CancelIoEx as that's only available in Vista etc.
 	   R14: Avoid scheduler deadlock by only wait for 10ms, and then spawn
-	    a thread that will keep waiting in in order to close handles. */
+	    a thread that will keep waiting in order to close handles. */
 	HANDLE handles[2];
 	int i = 0;
 	int timeout = 10;
@@ -1020,7 +1013,7 @@ async_read_file(AsyncIo* aio, LPVOID buf, DWORD numToRead)
 	aio->async_io_active = 1; /* Will get 0 when the event actually happened */
 	if (ReadFile(aio->fd, buf, numToRead,
 		     &aio->bytesTransferred, &aio->ov)) {
-	    DEBUGF(("async_read_file: ReadFile() suceeded: %d bytes\n",
+	    DEBUGF(("async_read_file: ReadFile() succeeded: %d bytes\n",
 		    aio->bytesTransferred));
 #ifdef HARD_POLL_DEBUG
 	    poll_debug_async_immediate(aio->ov.hEvent, aio->bytesTransferred);
@@ -1068,7 +1061,7 @@ async_write_file(AsyncIo* aio,		/* Pointer to async control block. */
 	aio->async_io_active = 1; /* Will get 0 when the event actually happened */
 	if (WriteFile(aio->fd, buf, numToWrite,
 		      &aio->bytesTransferred, &aio->ov)) {
-	    DEBUGF(("async_write_file: WriteFile() suceeded: %d bytes\n",
+	    DEBUGF(("async_write_file: WriteFile() succeeded: %d bytes\n",
 		    aio->bytesTransferred));
 	    aio->async_io_active = 0; /* The event will not be signalled */
 	    ResetEvent(aio->ov.hEvent);
@@ -1137,7 +1130,7 @@ get_overlapped_result(AsyncIo* aio,		/* Pointer to async control block. */
 	DEBUGF(("get_overlapped_result: pending error: %s\n",
 		win32_errorstr(error)));
 	return error;
-    } else if (aio->flags & DF_OVR_READY) { /* Operation succeded. */
+    } else if (aio->flags & DF_OVR_READY) { /* Operation succeeded. */
 	aio->flags &= ~DF_OVR_READY;
 	*pBytesRead = aio->bytesTransferred;
 	ResetEvent(aio->ov.hEvent);
@@ -1526,7 +1519,7 @@ create_child_process
  wchar_t *wd,      /* Working dir for the child */
  unsigned st,    /* Flags for spawn, tells us how to interpret origcmd */
  wchar_t **argv,     /* Argument vector if given. */
- int *errno_return /* Place to put an errno in in case of failure */
+ int *errno_return /* Place to put an errno in case of failure */
  )
 {
     PROCESS_INFORMATION piProcInfo = {0};
@@ -1542,6 +1535,9 @@ create_child_process
     HANDLE hProcess = GetCurrentProcess();
     STARTUPINFOW siStartInfo = {0};
     wchar_t execPath[MAX_PATH];
+    BOOL need_quote;
+    int quotedLen;
+    wchar_t *ptr;
 
     *errno_return = -1;
     siStartInfo.cb = sizeof(STARTUPINFOW);
@@ -1556,21 +1552,25 @@ create_child_process
 	 * contain spaces).
 	 */
 	cmdlength = parse_command(origcmd);
-	newcmdline = (wchar_t *) erts_alloc(ERTS_ALC_T_TMP, (MAX_PATH+wcslen(origcmd)-cmdlength)*sizeof(wchar_t));
 	thecommand = (wchar_t *) erts_alloc(ERTS_ALC_T_TMP, (cmdlength+1)*sizeof(wchar_t));
 	wcsncpy(thecommand, origcmd, cmdlength);
 	thecommand[cmdlength] = L'\0';
 	DEBUGF(("spawn command: %S\n", thecommand));
 
-	applType = application_type(thecommand, execPath, TRUE, TRUE, errno_return);
+	applType =
+            application_type(thecommand, execPath, TRUE, TRUE, errno_return);
 	DEBUGF(("application_type returned for (%S) is %d\n", thecommand, applType));
 	erts_free(ERTS_ALC_T_TMP, (void *) thecommand);
-	if (applType == APPL_NONE) {
-	    erts_free(ERTS_ALC_T_TMP,newcmdline);
+	if (applType == APPL_NONE) { 
 	    return FALSE;
 	}
-	newcmdline[0] = L'\0';
 
+        quotedLen = escape_and_quote(execPath, NULL, &need_quote);
+        newcmdline = (wchar_t *)
+            erts_alloc(ERTS_ALC_T_TMP,
+                       (11+quotedLen+wcslen(origcmd)-cmdlength)*sizeof(wchar_t));
+
+        ptr = newcmdline;
 	if (applType == APPL_DOS) {
 	    /*
 	     * Under NT, 16-bit DOS applications will not run unless they
@@ -1582,7 +1582,8 @@ create_child_process
 	    siStartInfo.wShowWindow = SW_HIDE;
 	    siStartInfo.dwFlags |= STARTF_USESHOWWINDOW;
 	    createFlags = CREATE_NEW_CONSOLE;
-	    wcscat(newcmdline, L"cmd.exe /c ");
+	    wcscpy(newcmdline, L"cmd.exe /c ");
+            ptr += 11;
 	} else if (hide) {
 	    DEBUGF(("hiding window\n"));
 	    siStartInfo.wShowWindow = SW_HIDE;
@@ -1590,10 +1591,11 @@ create_child_process
 	    createFlags = 0;
 	}
 
-	wcscat(newcmdline, execPath);
-	wcscat(newcmdline, origcmd+cmdlength);
+        ptr += escape_and_quote(execPath, ptr, &need_quote);
+
+	wcscpy(ptr, origcmd+cmdlength);
 	DEBUGF(("Creating child process: %S, createFlags = %d\n", newcmdline, createFlags));
-	ok = CreateProcessW(appname,
+	ok = CreateProcessW((applType == APPL_DOS) ? appname : execPath,
 			    newcmdline,
 			    NULL,
 			    NULL,
@@ -1608,7 +1610,8 @@ create_child_process
     } else { /* ERTS_SPAWN_EXECUTABLE, filename and args are in unicode ({utf16,little}) */
 	int run_cmd = 0;
 
-	applType = application_type(origcmd, execPath, FALSE, FALSE, errno_return);
+	applType =
+            application_type(origcmd, execPath, FALSE, FALSE, errno_return);
 	if (applType == APPL_NONE) {
 	    return FALSE;
 	} 
@@ -1630,7 +1633,8 @@ create_child_process
 	if (run_cmd) {
 	    wchar_t cmdPath[MAX_PATH];
 	    int cmdType;
-	    cmdType = application_type(L"cmd.exe", cmdPath, TRUE, FALSE, errno_return);
+	    cmdType =
+                application_type(L"cmd.exe", cmdPath, TRUE, FALSE, errno_return);
 	    if (cmdType == APPL_NONE || cmdType == APPL_DOS) {
 		return FALSE;
 	    }
@@ -1749,7 +1753,7 @@ static int create_pipe(HANDLE *phRead, HANDLE *phWrite, BOOL inheritRead, BOOL o
     Uint calls;
 
     /*
-     * If we should't use named pipes, create anonmous pipes.
+     * If we shouldn't use named pipes, create anonmous pipes.
      */
 
     if (!use_named_pipes) {
@@ -1822,7 +1826,7 @@ static int application_type (const wchar_t *originalName, /* Name of the applica
 							  * application. */
 			     BOOL search_in_path,      /* If we should search the system wide path */
 			     BOOL handle_quotes,       /* If we should handle quotes around executable */
-			     int *error_return)         /* A place to put an error code */
+			     int *error_return)        /* A place to put an error code */
 {
     int applType, i;
     HANDLE hFile;
@@ -1831,13 +1835,14 @@ static int application_type (const wchar_t *originalName, /* Name of the applica
     DWORD read;
     IMAGE_DOS_HEADER header;
     static wchar_t extensions[][5] = {L"", L".com", L".exe", L".bat"};
-    int is_quoted;
     int len;
     wchar_t xfullpath[MAX_PATH];
+    BOOL is_quoted;
 
     len = wcslen(originalName);
-    is_quoted = handle_quotes && len > 0 && originalName[0] == L'"' && 
-	originalName[len-1] == L'"';
+    is_quoted = (handle_quotes && len > 0
+                 && originalName[0] == L'"'
+                 && originalName[len-1] == L'"');
 
     applType = APPL_NONE;
     *error_return = ENOENT;
@@ -1945,14 +1950,6 @@ static int application_type (const wchar_t *originalName, /* Name of the applica
 
 	GetShortPathNameW(wfullpath, wfullpath, MAX_PATH);
     }
-    if (is_quoted) {
-	/* restore quotes on quoted program name */
-	len = wcslen(wfullpath);
-	memmove(wfullpath+1,wfullpath,len*sizeof(wchar_t));
-	wfullpath[0]=L'"';
-	wfullpath[len+1]=L'"';
-	wfullpath[len+2]=L'\0';
-    }
     return applType;
 }
 
@@ -2052,7 +2049,7 @@ threaded_writer(LPVOID param)
 		aio->pendingError = 0;
 		aio->bytesTransferred = numToWrite;
 	    } else if (aio->pendingError == ERROR_NOT_ENOUGH_MEMORY) {
-		/* This could be a console, which limits utput to 64kbytes, 
+		/* This could be a console, which limits output to 64kbytes, 
 		   which might translate to less on a unicode system. 
 		   Try 16k chunks and see if it works before giving up. */
 		int done = 0;
@@ -2192,7 +2189,6 @@ fd_start(ErlDrvPort port_num, char* name, SysDriverOpts* opts)
 	    return ERL_DRV_ERROR_GENERAL;
 	}
 	
-	fd_driver_input = &(dp->in);
 	dp->in.flags = DF_XLAT_CR;
 	if (is_std_error) {
 	    dp->out.flags |= DF_DROP_IF_INVH; /* Just drop messages if stderror
@@ -2200,6 +2196,7 @@ fd_start(ErlDrvPort port_num, char* name, SysDriverOpts* opts)
 	}
 	
 	if ( in == 0 && out == 1) {
+        fd_driver_input = &(dp->in);
 	    save_01_port = dp;
 	} else if (in == 2 && out == 2) {
 	    save_22_port = dp;
@@ -2215,7 +2212,7 @@ static void fd_stop(ErlDrvData data)
   /*
    * There's no way we can terminate an fd port in a consistent way.
    * Instead we let it live until it's opened again (which it is,
-   * as the only FD-drivers are for 0,1 and 2 adn the only time they
+   * as the only FD-drivers are for 0,1 and 2 and the only time they
    * get closed is by init:reboot).
    * So - just deselect them and let everything be as is. 
    * They get woken up in fd_start again, where the DriverData is
@@ -2779,6 +2776,11 @@ void sys_get_pid(char *buffer, size_t buffer_size){
     erts_snprintf(buffer, buffer_size, "%lu",(unsigned long) p);
 }
 
+int sys_get_hostname(char *buf, size_t size)
+{
+    return gethostname(buf, size);
+}
+
 void
 sys_init_io(void)
 {
@@ -2943,10 +2945,6 @@ sys_get_key(int fd)
 {
     ASSERT(fd == 0);
 
-    if (win_console) {
-        return ConGetKey();
-    }
-
     /*
      * Black magic follows. (Code stolen from get_overlapped_result())
      */
@@ -2970,6 +2968,32 @@ sys_get_key(int fd)
 		}
 		return key;
 	    }
+	}
+    }
+    else {
+	char c[64];
+	DWORD dwBytesRead, dwCurrentOutMode = 0, dwCurrentInMode = 0;
+
+	/* Get current console information */
+	GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &dwCurrentOutMode);
+	GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &dwCurrentInMode);
+
+	/* Set the a "oldstyle" terminal with line input that we can use ReadFile on */
+	SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), dwOriginalOutMode);
+	SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),
+		ENABLE_PROCESSED_INPUT |
+		ENABLE_LINE_INPUT |
+		ENABLE_ECHO_INPUT |
+		ENABLE_INSERT_MODE |
+		ENABLE_QUICK_EDIT_MODE |
+		ENABLE_AUTO_POSITION
+		);
+
+	if (ReadFile(GetStdHandle(STD_INPUT_HANDLE), &c, sizeof(c), &dwBytesRead, NULL) && dwBytesRead > 0) {
+	    /* Restore original console information */
+	    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), dwCurrentOutMode);
+	    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), dwCurrentInMode);
+	    return c[0];
 	}
     }
     return '*';		/* Error! */
@@ -3214,6 +3238,9 @@ thr_create_prepare_child(void *vtcdp)
     erts_sched_bind_atthrcreate_child(tcdp->sched_bind_data);
 }
 
+void erts_sys_scheduler_init(void) {
+    /* Nothing needed on Windows. */
+}
 
 void
 erts_sys_pre_init(void)
@@ -3242,7 +3269,9 @@ erts_sys_pre_init(void)
 #ifdef ERTS_ENABLE_LOCK_CHECK
     erts_lc_init();
 #endif
-
+#ifdef ERTS_DYN_LOCK_CHECK
+    erts_dlc_init();
+#endif
 
     erts_init_sys_time_sup();
 

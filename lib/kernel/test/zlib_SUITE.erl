@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2005-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@
        chunk_bench_zeroed/1, chunk_bench_rand/1]).
 
 %% Others
--export([smp/1, otp_9981/1, otp_7359/1]).
+-export([smp/1, otp_9981/1, otp_7359/1, checksum/1]).
 
 -define(m(Guard, Expression),
     fun() ->
@@ -72,7 +72,8 @@ all() ->
     [{group, api}, {group, examples}, {group, func},
      {group, bench}, smp,
      otp_9981,
-     otp_7359].
+     otp_7359,
+     checksum].
 
 groups() -> 
     [{api, [],
@@ -395,6 +396,7 @@ api_inflateReset(Config) when is_list(Config) ->
 api_inflate2(Config) when is_list(Config) ->
     Data = [<<1,2,2,3,3,3,4,4,4,4>>],
     Compressed = zlib:compress(Data),
+
     Z1 = zlib:open(),
     ?m(ok, zlib:inflateInit(Z1)),
     ?m([], zlib:inflate(Z1, <<>>)),
@@ -408,7 +410,20 @@ api_inflate2(Config) when is_list(Config) ->
     ?m(ok, zlib:inflateEnd(Z1)),
     ?m(ok, zlib:inflateInit(Z1)),
     ?m(?EXIT(data_error), zlib:inflate(Z1, <<2,1,2,1,2>>)),
-    ?m(ok, zlib:close(Z1)).
+    ?m(ok, zlib:close(Z1)),
+
+    %% OTP-17299: we failed to fully flush the zlib state if we ran out of
+    %% input and filled the internal output buffer at the same time.
+    EdgeCaseData = <<"gurka", 0:16384/integer-unit:8>>,
+    EdgeCaseZipped = zlib:zip(EdgeCaseData),
+    Z2 = zlib:open(),
+    ?m(ok, zlib:inflateInit(Z2, -15)),
+    Unzipped = iolist_to_binary(zlib:inflate(Z2, EdgeCaseZipped)),
+    ?m(EdgeCaseData, Unzipped),
+    ?m(ok, zlib:inflateEnd(Z2)),
+    ?m(ok, zlib:close(Z2)),
+
+    ok.
 
 %% Test inflate/3; same as inflate/2 but with the default options inverted.
 api_inflate3(Config) when is_list(Config) ->
@@ -1170,6 +1185,17 @@ otp_9981(Config) when is_list(Config) ->
     Ports = lists:sort(erlang:ports()),
     catch zlib:gunzip(Invalid),
     Ports = lists:sort(erlang:ports()),
+    ok.
+
+%% ERIERL-994: the Adler32 checksum returned by the dictionary functionality
+%% could be negative due to returning a signed instead of unsigned integer.
+checksum(Config) when is_list(Config) ->
+    Z = zlib:open(),
+    ok = zlib:deflateInit(Z),
+    TestVec = list_to_binary(lists:duplicate(16, 255)),
+    Chk = zlib:deflateSetDictionary(Z, TestVec),
+    true = Chk >= 0,
+    zlib:close(Z),
     ok.
 
 -define(BENCH_SIZE, (16 bsl 20)).

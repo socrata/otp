@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2002-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -40,6 +40,9 @@
 -define(SZ(X),                    ?LIB:sz(X)).
 -define(OSTYPE(),                 ?LIB:os_type()).
 -define(DISPLAY_SUITE_INFO(),     ?LIB:display_suite_info(?MODULE)).
+
+-define(EXPLICIT_INET_BACKEND(),  ?LIB:explicit_inet_backend()).
+-define(TEST_INET_BACKENDS(),     ?LIB:test_inet_backends()).
 
 
 %% - Test case macros - 
@@ -85,6 +88,8 @@
 %% - Process utility macros - 
 
 -define(FLUSH(),        ?LIB:flush_mqueue()).
+-define(MQUEUE(),       ?LIB:mqueue()).
+-define(MQUEUE(P),      ?LIB:mqueue(P)).
 -define(ETRAP_GET(),    ?LIB:trap_exit()).
 -define(ETRAP_SET(O),   ?LIB:trap_exit(O)).
 -define(PINFO(__P__),   try process_info(__P__)
@@ -98,9 +103,6 @@
 -define(PING(N),            ?LIB:ping(N)).
 -define(LNODES(),           ?LIB:local_nodes()).
 -define(NODES(H),           ?LIB:nodes_on(H)).
--define(START_NODE(N,A),    ?LIB:start_node(N,A)).
--define(STOP_NODE(N),       ?LIB:stop_node(N)).
-
 
 %% - Application and Crypto utility macros - 
 
@@ -153,3 +155,9 @@
 -define(FTS(),         snmp_misc:formated_timestamp()).
 -define(FTS(TS),       snmp_misc:format_timestamp(TS)).
 
+%% This needs to be a macro-definition to capture ?FUNCTION_NAME and ?MODULE.
+-define (START_PEER(Kind), ?CT_PEER(#{
+    name => ?CT_PEER_NAME(atom_to_list(?FUNCTION_NAME) ++ Kind),
+    args => ["-s", "snmp_test_sys_monitor", "start", "-s", "global", "sync"]
+})).
+-define(STOP_PEER(__P__), peer:stop(__P__)).

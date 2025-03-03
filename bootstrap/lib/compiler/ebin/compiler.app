@@ -1,7 +1,7 @@
 % This is an -*- erlang -*- file.
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,10 +19,11 @@
 
 {application, compiler,
  [{description, "ERTS  CXC 138 10"},
-  {vsn, "7.5.4"},
+  {vsn, "8.2.2"},
   {modules, [
 	     beam_a,
 	     beam_asm,
+             beam_bounds,
 	     beam_block,
              beam_call_types,
 	     beam_clean,
@@ -34,19 +35,19 @@
              beam_kernel_to_ssa,
 	     beam_listing,
 	     beam_opcodes,
-	     beam_peep,
              beam_ssa,
+             beam_ssa_bc_size,
              beam_ssa_bool,
              beam_ssa_bsm,
              beam_ssa_codegen,
              beam_ssa_dead,
-             beam_ssa_funs,
              beam_ssa_lint,
              beam_ssa_opt,
              beam_ssa_pp,
              beam_ssa_pre_codegen,
              beam_ssa_recv,
              beam_ssa_share,
+             beam_ssa_throw,
              beam_ssa_type,
 	     beam_trim,
              beam_types,
@@ -56,7 +57,6 @@
 	     cerl,
 	     cerl_clauses,
 	     cerl_inline,
-             cerl_sets,
 	     cerl_trees,
 	     compile,
 	     core_scan,
@@ -72,6 +72,7 @@
 	     sys_core_fold_lists,
 	     sys_core_inline,
 	     sys_core_prepare,
+	     sys_messages,
 	     sys_pre_attributes,
 	     v3_core,
 	     v3_kernel,
@@ -80,5 +81,5 @@
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, []},
-  {runtime_dependencies, ["stdlib-@OTP-15251@","kernel-@OTP-15251@","hipe-3.12","erts-@OTP-15251@",
-			  "crypto-3.6"]}]}.
+  {runtime_dependencies, ["stdlib-4.0","kernel-8.4","erts-13.0",
+			  "crypto-5.1"]}]}.

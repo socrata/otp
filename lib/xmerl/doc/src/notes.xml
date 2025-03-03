@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2004</year><year>2018</year>
+      <year>2004</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -31,6 +31,333 @@
   </header>
   <p>This document describes the changes made to the Xmerl application.</p>
 
+
+<section><title>Xmerl 1.3.34.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Corrected export functions from internal structure to XML
+	    so xmlText items of type cdata are handled correctly.
+	    They were just exported as normal text instead of output
+	    in a CDATA section.</p>
+          <p>
+	    Own Id: OTP-19217 Aux Id: ERIERL-1104 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.34</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Update all &lt;tt&gt; html tags to be &lt;code&gt;
+	    instead.</p>
+          <p>
+	    Own Id: OTP-18799 Aux Id: PR-7695 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.33</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The xmerl version 1.3.32 was released in OTP 26.0.1, but
+	    the incorrect version number of 1.3.31.1 was used for it.
+	    This incorrect version number continued to appear in OTP
+	    26.0.2, OTP 26.1, and OTP 26.1.1. The actual xmerl code
+	    in these OTP versions however corresponds to xmerl
+	    version 1.3.32.</p>
+          <p>
+	    Own Id: OTP-18803</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.32</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> New options to <c>xmerl_scan</c> and
+	    <c>xmerl_sax_parser</c> so one can limit the behaviour of
+	    the parsers to avoid some XML security issues. </p> <p>
+	    <c>xmerl_scan</c> gets one new option: </p> <taglist>
+	    <tag><c>{allow_entities, Boolean}</c></tag> <item>Gives
+	    the possibility to disallow entities by setting this
+	    option to false (<c>true</c> is default)</item>
+	    </taglist> <p> <c>xmerl_sax_parser</c> gets the following
+	    options: </p> <taglist>
+	    <tag><c>disallow_entities</c></tag> <item>Don't allow
+	    entities in document</item>
+	    <tag><c>{entity_recurse_limit, N}</c></tag> <item>Set a
+	    limit on entity recursion depth (default is 3)</item>
+	    <tag><c>{external_entities, AllowedType}</c></tag>
+	    <item>Specify which types of external entities that are
+	    allowed, this also affect external DTD's. The types are
+	    <c>all</c>(default), <c>file</c> and <c>none</c></item>
+	    <tag><c>{fail_undeclared_ref, Boolean}</c></tag>
+	    <item>Sets the behavior for undeclared references due to
+	    an external file is not parsed (<c>true</c> is
+	    default)</item> </taglist> <p> The old option
+	    <c>skip_external_dtd</c> is still valid and the same as
+	    <c>{external_entities, none}</c> and
+	    <c>{fail_undeclared_ref, false}</c> but just affects
+	    DTD's and not other external references. </p>
+          <p>
+	    Own Id: OTP-18595 Aux Id: ERIERL-944 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.31.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> New options to <c>xmerl_scan</c> and
+	    <c>xmerl_sax_parser</c> so one can limit the behaviour of
+	    the parsers to avoid some XML security issues. </p> <p>
+	    <c>xmerl_scan</c> gets one new option: </p> <taglist>
+	    <tag>{allow_entities, Boolean}</tag> <item>Gives the
+	    possibility to disallow entities by setting this option
+	    to false (<c>true</c> is default)</item> </taglist> <p>
+	    <c>xmerl_sax_parser</c> gets the following options: </p>
+	    <taglist> <tag><c>disallow_entities</c></tag> <item>Don't
+	    allow entities in document</item>
+	    <tag><c>{entity_recurse_limit, N}</c></tag> <item>Set a
+	    limit on entity recursion depth (default is 3)</item>
+	    <tag><c>{external_entities, AllowedType}</c></tag>
+	    <item>Specify which types of external entities that are
+	    allowed, this also affect external DTD's. The types are
+	    <c>all</c>(default), <c>file</c> and <c>none</c></item>
+	    <tag><c>{fail_undeclared_ref, Boolean}</c></tag>
+	    <item>Sets the behavior for undeclared references due to
+	    an external file is not parsed (<c>true</c> is
+	    default)</item> </taglist> <p> The old option
+	    <c>skip_external_dtd</c> is still valid and the same as
+	    <c>{external_entities, none}</c> and
+	    <c>{fail_undeclared_ref, false}</c> but just affects
+	    DTD's and not other external references. </p>
+          <p>
+	    Own Id: OTP-18595 Aux Id: ERIERL-944 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.31</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Replace size/1 with either tuple_size/1 or byte_size/1</p>
+          <p>
+	    The <c>size/1</c> BIF is not optimized by the JIT, and
+	    its use can result in worse types for Dialyzer.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    tuple, <c>tuple_size/1</c> should always be preferred.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    binary, <c>byte_size/1</c> should be preferred. However,
+	    <c>byte_size/1</c> also accepts a bitstring (rounding up
+	    size to a whole number of bytes), so one must make sure
+	    that the call to <c>byte_size/</c> is preceded by a call
+	    to <c>is_binary/1</c> to ensure that bitstrings are
+	    rejected. Note that the compiler removes redundant calls
+	    to <c>is_binary/1</c>, so if one is not sure whether
+	    previous code had made sure that the argument is a
+	    binary, it does not harm to add an <c>is_binary/1</c>
+	    test immediately before the call to <c>byte_size/1</c>.</p>
+          <p>
+	    Own Id: OTP-18432 Aux Id:
+	    GH-6672,PR-6793,PR-6784,PR-6787,PR-6785,PR-6682,PR-6800,PR-6797,PR-6798,PR-6799,PR-6796,PR-6813,PR-6671,PR-6673,PR-6684,PR-6694,GH-6677,PR-6696,PR-6670,PR-6674 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.30</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>There is a new configure option,
+	    <c>--enable-deterministic-build</c>, which will apply the
+	    <c>deterministic</c> compiler option when building
+	    Erlang/OTP. The <c>deterministic</c> option has been
+	    improved to eliminate more sources of non-determinism in
+	    several applications.</p>
+          <p>
+	    Own Id: OTP-18165 Aux Id: PR-5965 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.29</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Fixed misspellings in both documentation, comments and
+	    code (internal data structures).</p>
+          <p>
+	    Own Id: OTP-17935 Aux Id: PR-5590 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.28.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> New options to <c>xmerl_scan</c> and
+	    <c>xmerl_sax_parser</c> so one can limit the behaviour of
+	    the parsers to avoid some XML security issues. </p> <p>
+	    <c>xmerl_scan</c> gets one new option: </p> <taglist>
+	    <tag>{allow_entities, Boolean}</tag> <item>Gives the
+	    possibility to disallow entities by setting this option
+	    to false (<c>true</c> is default)</item> </taglist> <p>
+	    <c>xmerl_sax_parser</c> gets the following options: </p>
+	    <taglist> <tag><c>disallow_entities</c></tag> <item>Don't
+	    allow entities in document</item>
+	    <tag><c>{entity_recurse_limit, N}</c></tag> <item>Set a
+	    limit on entity recursion depth (default is 3)</item>
+	    <tag><c>{external_entities, AllowedType}</c></tag>
+	    <item>Specify which types of external entities that are
+	    allowed, this also affect external DTD's. The types are
+	    <c>all</c>(default), <c>file</c> and <c>none</c></item>
+	    <tag><c>{fail_undeclared_ref, Boolean}</c></tag>
+	    <item>Sets the behavior for undeclared references due to
+	    an external file is not parsed (<c>true</c> is
+	    default)</item> </taglist> <p> The old option
+	    <c>skip_external_dtd</c> is still valid and the same as
+	    <c>{external_entities, none}</c> and
+	    <c>{fail_undeclared_ref, false}</c> but just affects
+	    DTD's and not other external references. </p>
+          <p>
+	    Own Id: OTP-18595 Aux Id: ERIERL-944 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.28</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed a bug that could cause parsing to crash.</p>
+          <p>
+	    Own Id: OTP-17388 Aux Id: OTP-17123 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.27.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> New options to <c>xmerl_scan</c> and
+	    <c>xmerl_sax_parser</c> so one can limit the behaviour of
+	    the parsers to avoid some XML security issues. </p> <p>
+	    <c>xmerl_scan</c> gets one new option: </p> <taglist>
+	    <tag><c>{allow_entities, Boolean}</c></tag> <item>Gives
+	    the possibility to disallow entities by setting this
+	    option to false (<c>true</c> is default)</item>
+	    </taglist> <p> <c>xmerl_sax_parser</c> gets the following
+	    options: </p> <taglist>
+	    <tag><c>disallow_entities</c></tag> <item>Don't allow
+	    entities in document</item>
+	    <tag><c>{entity_recurse_limit, N}</c></tag> <item>Set a
+	    limit on entity recursion depth (default is 3)</item>
+	    <tag><c>{external_entities, AllowedType}</c></tag>
+	    <item>Specify which types of external entities that are
+	    allowed, this also affect external DTD's. The types are
+	    <c>all</c>(default), <c>file</c> and <c>none</c></item>
+	    <tag><c>{fail_undeclared_ref, Boolean}</c></tag>
+	    <item>Sets the behavior for undeclared references due to
+	    an external file is not parsed (<c>true</c> is
+	    default)</item> </taglist> <p> The old option
+	    <c>skip_external_dtd</c> is still valid and the same as
+	    <c>{external_entities, none}</c> and
+	    <c>{fail_undeclared_ref, false}</c> but just affects
+	    DTD's and not other external references. </p>
+          <p>
+	    Own Id: OTP-18595 Aux Id: ERIERL-944 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.27</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed the bug that Xmerl SAX parser couldn't handle files
+	    ending with a ^M.</p>
+          <p>
+	    Own Id: OTP-17308</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Xmerl 1.3.26</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Corrected namespace and expanded name in the old dom
+	    backend example module.</p>
+          <p>
+	    Own Id: OTP-17060</p>
+        </item>
+        <item>
+          <p>
+	    Corrected a bug that in some cases didn't allow
+	    unresolved references when skip_external_dtd option used.</p>
+          <p>
+	    Own Id: OTP-17061</p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Xmerl 1.3.25</title>
 

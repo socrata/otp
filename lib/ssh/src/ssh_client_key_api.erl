@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@
 %%% in the argument Host with the port Port.
 %%%
 %%% Due to compatibility reasons, the OTP/SSH application first
-%%% trys add_host_key/4 and then the old add_host_key/3
+%%% tries add_host_key/4 and then the old add_host_key/3
 
 -callback add_host_key(Host :: inet:ip_address() | inet:hostname()
                              | [inet:ip_address() | inet:hostname()],

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2006-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -2827,6 +2827,42 @@ do_send_segmented_msg_ooo1([MgcNode, MgNode]) ->
     d("[MG] start the simulation"),
     {ok, MgId} = megaco_test_megaco_generator:exec(Mg, MgEvSeq),
 
+    %% Await MGC ready for segments
+    d("await MGC trigger event"),
+    MgcPid = 
+	receive
+	    {ready_for_segmented_msg, mgc, Pid1} ->
+		d("received MGC trigger event"),
+		Pid1
+	after 5000 ->
+		d("timeout waiting for MGC trigger event: ~p", 
+		  [megaco_test_lib:flush()]),
+		?ERROR(timeout_MGC_trigger_event)
+	end,
+
+    %% Await MG ready for segments
+    d("await MG trigger event"),
+    MgPid = 
+	receive
+	    {ready_for_segmented_msg, mg, Pid2} ->
+		d("received MG trigger event"),
+		Pid2
+	after 5000 ->
+		d("timeout waiting for MG trigger event: ~p", 
+		  [megaco_test_lib:flush()]),
+		?ERROR(timeout_MG_trigger_event)
+	end,
+
+    %% Instruct the MG to continue
+    d("send continue to MG"),
+    MgPid ! {continue_with_segmented_msg, self()}, 
+
+    sleep(500),
+
+    %% Instruct the MGC to continue
+    d("send continue to MGC"),
+    MgcPid ! {continue_with_segmented_msg, self()}, 
+
     d("await the generator reply(s)"),
     await_completion([MgcId, MgId]),
 
@@ -2853,6 +2889,8 @@ ssmo1_mgc_event_sequence(text, tcp) ->
     Mid       = {deviceName,"mgc"},
     ScrVerifyFun     = ssmo1_mgc_verify_service_change_req_msg_fun(),
     ServiceChangeRep = ssmo1_mgc_service_change_reply_msg(Mid, 1),
+    AnnounceReadySegs = ssmo1_mgc_announce_ready_for_segmented_msg_fun(),
+    AwaitContinueSegs = ssmo1_mgc_continue_with_segmented_msg_fun(),
     TermId1   = 
 	#megaco_term_id{id = ["00000000","00000000","00000001"]},
     CtxId1    = 1, 
@@ -2923,7 +2961,13 @@ ssmo1_mgc_event_sequence(text, tcp) ->
 	     {expect_accept, any},
              {expect_receive, "service-change-request",  {ScrVerifyFun, 5000}},
              {send, "service-change-reply",              ServiceChangeRep},
-	     {expect_nothing, 1000}, 
+
+             {trigger, "announce ready for segmented message",
+              AnnounceReadySegs},
+             {trigger, "await continue for segmented message",
+              AwaitContinueSegs},
+
+	     %% {expect_nothing, 1000}, 
              {send, "notify request",                    NotifyReq},
              {expect_receive, "notify reply: segment 1", {NrVerifyFun1, 1000}},
              {expect_receive, "notify reply: segment 2", {NrVerifyFun2, 1000}},
@@ -3051,6 +3095,23 @@ ssmo1_mgc_verify_service_change_req(#'MegacoMessage'{mess = Mess} = M) ->
 	    {ok, M};
 	_ ->
 	    {error, {invalid_serviceChangeParms, Parms}}
+    end.
+
+ssmo1_mgc_announce_ready_for_segmented_msg_fun() ->
+    TC = self(),
+    fun() ->
+            TC ! {ready_for_segmented_msg, mgc, self()}
+    end.
+
+ssmo1_mgc_continue_with_segmented_msg_fun() ->
+    TC = self(),
+    fun() ->
+            p("[MGC] await continue with segmented message"),
+            receive
+                {continue_with_segmented_msg, TC} ->
+                    p("[MGC] received continue with segmented message"),
+                    ok
+            end
     end.
 
 ssmo1_mgc_verify_notify_reply_segment_msg_fun(SN, Last, 
@@ -3219,6 +3280,8 @@ ssmo1_mg_event_sequence(text, tcp) ->
     ConnectVerify = ssmo1_mg_verify_handle_connect_fun(),
     ServiceChangeReq = ssmo1_mg_service_change_request_ar(Mid, 1),
     ServiceChangeReplyVerify = ssmo1_mg_verify_service_change_reply_fun(),
+    AnnounceReadySegs = ssmo1_mg_announce_ready_for_segmented_msg_fun(),
+    AwaitContinueSegs = ssmo1_mg_continue_with_segmented_msg_fun(),
     Tid1 = #megaco_term_id{id = ["00000000","00000000","00000001"]},
     Tid2 = #megaco_term_id{id = ["00000000","00000000","00000002"]},
     Tid3 = #megaco_term_id{id = ["00000000","00000000","00000003"]},
@@ -3247,8 +3310,13 @@ ssmo1_mg_event_sequence(text, tcp) ->
              {megaco_callback, handle_trans_reply, ServiceChangeReplyVerify},
 	     {megaco_update_conn_info, protocol_version, ?VERSION}, 
 	     {megaco_update_conn_info, segment_send,     3}, 
-	     {megaco_update_conn_info, max_pdu_size,     128}, 
-             {sleep, 1000},
+	     {megaco_update_conn_info, max_pdu_size,     128},
+
+             {trigger, "announce ready for segmented message",
+              AnnounceReadySegs},
+             {trigger, "await continue for segmented message",
+              AwaitContinueSegs},
+
              {megaco_callback, handle_trans_request, NotifyReqVerify},
              {megaco_callback, handle_trans_ack,     AckVerify, 15000},
              megaco_stop_user,
@@ -3256,7 +3324,6 @@ ssmo1_mg_event_sequence(text, tcp) ->
              {sleep, 1000}
             ],
     EvSeq.
-
 
 ssmo1_mg_verify_handle_connect_fun() ->
     fun(Ev) -> ssmo1_mg_verify_handle_connect(Ev) end.
@@ -3331,6 +3398,23 @@ ssmo1_mg_do_verify_scr(AR) ->
 	_ ->
 	    Reason6 = {invalid_service_change_result, SCRParm},
 	    {error, Reason6, ok}
+    end.
+
+ssmo1_mg_announce_ready_for_segmented_msg_fun() ->
+    TC = self(),
+    fun() ->
+            TC ! {ready_for_segmented_msg, mg, self()}
+    end.
+
+ssmo1_mg_continue_with_segmented_msg_fun() ->
+    TC = self(),
+    fun() ->
+            p("[MG] await continue with segmented message"),
+            receive
+                {continue_with_segmented_msg, TC} ->
+                    p("[MG] received continue with segmented message"),
+                    ok
+            end
     end.
 
 ssmo1_mg_verify_notify_request_fun(Tids) ->
@@ -5010,14 +5094,15 @@ recv_segmented_msg_plain(Config) when is_list(Config) ->
                   ok = ?START_NODES(Nodes),
                   Nodes
           end,
-    Case = fun do_recv_segmented_msg_plain/1,
+    Case = fun(Nodes) -> do_recv_segmented_msg_plain(Config, Nodes) end,
     Post = fun(Nodes) ->
                    d("stop nodes"),
                    ?STOP_NODES(lists:reverse(Nodes))
            end,
     try_tc(rsmp, Pre, Case, Post).
 
-do_recv_segmented_msg_plain([MgcNode, MgNode]) ->
+do_recv_segmented_msg_plain(Config,
+                            [MgcNode, MgNode]) ->
 
     d("[MGC] start the simulator "),
     {ok, Mgc} = megaco_test_tcp_generator:start_link("MGC", MgcNode),
@@ -5038,7 +5123,8 @@ do_recv_segmented_msg_plain([MgcNode, MgNode]) ->
     {ok, Mg} = megaco_test_megaco_generator:start_link("MG", MgNode),
 
     d("[MG] create the event sequence"),
-    MgEvSeq = rsmp_mg_event_sequence(text, tcp),
+    MgEvSeq = rsmp_mg_event_sequence(Config,
+                                     text, tcp),
 
     i("wait some time before starting the MG simulation"),
     sleep(1000),
@@ -5457,7 +5543,8 @@ rsmp_mgc_notify_reply_msg(SN, Mid, TransId, Cid, TermId) ->
 %%
 %% MG generator stuff
 %%
-rsmp_mg_event_sequence(text, tcp) ->
+rsmp_mg_event_sequence(Config,
+                       text, tcp) ->
     Mid = {deviceName,"mg"},
     RI = [
           {port,             2944},
@@ -5479,7 +5566,7 @@ rsmp_mg_event_sequence(text, tcp) ->
     EvSeq = [
              {debug, true},
              %% {megaco_trace, disable},
-             {megaco_trace, max},
+             ?MEGACO_TRACE(Config, max), % {megaco_trace, max},
              megaco_start,
              {megaco_start_user, Mid, RI, []},
              start_transport,
@@ -5686,14 +5773,15 @@ recv_segmented_msg_ooo_seg(Config) when is_list(Config) ->
                   ok = ?START_NODES(Nodes),
                   Nodes
           end,
-    Case = fun do_recv_segmented_msg_ooo_seg/1,
+    Case = fun(Nodes) -> do_recv_segmented_msg_ooo_seg(Config, Nodes) end,
     Post = fun(Nodes) ->
                    d("stop nodes"),
                    ?STOP_NODES(lists:reverse(Nodes))
            end,
     try_tc(rsmos, Pre, Case, Post).
 
-do_recv_segmented_msg_ooo_seg([MgcNode, MgNode]) ->
+do_recv_segmented_msg_ooo_seg(Config,
+                              [MgcNode, MgNode]) ->
 
     d("[MGC] start the simulator "),
     {ok, Mgc} = megaco_test_tcp_generator:start_link("MGC", MgcNode),
@@ -5714,7 +5802,8 @@ do_recv_segmented_msg_ooo_seg([MgcNode, MgNode]) ->
     {ok, Mg} = megaco_test_megaco_generator:start_link("MG", MgNode),
 
     d("[MG] create the event sequence"),
-    MgEvSeq = rsmos_mg_event_sequence(text, tcp),
+    MgEvSeq = rsmos_mg_event_sequence(Config,
+                                      text, tcp),
 
     i("wait some time before starting the MG simulation"),
     sleep(1000),
@@ -6127,7 +6216,8 @@ rsmos_mgc_notify_reply_msg(SN, Mid, TransId, Cid, TermId) ->
 %%
 %% MG generator stuff
 %%
-rsmos_mg_event_sequence(text, tcp) ->
+rsmos_mg_event_sequence(Config,
+                        text, tcp) ->
     Mid = {deviceName,"mg"},
     RI = [
           {port,             2944},
@@ -6150,7 +6240,7 @@ rsmos_mg_event_sequence(text, tcp) ->
     EvSeq = [
              {debug, true},
              %% {megaco_trace, disable},
-             {megaco_trace, max},
+             ?MEGACO_TRACE(Config, max), % {megaco_trace, max},
              megaco_start,
              {megaco_start_user, Mid, RI, []},
              start_transport,
@@ -7912,6 +8002,9 @@ try_tc(TCName, Name, Verbosity, Pre, Case, Post) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+p(F) ->
+    p(F, []).
 
 p(F, A) ->
     io:format("*** [~s] ~p ***"

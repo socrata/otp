@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(beam_ssa_SUITE).
+-feature(maybe_expr, enable).
 
 -export([all/0,suite/0,groups/0,init_per_suite/1,end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
@@ -25,7 +26,9 @@
          cover_ssa_dead/1,combine_sw/1,share_opt/1,
          beam_ssa_dead_crash/1,stack_init/1,
          mapfoldl/0,mapfoldl/1,
-         grab_bag/1,coverage/1]).
+         grab_bag/1,redundant_br/1,
+         coverage/1,normalize/1,
+         trycatch/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
@@ -45,7 +48,10 @@ groups() ->
        beam_ssa_dead_crash,
        stack_init,
        grab_bag,
-       coverage
+       redundant_br,
+       coverage,
+       normalize,
+       trycatch
       ]}].
 
 init_per_suite(Config) ->
@@ -178,7 +184,7 @@ recv(_Config) ->
     self() ! 1,
     {1,yes} = tricky_recv_2(),
     self() ! 2,
-    {2,maybe} = tricky_recv_2(),
+    {2,'maybe'} = tricky_recv_2(),
 
     %% Test 'receive after infinity' in try/catch.
     Pid = spawn(fun recv_after_inf_in_try/0),
@@ -282,7 +288,7 @@ tricky_recv_2() ->
                 end,
             a;
         X=2 ->
-            Y = maybe,
+            Y = 'maybe',
             b
     end,
     {X,Y}.
@@ -440,12 +446,96 @@ recv_coverage_2() ->
 
 maps(_Config) ->
     {'EXIT',{{badmatch,#{}},_}} = (catch maps_1(any)),
+
+    {jkl,nil,nil} = maps_2(#{abc => 0, jkl => 0}),
+    {def,ghi,abc} = maps_2(#{abc => 0, def => 0}),
+    {def,ghi,jkl} = maps_2(#{def => 0, jkl => 0}),
+    {mno,nil,abc} = maps_2(#{abc => 0, mno => 0, jkl => 0}),
+    {jkl,nil,nil} = maps_2(#{jkl => 0}),
+    error = maps_2(#{}),
+
+    [] = maps_3(),
+
     ok.
 
 maps_1(K) ->
     _ = id(42),
     #{K:=V} = #{},
     V.
+
+maps_2(Map) ->
+    Res = maps_2a(Map),
+    Res = maps_2b(Map),
+    Res.
+
+maps_2a(#{} = Map) ->
+    case case Abc = is_map_key(abc, Map) of
+             false -> false;
+             _ -> is_map_key(def, Map)
+         end of
+        true ->
+            {def, ghi, abc};
+        false ->
+            case case Jkl = is_map_key(jkl, Map) of
+                     false -> false;
+                     _ -> is_map_key(def, Map)
+                 end of
+                true ->
+                    {def, ghi, jkl};
+                false ->
+                    case case Abc of
+                             false -> false;
+                             _ -> is_map_key(mno, Map)
+                         end of
+                        true ->
+                            {mno, nil, abc};
+                        false ->
+                            case Jkl of
+                                true -> {jkl, nil, nil};
+                                false -> error
+                            end
+                    end
+            end
+    end.
+
+maps_2b(#{}=Map) ->
+    case case is_map_key(abc, Map) of
+             false -> false;
+             _ -> is_map_key(def, Map)
+         end of
+        true ->
+            {def, ghi, abc};
+        false ->
+            case case is_map_key(jkl, Map) of
+                     false -> false;
+                     _ -> is_map_key(def, Map)
+                 end of
+                true ->
+                    {def, ghi, jkl};
+                false ->
+                    case case is_map_key(abc, Map) of
+                             false -> false;
+                             _ -> is_map_key(mno, Map)
+                         end of
+                        true ->
+                            {mno, nil, abc};
+                        false ->
+                            case is_map_key(jkl, Map) of
+                                true -> {jkl, nil, nil};
+                                false -> error
+                            end
+                    end
+            end
+    end.
+
+%% Cover code in beam_ssa_codegen.
+maps_3() ->
+    [] = case #{} of
+             #{ok := {}} ->
+                 ok;
+             _ ->
+                 []
+         end -- [].
 
 -record(wx_ref, {type=any_type,ref=any_ref}).
 
@@ -594,6 +684,7 @@ do_comb_sw_2(X) ->
 share_opt(_Config) ->
     ok = do_share_opt_1(0),
     ok = do_share_opt_2(),
+    ok = do_share_opt_3(),
     ok.
 
 do_share_opt_1(A) ->
@@ -624,7 +715,16 @@ sopt_2({Flags, Opts}, ok) ->
         [] ->
             ok
     end.
-    
+
+do_share_opt_3() ->
+    true = sopt_3(id(ok)),
+    false = sopt_3(id(nok)),
+    ok.
+
+sopt_3(X) ->
+    %% Must be one line to trigger bug.
+    case X of ok -> id(?LINE), true; _ -> id(?LINE), false end.
+
 beam_ssa_dead_crash(_Config) ->
     not_A_B = do_beam_ssa_dead_crash(id(false), id(true)),
     not_A_not_B = do_beam_ssa_dead_crash(false, false),
@@ -639,7 +739,7 @@ do_beam_ssa_dead_crash(A, B) ->
     %% paths happens to end up in the same place.
     %%
     %% During the simulated execution of this function, the boolean
-    %% varible for a `br` instruction would be replaced with the
+    %% variable for a `br` instruction would be replaced with the
     %% literal atom `nil`, which is not allowed, and would crash the
     %% compiler. In practice, during the actual execution, control
     %% would never be transferred to that `br` instruction when the
@@ -799,6 +899,17 @@ grab_bag(_Config) ->
 
     fact = grab_bag_17(),
 
+    {'EXIT',{{try_clause,[]},[_|_]}} = catch grab_bag_18(),
+
+    {'EXIT',{{badmatch,[whatever]},[_|_]}} = catch grab_bag_19(),
+
+    {'EXIT',{if_clause,[_|_]}} = catch grab_bag_20(),
+
+    6 = grab_bag_21(id(64)),
+    {'EXIT',{badarith,_}} = catch grab_bag_21(id(a)),
+
+    false = grab_bag_22(),
+
     ok.
 
 grab_bag_1() ->
@@ -860,7 +971,7 @@ grab_bag_4() ->
             end
     end.
 
-grab_bag_5(A, B) when <<business:(node(power))>> ->
+grab_bag_5(_A, _B) when <<business:(node(power))>> ->
     true.
 
 grab_bag_6(face) ->
@@ -924,7 +1035,7 @@ grab_bag_11() ->
         _ -> other
     catch
         _:_ ->
-            catched
+            caught
     end.
 
 grab_bag_12() ->
@@ -1011,6 +1122,96 @@ grab_bag_17() ->
             []
     end.
 
+grab_bag_18() ->
+    try 0 of
+        _V0 ->
+            bnot false
+    after
+        try [] of
+            wrong ->
+                ok
+        catch
+            _:_ when false ->
+                error
+        end
+    end.
+
+grab_bag_19() ->
+    ([<<bad/utf8>>] =
+         %% beam_ssa_pre_codegen would produce single-valued phi
+         %% nodes, which in turn would cause the constant propagation
+         %% in beam_ssa_codegen:prefer_xregs/2 to produce get_hd and
+         %% get_tl instructions with literal operands.
+         try
+             [whatever]
+         catch
+             _:_ when false ->
+                 ok
+         end) ! (some_atom ++ <<>>).
+
+grab_bag_20() ->
+    %% Similarly to grab_bag_19, beam_ssa_pre_codegen would produce
+    %% single-valued phi nodes. The fix for grab_bag_19 would not
+    %% suffice because several phi nodes were involved.
+    {[_ | _] =
+         receive
+             list ->
+                 "list";
+             1 when day ->
+                 []
+         after
+             0 ->
+                 if
+                     false ->
+                         error
+                 end
+         end,
+     try
+         ok
+     catch
+         error:_ ->
+             error
+     end}.
+
+%% With the `no_copt` and `no_ssa_opt` options, an internal
+%% consistency error would be reported:
+%%
+%% Internal consistency check failed - please report this bug.
+%% Instruction: {test_heap,2,2}
+%% Error:       {{x,0},not_live}:
+grab_bag_21(A) ->
+    _ = id(0),
+    grab_bag_21(ok, A div 10, node(), [-1]).
+
+grab_bag_21(_, D, _, _) ->
+    D.
+
+%% GH-7128: With optimizations disabled, the code would fail to
+%% load with the following message:
+%%
+%%    beam/beam_load.c(367): Error loading function
+%%      beam_ssa_no_opt_SUITE:grab_bag_22/0: op get_list: Sdd:
+%%         bad tag 2 for destination
+grab_bag_22() ->
+    maybe
+        [_ | _] ?= ((true xor true) andalso foo),
+        bar ?= id(42)
+    end.
+
+redundant_br(_Config) ->
+    {false,{x,y,z}} = redundant_br_1(id({x,y,z})),
+    {true,[[a,b,c]]} = redundant_br_1(id([[[a,b,c]]])),
+    ok.
+
+redundant_br_1(Specs0) ->
+    {Join,Specs} =
+        if
+            is_list(hd(hd(Specs0))) -> {true,hd(Specs0)};
+            true -> {false,Specs0}
+        end,
+    id({Join,Specs}).
+
+-record(coverage, {name}).
 
 coverage(_Config) ->
 
@@ -1027,6 +1228,10 @@ coverage(_Config) ->
     {'EXIT',{{badmatch,$T},_}} = (catch coverage_1()),
 
     error = coverage_2(),
+    ok = coverage_3(),
+    #coverage{name=whatever} = coverage_4(),
+    {'EXIT',{{badrecord,ok},_}} = catch coverage_5(),
+
     ok.
 
 coverage_1() ->
@@ -1035,6 +1240,172 @@ coverage_1() ->
 coverage_2() when << []:<<0/native>> >> -> ok;
 coverage_2() -> error.
 
+coverage_3() ->
+    %% Cover a line in beam_ssa_pre_codegen:need_frame_1/2.
+    get(),
+    ok.
+
+coverage_4() ->
+    try
+        << <<42>> || false >>,
+        #coverage{}
+    catch
+        _:_ ->
+            error
+    end#coverage{name = whatever}.
+
+coverage_5() ->
+    try
+        << <<42>> || false >>,
+        ok
+    catch
+        _:_ ->
+            error
+    end#coverage{name = whatever}.
+
+%% Test beam_ssa:normalize/1, especially that argument types are
+%% correctly updated when arguments are swapped.
+normalize(_Config) ->
+    normalize_commutative({bif,'band'}),
+    normalize_commutative({bif,'+'}),
+
+    normalize_noncommutative({bif,'div'}),
+
+    ok.
+
+-record(b_var, {name}).
+-record(b_literal, {val}).
+
+normalize_commutative(Op) ->
+    A = #b_var{name=a},
+    B = #b_var{name=b},
+    Lit = #b_literal{val=42},
+
+    normalize_same(Op, [A,B]),
+    normalize_same(Op, [A,Lit]),
+
+    normalize_swapped(Op, [Lit,A]),
+
+    ok.
+
+normalize_noncommutative(Op) ->
+    A = #b_var{name=a},
+    B = #b_var{name=b},
+    Lit = #b_literal{val=42},
+
+    normalize_same(Op, [A,B]),
+    normalize_same(Op, [A,Lit]),
+
+    ArgTypes0 = [{1,beam_types:make_integer(0, 1023)}],
+    I1 = make_bset(ArgTypes0, Op, [Lit,A]),
+    I1 = beam_ssa:normalize(I1),
+
+    ok.
+
+normalize_same(Op, Args) ->
+    I0 = make_bset(#{}, Op, Args),
+    I0 = beam_ssa:normalize(I0),
+
+    ArgTypes0 = [{0,beam_types:make_integer(0, 1023)}],
+    I1 = make_bset(ArgTypes0, Op, Args),
+    I1 = beam_ssa:normalize(I1),
+
+    case Args of
+        [#b_var{},#b_var{}] ->
+            ArgTypes1 = [{0,beam_types:make_integer(0, 1023)},
+                         {1,beam_types:make_integer(42)}],
+            I2 = make_bset(ArgTypes1, Op, Args),
+            I2 = beam_ssa:normalize(I2);
+        [_,_] ->
+            ok
+    end,
+
+    ok.
+
+normalize_swapped(Op, [#b_literal{}=Lit,#b_var{}=Var]=Args) ->
+    EmptyAnno = #{},
+    I0 = make_bset(EmptyAnno, Op, Args),
+    {b_set,EmptyAnno,#b_var{name=1000},Op,[Var,Lit]} = beam_ssa:normalize(I0),
+
+    EmptyTypes = #{arg_types => #{}},
+    I1 = make_bset(EmptyTypes, Op, Args),
+    {b_set,EmptyTypes,#b_var{name=1000},Op,[Var,Lit]} = beam_ssa:normalize(I1),
+
+    IntRange = beam_types:make_integer(0, 1023),
+    ArgTypes0 = [{1,IntRange}],
+    I2 = make_bset(ArgTypes0, Op, Args),
+    {[{0,IntRange}],Op,[Var,Lit]} = unpack_bset(beam_ssa:normalize(I2)),
+
+    LitType = beam_types:make_type_from_value(Lit),
+
+    ArgTypes1 = [{0,LitType}],
+    I3 = make_bset(ArgTypes1, Op, Args),
+    {[],Op,[Var,Lit]} = unpack_bset(beam_ssa:normalize(I3)),
+
+    ArgTypes2 = [{0,LitType},{1,IntRange}],
+    I4 = make_bset(ArgTypes1, Op, Args),
+    {[],Op,[Var,Lit]} = unpack_bset(beam_ssa:normalize(I4)),
+
+    ok.
+
+make_bset(ArgTypes, Op, Args) when is_list(ArgTypes) ->
+    Anno = #{arg_types => maps:from_list(ArgTypes)},
+    {b_set,Anno,#b_var{name=1000},Op,Args};
+make_bset(Anno, Op, Args) when is_map(Anno) ->
+    {b_set,Anno,#b_var{name=1000},Op,Args}.
+
+unpack_bset({b_set,Anno,{b_var,1000},Op,Args}) ->
+    ArgTypes = maps:get(arg_types, Anno, #{}),
+    {lists:sort(maps:to_list(ArgTypes)),Op,Args}.
+
+trycatch(_Config) ->
+    8 = trycatch_1(),
+
+    ok = trycatch_2(id(ok)),
+    ok = trycatch_2(id(z)),
+
+    false = trycatch_3(id(42)),
+
+    ok.
+
+trycatch_1() ->
+    try B = (A = bit_size(iolist_to_binary("a"))) rem 1 of
+        _ ->
+            A;
+        _ ->
+            B
+    after
+        ok
+    end.
+
+trycatch_2(A) ->
+    try not (B = (ok >= A)) of
+        B ->
+            iolist_size(maybe
+                            [] ?= B,
+                            <<>> ?= list_to_binary(ok)
+                        end);
+        _ ->
+            ok
+    after
+        ok
+    end.
+
+trycatch_3(A) ->
+    try erlang:bump_reductions(A) of
+        B ->
+            try not (C = (B andalso is_number(ok))) of
+                C ->
+                    ok andalso ok;
+                _ ->
+                    C
+            catch
+                _ ->
+                    ok
+            end
+    after
+        ok
+    end.
 
 %% The identity function.
 id(I) -> I.

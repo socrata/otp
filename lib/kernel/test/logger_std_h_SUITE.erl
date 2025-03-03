@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,8 +51,7 @@
 -define(domain,#{domain=>[?MODULE]}).
 
 suite() ->
-    [{timetrap,{seconds,30}},
-     {ct_hooks,[logger_test_lib]}].
+    [{timetrap,{seconds,30}}].
 
 init_per_suite(Config) ->
     timer:start(),                              % to avoid progress report
@@ -318,7 +317,7 @@ formatter_fail(Config) ->
     Dir = ?config(priv_dir,Config),
     Log = filename:join(Dir,?FUNCTION_NAME),
 
-    logger:set_primary_config(level,all),
+    logger:set_primary_config(level,notice),
 
     %% no formatter
     ok = logger:add_handler(?MODULE,
@@ -405,7 +404,7 @@ config_fail(_Config) ->
         logger:set_handler_config(?MODULE, config,
                                   #{filesync_rep_int => 2000}),
 
-    %% Read-only fields may (accidentially) be included in the change,
+    %% Read-only fields may (accidentally) be included in the change,
     %% but it won't take effect
     {ok,C} = logger:get_handler_config(?MODULE),
     ok = logger:set_handler_config(?MODULE,config,#{olp=>dummyvalue}),
@@ -813,15 +812,17 @@ sync(Config) ->
     timer:sleep(?IDLE_DETECT_TIME*2),
     logger:notice("fourth", ?domain),
     %% wait for automatic filesync
-    check_tracer(?IDLE_DETECT_TIME*2),
+    timer:sleep(?IDLE_DETECT_TIME*2),
+
+    check_tracer(1000),
 
     %% switch repeated filesync on and verify that the looping works
     SyncInt = 1000,
     WaitT = 4500,
-    OneSync = {logger_h_common,handle_cast,repeated_filesync},
+    OneSync = {logger_h_common,handle_info,{timeout,repeated_filesync}},
     %% receive 1 repeated_filesync per sec
-    start_tracer([{{logger_h_common,handle_cast,2},
-                   [{[repeated_filesync,'_'],[],[]}]}],
+    start_tracer([{{logger_h_common,handle_info,2},
+                   [{[{timeout,'_',repeated_filesync},'_'],[],[]}]}],
                  [OneSync || _ <- lists:seq(1, trunc(WaitT/SyncInt))]),
 
     ok = logger:update_handler_config(?MODULE, config,
@@ -834,14 +835,14 @@ sync(Config) ->
     check_tracer(100),
     ok.
 sync(cleanup, _Config) ->
-    dbg:stop_clear(),
+    stop_clear(),
     logger:remove_handler(?MODULE).
 
 write_failure(Config) ->
     Dir = ?config(priv_dir, Config),
     File = lists:concat([?MODULE,"_",?FUNCTION_NAME,".log"]),
     Log = filename:join(Dir, File),
-    Node = start_std_h_on_new_node(Config, Log),
+    {Peer, Node} = start_std_h_on_new_node(Config, Log),
     false = (undefined == rpc:call(Node, ets, whereis, [?TEST_HOOKS_TAB])),
     rpc:call(Node, ets, insert, [?TEST_HOOKS_TAB,{tester,self()}]),
     rpc:call(Node, ?MODULE, set_internal_log, [?MODULE,internal_log]),
@@ -869,16 +870,13 @@ write_failure(Config) ->
     rpc:call(Node, logger_std_h, filesync, [?STANDARD_HANDLER]),
     ?check_no_log,
     try_read_file(Log, {ok,<<"Logged1\nLogged2\n">>}, filesync_rep_int()),
-    ok.
-write_failure(cleanup, _Config) ->
-    Nodes = nodes(),
-    [test_server:stop_node(Node) || Node <- Nodes].
+    peer:stop(Peer).
 
 sync_failure(Config) ->
     Dir = ?config(priv_dir, Config),
     File = lists:concat([?MODULE,"_",?FUNCTION_NAME,".log"]),
     Log = filename:join(Dir, File),
-    Node = start_std_h_on_new_node(Config, Log),
+    {Peer, Node} = start_std_h_on_new_node(Config, Log),
     false = (undefined == rpc:call(Node, ets, whereis, [?TEST_HOOKS_TAB])),
     rpc:call(Node, ets, insert, [?TEST_HOOKS_TAB,{tester,self()}]),
     rpc:call(Node, ?MODULE, set_internal_log, [?MODULE,internal_log]),
@@ -907,20 +905,17 @@ sync_failure(Config) ->
     rpc:call(Node, ?MODULE, set_result, [file_datasync,ok]),
     ok = log_on_remote_node(Node, "Logged2"),
     ?check_no_log,
-    ok.
-sync_failure(cleanup, _Config) ->
-    Nodes = nodes(),
-    [test_server:stop_node(Node) || Node <- Nodes].
+    peer:stop(Peer).
 
 start_std_h_on_new_node(Config, Log) ->
-    {ok,_,Node} =
+    {ok,_,Peer,Node} =
         logger_test_lib:setup(
           Config,
           [{logger,[{handler,default,logger_std_h,
                      #{ config => #{ type => {file,Log}}}}]}]),
     ok = rpc:call(Node,logger,set_handler_config,[?STANDARD_HANDLER,formatter,
                                                   {?MODULE,nl}]),
-    Node.
+    {Peer, Node}.
 
 %% functions for test hook macros to be called by rpc
 set_internal_log(_Mod, _Func) ->
@@ -1386,6 +1381,10 @@ handler_requests_under_load(cleanup, _Config) ->
 recreate_deleted_log(Config) ->
     {Log,_HConfig,_StdHConfig} =
         start_handler(?MODULE, ?FUNCTION_NAME, Config),
+
+    %% Make sure that if we delete the directory it is created
+    [ok = file:del_dir_r(filename:dirname(Log)) || element(1,os:type()) =/= win32],
+
     logger:notice("first",?domain),
     logger_std_h:filesync(?MODULE),
     ok = file:rename(Log,Log++".old"),
@@ -1393,6 +1392,7 @@ recreate_deleted_log(Config) ->
     logger_std_h:filesync(?MODULE),
     {ok,<<"first\n">>} = file:read_file(Log++".old"),
     {ok,<<"second\n">>} = file:read_file(Log),
+
     ok.
 recreate_deleted_log(cleanup, _Config) ->
     ok = stop_handler(?MODULE).
@@ -1507,6 +1507,48 @@ rotate_size_compressed(Config) ->
     {error,enoent} = file:read_file_info(Log++".2"),
     {error,enoent} = file:read_file_info(Log++".2.gz"),
 
+    case os:type() of
+        {unix,_} ->
+            %% Test that logging does not break when directory is deleted at rotation
+            [logger:notice(Str,?domain) || _ <- lists:seq(1,50)],
+            logger_std_h:filesync(?MODULE),
+            {ok,#file_info{size=1000}} = file:read_file_info(Log),
+            ok = file:del_dir_r(filename:dirname(Log)),
+            {error,enoent} = file:read_file_info(Log),
+            logger:notice("bbbb",?domain),
+            logger:notice("bbbb",?domain),
+            logger_std_h:filesync(?MODULE),
+            {ok,#file_info{size=5}} = file:read_file_info(Log),
+            {error,enoent} = file:read_file_info(Log++".0"),
+            {ok,#file_info{size=25}} = file:read_file_info(Log++".0.gz"),
+            {error,enoent} = file:read_file_info(Log++".1"),
+            {error,enoent} = file:read_file_info(Log++".1.gz"),
+            {error,enoent} = file:read_file_info(Log++".2"),
+            {error,enoent} = file:read_file_info(Log++".2.gz"),
+
+            %% Test that logging without sync does not break
+            %% when directory is deleted at rotation
+            ok = logger:update_handler_config(?MODULE, #{config=>#{ file_check => 10000 } }),
+            [logger:notice(Str,?domain) || _ <- lists:seq(1,49)],
+            [logger:notice("bbbb",?domain) || _ <- lists:seq(1,3)],
+            logger_std_h:filesync(?MODULE),
+            {ok,#file_info{size=1000}} = file:read_file_info(Log),
+            ok = file:del_dir_r(filename:dirname(Log)),
+            {error,enoent} = file:read_file_info(Log),
+            logger:notice("bbbb",?domain),
+            logger:notice("bbbb",?domain),
+            logger_std_h:filesync(?MODULE),
+            {ok,#file_info{size=5}} = file:read_file_info(Log),
+            {error,enoent} = file:read_file_info(Log++".0"),
+            {error,enoent} = file:read_file_info(Log++".0.gz"),
+            {error,enoent} = file:read_file_info(Log++".1"),
+            {error,enoent} = file:read_file_info(Log++".1.gz"),
+            {error,enoent} = file:read_file_info(Log++".2"),
+            {error,enoent} = file:read_file_info(Log++".2.gz");
+        {win32,_} ->
+            ok
+    end,
+
     ok.
 rotate_size_compressed(cleanup,_Config) ->
     ok = stop_handler(?MODULE).
@@ -1550,7 +1592,7 @@ rotate_on_start_compressed(Config) ->
 
             %% Write a 1 GB file to disk
             {ok, D} = file:open(Log,[write]),
-            [file:write(D,<<0:(1024*1024*8)>>) || I <- lists:seq(1,1024)],
+            [file:write(D,<<0:(1024*1024*8)>>) || _I <- lists:seq(1,1024)],
             file:close(D),
 
             NumOfReqs = 500,
@@ -1747,7 +1789,7 @@ rotation_opts_restart_handler(Config) ->
     {ok,#file_info{size=260}} = file:read_file_info(Log),
     [] = filelib:wildcard(Log++".*"),
 
-    %% Stop/start handler and trun on rotation. Check that file is rotated.
+    %% Stop/start handler and turn on rotation. Check that file is rotated.
     {ok,#{config:=StdHConfig2}=HConfig2} = logger:get_handler_config(?MODULE),
     ok = logger:remove_handler(?MODULE),
     ok = logger:add_handler(
@@ -1780,7 +1822,7 @@ rotation_opts_restart_handler(Config) ->
     {ok,#file_info{size=29}} = file:read_file_info(Log++".0.gz"),
     [_] = filelib:wildcard(Log++".*"),
 
-    %% Stop/start handler and turn off compression. Check that achives
+    %% Stop/start handler and turn off compression. Check that archives
     %% are decompressed.
     {ok,#{config:=StdHConfig4}=HConfig4} = logger:get_handler_config(?MODULE),
     ok = logger:remove_handler(?MODULE),
@@ -1837,8 +1879,9 @@ start_handler(Name, FuncName, Config) ->
     {Log,HConfig,StdHConfig}.
 
 get_handler_log_name(FuncName, Config) ->
-    Dir = ?config(priv_dir,Config),
-    filename:join(Dir, lists:concat([FuncName,".log"])).
+    filename:join([?config(priv_dir,Config),
+                   FuncName,
+                   lists:concat([FuncName,".log"])]).
 
 filter_only_this_domain(Name) ->
     [{remote_gl,{fun logger_filters:remote_gl/2,stop}},
@@ -2086,7 +2129,7 @@ start_op_trace() ->
     TRecvPid.
     
 stop_op_trace(TRecvPid) ->
-    dbg:stop_clear(),
+    stop_clear(),
     unlink(TRecvPid),
     exit(TRecvPid, kill),
     ok.
@@ -2153,7 +2196,7 @@ start_tracer(Trace,Expected) ->
                            maps:get(handler_state,
                                     maps:get(cb_state,
                                              logger_olp:info(h_proc_name())))),
-    dbg:tracer(process,{fun tracer/2,{Pid,Expected}}),
+    {ok,_} = dbg:tracer(process,{fun tracer/2,{Pid,Expected}}),
     dbg:p(whereis(h_proc_name()),[c]),
     dbg:p(FileCtrlPid,[c]),
     tpl(Trace),
@@ -2167,13 +2210,19 @@ tpl([{{M,F,A},MS}|Trace]) ->
         {_,_,1} ->
             ok;
         _ ->
-            dbg:stop_clear(),
+            stop_clear(),
             throw({skip,"Can't trace "++atom_to_list(M)++":"++
                        atom_to_list(F)++"/"++integer_to_list(A)})
     end,
     tpl(Trace);
 tpl([]) ->
     ok.
+
+stop_clear() ->
+    dbg:stop(),
+    %% Remove tracer from all processes in order to eliminate
+    %% race conditions.
+    erlang:trace(all,false,[all]).
 
 tracer({trace,_,call,{logger_h_common,handle_cast,[Op|_]}},
        {Pid,[{Mod,Func,Op}|Expected]}) ->
@@ -2182,6 +2231,9 @@ tracer({trace,_,call,{Mod=logger_std_h,Func=write_to_dev,[Data,_]}},
        {Pid,[{Mod,Func,Data}|Expected]}) ->
     maybe_tracer_done(Pid,Expected,{Mod,Func,Data});
 tracer({trace,_,call,{Mod,Func,_}}, {Pid,[{Mod,Func}|Expected]}) ->
+    maybe_tracer_done(Pid,Expected,{Mod,Func});
+tracer({trace,_,call,{logger_h_common = Mod,handle_info = Func,[{timeout,_,Op},_S]}},
+       {Pid,[{Mod,Func,{timeout,Op}}|Expected]}) ->
     maybe_tracer_done(Pid,Expected,{Mod,Func});
 tracer({trace,_,call,Call}, {Pid,Expected}) ->
     ct:log("Tracer got unexpected: ~p~nExpected: ~p~n",[Call,Expected]),
@@ -2209,10 +2261,10 @@ check_tracer(T,TimeoutFun) ->
             %% traces are received
             check_tracer(Delay,fun() -> ok end);
         {tracer_got_unexpected,Got,Expected} ->
-            dbg:stop_clear(),
+            stop_clear(),
             ct:fail({tracer_got_unexpected,Got,Expected})
     after T ->
-            dbg:stop_clear(),
+            stop_clear(),
             TimeoutFun()
     end.
 

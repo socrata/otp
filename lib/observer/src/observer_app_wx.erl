@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -93,7 +93,7 @@ init([Notebook, Parent, _Config]) ->
     DrawingArea = wxScrolledWindow:new(P2, [{winid, ?DRAWAREA},
 					    {style,?wxFULL_REPAINT_ON_RESIZE}]),
     BG = wxWindow:getBackgroundColour(Apps),
-    wxWindow:setBackgroundStyle(DrawingArea, ?wxBG_STYLE_SYSTEM),
+    wxWindow:setBackgroundStyle(DrawingArea, ?wxBG_STYLE_PAINT),
     wxWindow:setVirtualSize(DrawingArea, 800, 800),
     wxSplitterWindow:setMinimumPaneSize(Splitter,50),
     wxSizer:add(Extra, DrawingArea, [{flag, ?wxEXPAND},{proportion, 1}]),

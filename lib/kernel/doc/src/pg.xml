@@ -6,7 +6,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2020</year><year>2020</year>
+      <year>2020</year><year>2022</year>
       <holder>Maxim Fedorov, WhatsApp Inc.</holder>
     </copyright>
     <legalnotice>
@@ -61,12 +61,10 @@
       It is only allowed to join processes running on local node.
     </p>
 
-    <p>Process Groups implement strong eventual consistency.
-      Unlike <seeerl marker="pg2"><c>pg2</c></seeerl>, that provides
-      strong ordering guarantees, Process Groups membership view may temporarily
-      diverge. For example, when processes on <c>node1</c> and <c>node2</c>
-      join concurrently, <c>node3</c> and <c>node4</c> may receive updates in
-      a different order.</p>
+    <p>Process Groups implement strong eventual consistency. Process Groups
+      membership view may temporarily diverge. For example, when processes on
+      <c>node1</c> and <c>node2</c> join concurrently, <c>node3</c> and
+      <c>node4</c> may receive updates in a different order.</p>
 
     <p> Membership view is not transitive. If <c>node1</c> is not directly
       connected to <c>node2</c>, they will not see each other groups. But if
@@ -91,10 +89,15 @@
       If there is another process registered under this name, or another ETS table
       exists, scope fails to start.</p>
       <p>Local membership is not preserved if scope process exits and
-        restarts. This behaviour is different from
-        <seeerl marker="pg2"><c>pg2</c></seeerl>, that recovers
-        local membership from remote nodes.
-    </p></note>
+        restarts.</p>
+      <p>A scope can be kept local-only by using a scope name that is unique
+        cluster-wide, e.g. the node name:</p>
+      <taglist>
+	<!-- NOTE THAT THE EMPTY TAG IS INTENTIONAL -->
+	<tag></tag>
+	<item><c>pg:start_link(node()).</c></item>
+      </taglist>
+    </note>
 
   </description>
 
@@ -133,7 +136,7 @@
       <fsummary>Join a process or a list of processes to a group.</fsummary>
       <desc>
         <p>Joins single process or multiple processes to the
-          group <c>Name</c>. A process can join a group many times and
+          group <c>Group</c>. A process can join a group many times and
           must then leave the group the same number of times.</p>
         <p><c>PidOrPids</c> may contain the same process multiple times.</p>
       </desc>
@@ -144,7 +147,7 @@
       <name name="leave" arity="3" since="OTP 23.0"/>
       <fsummary>Make a process leave a group.</fsummary>
       <desc>
-        <p>Makes the process <c>PidOrPids</c> leave the group <c>Name</c>.
+        <p>Makes the process <c>PidOrPids</c> leave the group <c>Group</c>.
 	  If the process is not a member of the group, <c>not_joined</c> is
 	  returned.</p>
         <p>When list of processes is passed as <c>PidOrPids</c>, function
@@ -154,12 +157,52 @@
     </func>
 
     <func>
+      <name name="monitor_scope" arity="0" since="OTP 25.1"/>
+      <name name="monitor_scope" arity="1" since="OTP 25.1"/>
+      <fsummary>Starts group membership monitoring for a scope.</fsummary>
+      <desc>
+        <p>Subscribes the caller to updates from the specified scope. Returns
+        content of the entire scope and a reference to match the upcoming
+        notifications.</p>
+
+        <p>Whenever any group membership changes, an update message is sent
+          to the subscriber:</p>
+          <code type="none">{Ref, join, Group, [JoinPid1, JoinPid2]}</code>
+          <code type="none">{Ref, leave, Group, [LeavePid1]}</code>
+      </desc>
+    </func>
+
+    <func>
+      <name name="monitor" arity="1" since="OTP 25.1"/>
+      <name name="monitor" arity="2" since="OTP 25.1"/>
+      <fsummary>Starts membership monitoring for a specified group.</fsummary>
+      <desc>
+        <p>Subscribes the caller to updates for the specified group. Returns
+          list of processes currently in the group, and a reference to match
+          the upcoming notifications.</p>
+          <p>See <seemfa marker="#monitor_scope/0"><c>monitor_scope/0</c></seemfa>
+          for the update message structure.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="demonitor" arity="1" since="OTP 25.1"/>
+      <name name="demonitor" arity="2" since="OTP 25.1"/>
+      <fsummary>Stops group membership monitoring.</fsummary>
+      <desc>
+        <p>Unsubscribes the caller from updates (scope or group).
+        Flushes all outstanding updates that were already in the message
+        queue of the calling process.</p>
+      </desc>
+    </func>
+
+    <func>
       <name name="get_local_members" arity="1" since="OTP 23.0"/>
       <name name="get_local_members" arity="2" since="OTP 23.0"/>
       <fsummary>Return all local processes in a group.</fsummary>
       <desc>
         <p>Returns all processes running on the local node in the
-          group <c>Name</c>. Processes are returned in no specific order.
+          group <c>Group</c>. Processes are returned in no specific order.
           This function is optimised for speed.
         </p>
       </desc>
@@ -170,7 +213,7 @@
       <name name="get_members" arity="2" since="OTP 23.0"/>
       <fsummary>Return all processes in a group.</fsummary>
       <desc>
-        <p>Returns all processes in the group <c>Name</c>.
+        <p>Returns all processes in the group <c>Group</c>.
           Processes are returned in no specific order.
           This function is optimised for speed.</p>
       </desc>

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2010-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2010-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,11 @@ int get_bn_from_mpint(ErlNifEnv* env, ERL_NIF_TERM term, BIGNUM** bnp)
 
 int get_bn_from_bin(ErlNifEnv* env, ERL_NIF_TERM term, BIGNUM** bnp)
 {
+    return get_bn_from_bin_sz(env, term, bnp, NULL);
+}
+
+int get_bn_from_bin_sz(ErlNifEnv* env, ERL_NIF_TERM term, BIGNUM** bnp, size_t* binsize)
+{
     BIGNUM *ret;
     ErlNifBinary bin;
 
@@ -61,6 +66,8 @@ int get_bn_from_bin(ErlNifEnv* env, ERL_NIF_TERM term, BIGNUM** bnp)
     if ((ret = BN_bin2bn(bin.data, (int)bin.size, NULL)) == NULL)
         goto err;
 
+    if (binsize != NULL)
+        *binsize = bin.size;
     *bnp = ret;
     return 1;
 
@@ -154,7 +161,7 @@ ERL_NIF_TERM mod_exp_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 }
 
 #ifdef HAVE_EC
-ERL_NIF_TERM bn2term(ErlNifEnv* env, const BIGNUM *bn)
+ERL_NIF_TERM bn2term(ErlNifEnv* env, size_t size, const BIGNUM *bn)
 {
     int dlen;
     unsigned char* ptr;
@@ -166,10 +173,18 @@ ERL_NIF_TERM bn2term(ErlNifEnv* env, const BIGNUM *bn)
     dlen = BN_num_bytes(bn);
     if (dlen < 0)
         goto err;
-    if ((ptr = enif_make_new_binary(env, (size_t)dlen, &ret)) == NULL)
+    if (dlen > (int)size)
+        goto err;
+    if ((ptr = enif_make_new_binary(env, size, &ret)) == NULL)
         goto err;
 
-    BN_bn2bin(bn, ptr);
+#ifdef HAS_BN_bn2binpad
+    BN_bn2binpad(bn, ptr, (int) size);    
+#else
+    /* First, maybe pad with zeroes */
+    memset(ptr, 0, (size-dlen) );
+    BN_bn2bin(bn, ptr + (size-dlen));
+#endif
 
     return ret;
 
@@ -177,3 +192,73 @@ ERL_NIF_TERM bn2term(ErlNifEnv* env, const BIGNUM *bn)
     return enif_make_badarg(env);
 }
 #endif
+
+
+#ifdef HAS_3_0_API
+
+int get_ossl_octet_string_param_from_bin(ErlNifEnv* env, char* key, ERL_NIF_TERM bin, OSSL_PARAM *dest)
+{
+    ErlNifBinary tmp;
+
+    if (!enif_inspect_binary(env, bin, &tmp)) return 0;
+    
+    *dest = OSSL_PARAM_construct_octet_string(key, tmp.data, tmp.size);
+    return 1;
+}
+
+
+int get_ossl_BN_param_from_bin(ErlNifEnv* env, char* key, ERL_NIF_TERM bin, OSSL_PARAM *dest)
+{
+    return get_ossl_BN_param_from_bin_sz(env, key, bin, dest, NULL);
+}
+
+int get_ossl_BN_param_from_bin_sz(ErlNifEnv* env, char* key, ERL_NIF_TERM bin,
+                                  OSSL_PARAM *dest, size_t *size)
+{
+    BIGNUM *bn = NULL;
+    int ok = 0;
+
+    if (!get_bn_from_bin_sz(env, bin, &bn, size))
+        return 0;
+
+    ok = get_ossl_BN_param_from_bn(env, key, bn, dest);
+    BN_free(bn);
+    return ok;
+}
+
+int get_ossl_BN_param_from_bn(ErlNifEnv* env, char* key, const BIGNUM* bn,
+                              OSSL_PARAM *dest)
+{
+    const size_t bn_sz = BN_num_bytes(bn);
+    unsigned char* tmp_buf;
+    ERL_NIF_TERM dummy_term;
+
+    /* Create a binary term just as a convenient tmp buffer */
+    tmp_buf = enif_make_new_binary(env, bn_sz, &dummy_term);
+    if (BN_bn2nativepad(bn, tmp_buf, bn_sz) < 0) // Fill with BN in right endianity
+        return 0;
+
+    *dest = OSSL_PARAM_construct_BN(key, tmp_buf, bn_sz);
+    return 1;
+}
+
+
+
+int get_ossl_param_from_bin_in_list(ErlNifEnv* env, char* key, ERL_NIF_TERM *listcell, OSSL_PARAM *dest)
+{
+    ERL_NIF_TERM head;
+    
+    return
+        enif_get_list_cell(env, *listcell, &head, listcell) &&
+        get_ossl_BN_param_from_bin(env, key, head, dest);
+}
+
+#endif
+
+
+
+
+
+
+
+

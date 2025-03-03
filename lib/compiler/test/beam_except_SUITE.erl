@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
 	 multiple_allocs/1,bs_get_tail/1,coverage/1,
-         binary_construction_allocation/1]).
+         binary_construction_allocation/1,unfold_literals/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
@@ -34,7 +34,8 @@ groups() ->
       [multiple_allocs,
        bs_get_tail,
        coverage,
-       binary_construction_allocation]}].
+       binary_construction_allocation,
+       unfold_literals]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -52,13 +53,13 @@ end_per_group(_GroupName, Config) ->
 multiple_allocs(_Config) ->
     {'EXIT',{{badmatch,#{true:=[p]}},_}} =
 	 (catch could(pda, 0.0, {false,true}, {p})),
-    {'EXIT',{function_clause,_}} = (catch place(lee)),
+    {'EXIT',{{bad_generator,0},_}} = (catch place(lee)),
     {'EXIT',{{badmatch,wanted},_}} = (catch conditions()),
 
     ok.
 
-could(Coupons = pda, Favorite = _pleasure = 0.0, {_, true}, {Presents}) ->
-  (0 = true) = #{true => [Presents]}.
+could(_Coupons = pda, _Favorite = _pleasure = 0.0, {_, true}, {Presents}) ->
+    (0 = true) = #{true => [Presents]}.
 
 place(lee) ->
     (pregnancy = presentations) = [hours | [purchase || _ <- 0]] + wine.
@@ -111,11 +112,19 @@ coverage(_) ->
                 (catch fc([a,b,c]))
     end,
 
-    {'EXIT',{undef,[{erlang,error,[a,b,c],_}|_]}} =
-	(catch erlang:error(a, b, c)),
+    {'EXIT',{undef,[{erlang,error,[a,b,c,d],_}|_]}} =
+	(catch erlang:error(a, b, c, d)),
 
-    {'EXIT',{badarith,[{?MODULE,bar,1,[File,{line,9}]}|_]}} =
-	(catch bar(x)),
+    %% The stacktrace for operators such a '+' can vary depending on
+    %% whether the JIT is used or not.
+    case catch bar(x) of
+        {'EXIT',{badarith,[{erlang,'+',[x,1],[_|_]},
+                           {?MODULE,bar,1,[File,{line,9}]}|_]}} ->
+            ok;
+        {'EXIT',{badarith,[{?MODULE,bar,1,[File,{line,9}]}|_]}} ->
+            ok
+    end,
+
     {'EXIT',{{case_clause,{1}},[{?MODULE,bar,1,[File,{line,9}]}|_]}} =
 	(catch bar(0)),
 
@@ -127,13 +136,17 @@ coverage(_) ->
     {'EXIT',{function_clause,[{?MODULE,foobar,[[fail],1,2],
                                [{file,"fake.erl"},{line,16}]}|_]}} =
         (catch foobar([fail], 1, 2)),
+
     {'EXIT',{function_clause,[{?MODULE,fake_function_clause1,[{a,b},42.0],_}|_]}} =
         (catch fake_function_clause1({a,b})),
 
     {'EXIT',{function_clause,[{?MODULE,fake_function_clause2,[42|bad_tl],_}|_]}} =
         (catch fake_function_clause2(42, bad_tl)),
+
     {'EXIT',{function_clause,[{?MODULE,fake_function_clause3,[x,y],_}|_]}} =
         (catch fake_function_clause3(42, id([x,y]))),
+
+    {'EXIT',{{function_clause,a,b,c}, _}} = catch fake_function_clause4(),
 
     {'EXIT',{{badmatch,0.0},_}} = (catch coverage_1(id(42))),
     {'EXIT',{badarith,_}} = (catch coverage_1(id(a))),
@@ -145,8 +158,12 @@ coverage_1(X) ->
     true = 0 / X.
 
 fake_function_clause1(A) -> error(function_clause, [A,42.0]).
+
 fake_function_clause2(A, Tl) -> error(function_clause, [A|Tl]).
+
 fake_function_clause3(_, Stk) -> error(function_clause, Stk).
+
+fake_function_clause4() -> error({function_clause,a,b,c}).
 
 binary_construction_allocation(_Config) ->
     ok = do_binary_construction_allocation("PUT"),
@@ -160,6 +177,19 @@ do_binary_construction_allocation(Req) ->
              "POST" -> {error, <<"BAD METHOD ", Req/binary>>, Req};
              _ -> ok
          end.
+
+unfold_literals(_Config) ->
+    a = do_unfold_literals(badarg, id({a,b})),
+    {'EXIT',{badarg,_}} = catch do_unfold_literals(badarg, id(a)),
+
+    ok.
+
+do_unfold_literals(_BadArg, T) ->
+    %% The call `erlang:error(badarg)` in ?EXCEPTION_BLOCK would be
+    %% rewritten to `erlang:error(_BadArg)` by
+    %% beam_ssa_opt:unfold_literals/1, which would cause
+    %% beam_ssa_codegen:assert_exception_block/1 to fail.
+    element(1, T).
 
 id(I) -> I.
 

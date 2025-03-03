@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ init_per_testcase(Case, Config) ->
 
 %% ---------------------------------------------------------------------------
 
-% NOTE: for historical reasons we don't pach as tight as we can,
+% NOTE: for historical reasons we don't patch as tight as we can,
 %       we only fill 27 bits in 32 bit INTEGER_EXT 
 
 
@@ -313,8 +313,18 @@ test_ei_cmp_nc(Config) when is_list(Config) ->
     check_cmp(P, mk_pid({a@b, 4711}, 17, 17), mk_pid({a@b, 4711}, 18, 17)),
     check_cmp(P, mk_pid({a@b, 4711}, 17, 17), mk_pid({a@b, 4711}, 17, 18)),
 
-    Prt0 = open_port({spawn, "true"},[]),
-    Prt1 = open_port({spawn, "true"},[]),
+    %% Test full 64-bit pids
+    Vs = [1 bsl 30, 1 bsl 31, (1 bsl 31)-1, (1 bsl 32)-1],
+    [check_cmp(P, mk_pid({a@b, 4711}, A, B), mk_pid({a@b, 4711}, C, D))
+     || A <- Vs, B <- Vs, C <- Vs, D <- Vs],
+
+    Cmd = case os:type() of
+              {win32, _} -> "cmd /q /c true";
+              _ -> "true"
+          end,
+
+    Prt0 = open_port({spawn, Cmd},[]),
+    Prt1 = open_port({spawn, Cmd},[]),
 
     check_cmp(P, Prt0, Prt0),
     check_cmp(P, Prt1, Prt0),

@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2020</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -48,7 +48,26 @@
       A <c>set</c> or <c>ordered_set</c> table can only have one object
       associated with each key. A <c>bag</c> or <c>duplicate_bag</c> table can
       have many objects associated with each key.</p>
-
+    <p>
+      Insert and lookup times in tables of type <c>set</c> are constant,
+      regardless of the table size. For table types <c>bag</c> and
+      <c>duplicate_bag</c> time is proportional to the number of objects with the
+      same key. Even seemingly unrelated keys may inflict linear search to be
+      skipped past while looking for the key of interest (due to hash collision).
+    </p>
+    <warning>
+      <p>
+	For tables of type <c>bag</c> and <c>duplicate_bag</c>, avoid inserting
+	an extensive amount of objects with the same key. It will hurt insert and
+	lookup performance as well as real time characteristics of the runtime
+	environment (hash bucket linear search do not yield).
+      </p>
+    </warning>
+    <p>
+      The <c>ordered_set</c> table type uses a binary search tree. Insert and
+      lookup times are proportional to the logarithm of the number of objects in
+      the table.
+    </p>
    <marker id="max_ets_tables"></marker>
    <note>
      <p>
@@ -60,7 +79,7 @@
        <seecom marker="erts:erl#+e"><c>+e</c></seecom> before starting the
        Erlang runtime system. This hard limit has been removed, but it is currently
        useful to set the <c>ERL_MAX_ETS_TABLES</c> anyway. It should be
-       set to an approximate of the maximum amount of tables used. This since
+       set to an approximate of the maximum amount of tables used since
        an internal table for named tables is sized using this value. If
        large amounts of named tables are used and <c>ERL_MAX_ETS_TABLES</c>
        hasn't been increased, the performance of named table lookup will
@@ -195,10 +214,20 @@
         <seemfa marker="#tab2list/1"><c>tab2list/1</c></seemfa>.</p>
       </item>
     </list>
-    <p>None of these ways of table traversal will guarantee a consistent table snapshot
-    if the table is also updated during the traversal. Moreover, traversals not
-    done in a <em>safe</em> way, on tables where keys are inserted or deleted
-    during the traversal, may yield the following undesired effects:</p>
+    <p>
+      No table traversal will guarantee a consistent snapshot of the entire
+      table if the table is also updated by concurrent processes during the
+      traversal. The result of each concurrently updated object may be seen (or
+      not) depending on if it has happened when the traversal visits that part
+      of the table. The only way to guarantee a full consistent table snapshot
+      (if you really need that) is to disallow concurrent updates during the
+      entire traversal.
+    </p>
+    <p>
+      Moreover, traversals not done in a <em>safe</em> way, on tables where
+      keys are inserted or deleted during the traversal, may yield the
+      following undesired effects:
+    </p>
     <list type="bulleted">
       <item><p>Any key may be missed.</p></item>
       <item><p>Any key may be found more than once.</p></item>
@@ -273,7 +302,7 @@ true
 
   <datatypes>
     <datatype>
-      <name name="access"/>
+      <name name="table_access"/>
     </datatype>
     <datatype>
       <name>continuation()</name>
@@ -287,17 +316,17 @@ true
     </datatype>
     <datatype>
       <name name="match_spec"/>
-      <desc><p>A match specification, see above.</p></desc>
+      <desc><p>A match specification, see <seeerl marker="#match_spec">Match Specifications</seeerl>.</p></desc>
     </datatype>
     <datatype>
-      <name name="comp_match_spec"/>
+      <name name="compiled_match_spec"/>
       <desc><p>A compiled match specification.</p></desc>
     </datatype>
     <datatype>
       <name name="match_pattern"/>
     </datatype>
     <datatype>
-      <name name="tab"/>
+      <name name="table"/>
     </datatype>
     <datatype>
       <name name="tid"/>
@@ -305,7 +334,7 @@ true
       <seemfa marker="#new/2"><c>new/2</c></seemfa>.</p></desc>
     </datatype>
     <datatype>
-      <name name="type"/>
+      <name name="table_type"/>
     </datatype>
   </datatypes>
 
@@ -329,7 +358,7 @@ true
       <name name="delete" arity="1" since=""/>
       <fsummary>Delete an entire ETS table.</fsummary>
       <desc>
-        <p>Deletes the entire table <c><anno>Tab</anno></c>.</p>
+        <p>Deletes the entire table <c><anno>Table</anno></c>.</p>
       </desc>
     </func>
 
@@ -339,7 +368,8 @@ true
         table.</fsummary>
       <desc>
         <p>Deletes all objects with key <c><anno>Key</anno></c> from table
-          <c><anno>Tab</anno></c>.</p>
+        <c><anno>Table</anno></c>. This function succeeds even if
+	no objects with key <c><anno>Key</anno></c> exist.</p>
       </desc>
     </func>
 
@@ -347,7 +377,7 @@ true
       <name name="delete_all_objects" arity="1" since=""/>
       <fsummary>Delete all objects in an ETS table.</fsummary>
       <desc>
-        <p>Delete all objects in the ETS table <c><anno>Tab</anno></c>.
+        <p>Delete all objects in the ETS table <c><anno>Table</anno></c>.
           The operation is guaranteed to be
           <seeerl marker="#concurrency">atomic and isolated</seeerl>.</p>
       </desc>
@@ -372,7 +402,7 @@ true
         <p>Reads a file produced by <seemfa marker="#tab2file/2">
           <c>tab2file/2</c></seemfa> or 
           <seemfa marker="#tab2file/3"><c>tab2file/3</c></seemfa> and
-          creates the corresponding table <c><anno>Tab</anno></c>.</p>
+          creates the corresponding table <c><anno>Table</anno></c>.</p>
         <p>Equivalent to <c>file2tab(<anno>Filename</anno>, [])</c>.</p>
       </desc>
     </func>
@@ -384,7 +414,7 @@ true
         <p>Reads a file produced by <seemfa marker="#tab2file/2">
           <c>tab2file/2</c></seemfa> or <seemfa marker="#tab2file/3">
           <c>tab2file/3</c></seemfa> and creates the
-          corresponding table <c><anno>Tab</anno></c>.</p>
+          corresponding table <c><anno>Table</anno></c>.</p>
         <p>The only supported option is <c>{verify,boolean()}</c>.
           If verification is turned on (by specifying <c>{verify,true}</c>),
           the function uses whatever information is present in the file to
@@ -414,7 +444,7 @@ true
       <fsummary>Return the first key in an ETS table.</fsummary>
       <desc>
         <p>Returns the first key <c><anno>Key</anno></c> in table
-          <c><anno>Tab</anno></c>. For an <c>ordered_set</c> table, the first
+          <c><anno>Table</anno></c>. For an <c>ordered_set</c> table, the first
           key in Erlang term order is returned. For other
           table types, the first key according to the internal
           order of the table is returned. If the table is empty,
@@ -544,8 +574,8 @@ Error: fun containing local Erlang function calls
       <fsummary>Change owner of a table.</fsummary>
       <desc>
         <p>Make process <c><anno>Pid</anno></c> the new owner of table
-          <c><anno>Tab</anno></c>. If successful, message
-          <c>{'ETS-TRANSFER',<anno>Tab</anno>,FromPid,<anno>GiftData</anno>}</c>
+          <c><anno>Table</anno></c>. If successful, message
+          <c>{'ETS-TRANSFER',<anno>Table</anno>,FromPid,<anno>GiftData</anno>}</c>
           is sent to the new owner.</p>
         <p>The process <c><anno>Pid</anno></c> must be alive, local, and not
           already the owner of the table.
@@ -570,7 +600,7 @@ Error: fun containing local Erlang function calls
       <name name="i" arity="1" since=""/>
       <fsummary>Browse an ETS table on a terminal.</fsummary>
       <desc>
-        <p>Browses table <c><anno>Tab</anno></c> on a terminal.</p>
+        <p>Browses table <c><anno>Table</anno></c> on a terminal.</p>
       </desc>
     </func>
 
@@ -578,10 +608,10 @@ Error: fun containing local Erlang function calls
       <name name="info" arity="1" since=""/>
       <fsummary>Return information about an <c>table</c>.</fsummary>
       <desc>
-        <p>Returns information about table <c><anno>Tab</anno></c> as a list of
-          tuples. If <c><anno>Tab</anno></c> has the correct type
+        <p>Returns information about table <c><anno>Table</anno></c> as a list of
+          tuples. If <c><anno>Table</anno></c> has the correct type
           for a table identifier, but does not refer to an existing ETS
-          table, <c>undefined</c> is returned. If <c><anno>Tab</anno></c> is
+          table, <c>undefined</c> is returned. If <c><anno>Table</anno></c> is
           not of the correct type, a <c>badarg</c> exception is raised.</p>
         <taglist>
           <tag><c>{compressed, boolean()}</c></tag>
@@ -606,7 +636,7 @@ Error: fun containing local Erlang function calls
           <item>
             <p>The key position.</p>
           </item>
-          <tag><c>{memory, integer() >= 0</c></tag>
+          <tag><c>{memory, integer() >= 0}</c></tag>
           <item>
             <p>The number of words allocated to the table.</p>
           </item>
@@ -627,16 +657,16 @@ Error: fun containing local Erlang function calls
           <item>
             <p>The pid of the owner of the table.</p>
           </item>
-          <tag><c>{protection,</c> <seetype marker="#access">
+          <tag><c>{protection,</c> <seetype marker="#table_access">
               <c>access()</c></seetype><c>}</c></tag>
           <item>
             <p>The table access rights.</p>
           </item>
-          <tag><c>{size, integer() >= 0</c></tag>
+          <tag><c>{size, integer() >= 0}</c></tag>
           <item>
             <p>The number of objects inserted in the table.</p>
           </item>
-          <tag><c>{type,</c> <seetype marker="#type">
+          <tag><c>{type,</c> <seetype marker="#table_type">
               <c>type()</c></seetype><c>}</c></tag>
           <item>
             <p>The table type.</p>
@@ -646,9 +676,9 @@ Error: fun containing local Erlang function calls
             <p>Indicates whether the table uses <c>read_concurrency</c> or
               not.</p>
           </item>
-          <tag><c>{write_concurrency, boolean()}</c></tag>
+          <tag><c>{write_concurrency, WriteConcurrencyAlternative}</c></tag>
           <item>
-            <p>Indicates whether the table uses <c>write_concurrency</c>.</p>
+            <p>Indicates which <c>write_concurrency</c> option the table uses.</p>
           </item>
         </taglist>
 	<note><p>The execution time of this function is affected by
@@ -667,9 +697,9 @@ Error: fun containing local Erlang function calls
         an ETS table.</fsummary>
       <desc>
         <p>Returns the information associated with <c>Item</c> for table
-          <c><anno>Tab</anno></c>, or returns <c>undefined</c> if <c>Tab</c>
+          <c><anno>Table</anno></c>, or returns <c>undefined</c> if <c>Table</c>
           does not refer an existing ETS table. If
-          <c><anno>Tab</anno></c> is
+          <c><anno>Table</anno></c> is
           not of the correct type, or if <c><anno>Item</anno></c> is not
           one of the allowed values, a <c>badarg</c> exception is raised.</p>
           <p>In addition to the <c>{<anno>Item</anno>,<anno>Value</anno>}</c>
@@ -759,7 +789,7 @@ Error: fun containing local Erlang function calls
       <name name="init_table" arity="2" since=""/>
       <fsummary>Replace all objects of an ETS table.</fsummary>
       <desc>
-        <p>Replaces the existing objects of table <c><anno>Tab</anno></c> with
+        <p>Replaces the existing objects of table <c><anno>Table</anno></c> with
           objects created by calling the input function
           <c><anno>InitFun</anno></c>,
           see below. This function is provided for compatibility with
@@ -791,7 +821,7 @@ Error: fun containing local Erlang function calls
       <desc>
         <p>Inserts the object or all of the objects in list
           <c><anno>ObjectOrObjects</anno></c> into table
-          <c><anno>Tab</anno></c>.</p>
+          <c><anno>Table</anno></c>.</p>
         <list type="bulleted">
           <item>
             <p>If the table type is <c>set</c> and the key of the inserted
@@ -804,6 +834,12 @@ Error: fun containing local Erlang function calls
               in the table, the old object is replaced.</p>
           </item>
           <item>
+            <p>
+	      If the table type is <c>bag</c> and the object <em>matches</em>
+	      any whole object in the table, the object is not inserted.
+            </p>
+          </item>
+          <item>
             <p>If the list contains more than one object with
               <em>matching</em> keys and the table type is <c>set</c>, one is
               inserted, which one is not defined.
@@ -814,6 +850,27 @@ Error: fun containing local Erlang function calls
         <p>The entire operation is guaranteed to be
           <seeerl marker="#concurrency">atomic and isolated</seeerl>,
           even when a list of objects is inserted.</p>
+        <marker id="insert_list_order"></marker>
+        <p>
+	  For <c>bag</c> and <c>duplicate_bag</c>, objects in the list with
+	  identical keys will be inserted in list order (from head to tail). That
+	  is, a subsequent call to <seemfa marker="#lookup/2"><c>lookup(T,Key)</c></seemfa>
+	  will return them in that inserted order.
+        </p>
+	<note>
+	  <p>
+	    For <c>bag</c> the insertion order of indentical keys described above was
+	    accidentally reverted in OTP 23.0 and later fixed in OTP 25.3. That
+	    is, from OTP 23.0 up until OTP 25.3 the objects in a list are
+	    inserted in reverse order (from tail to head).
+          </p>
+	  <p>
+	    For <c>duplicate_bag</c> the same faulty reverse insertion exist
+	    from OTP 23.0 until OTP 25.3. However, it is unpredictable and may
+	    or may not happen. A longer list will increase the probabiliy of the
+	    insertion being done in reverse.
+          </p>
+        </note>
       </desc>
     </func>
 
@@ -843,7 +900,7 @@ Error: fun containing local Erlang function calls
       <desc>
         <p>Checks if a term represent a valid compiled
 	  <seeerl marker="#match_spec">match specification</seeerl>.
-          A compiled match specifications is only valid on the Erlang node where
+          A compiled match specification is only valid on the Erlang node where
 	  it was compiled by calling <seemfa marker="#match_spec_compile/1">
 	  <c>match_spec_compile/1</c></seemfa>.</p>
         <note>
@@ -870,7 +927,7 @@ Error: fun containing local Erlang function calls
         <c>ordered_set</c>.</fsummary>
       <desc>
         <p>Returns the last key <c><anno>Key</anno></c> according to Erlang
-          term order in table <c>Tab</c> of type <c>ordered_set</c>. For
+          term order in table <c>Table</c> of type <c>ordered_set</c>. For
           other table types, the function is synonymous to
           <seemfa marker="#first/1"><c>first/1</c></seemfa>.
           If the table is empty, <c>'$end_of_table'</c> is returned.</p>
@@ -885,7 +942,7 @@ Error: fun containing local Erlang function calls
       </fsummary>
       <desc>
         <p>Returns a list of all objects with key <c><anno>Key</anno></c> in
-          table <c><anno>Tab</anno></c>.</p>
+          table <c><anno>Table</anno></c>.</p>
         <list type="bulleted">
           <item>
             <p>For tables of type <c>set</c>, <c>bag</c>, or
@@ -908,14 +965,11 @@ Error: fun containing local Erlang function calls
           element, as there cannot be more than one object with the same
           key. For tables of type <c>bag</c> or <c>duplicate_bag</c>, the
           function returns a list of arbitrary length.</p>
-        <p>Notice that the time order of object insertions is preserved;
+        <p>Notice that the sequential order of object insertions is preserved;
           the first object inserted with the specified key is the first
-          in the resulting list, and so on.</p>
-        <p>Insert and lookup times in tables of type <c>set</c>,
-          <c>bag</c>, and <c>duplicate_bag</c> are constant, regardless
-          of the table size. For the <c>ordered_set</c>
-          datatype, time is proportional to the (binary) logarithm of
-          the number of objects.</p>
+          in the resulting list, and so on. See also the note about
+          <seeerl marker="#insert_list_order">list insertion order</seeerl>.
+        </p>
       </desc>
     </func>
 
@@ -924,7 +978,7 @@ Error: fun containing local Erlang function calls
       <fsummary>Return the <c>Pos</c>:th element of all objects with a
         specified key in an ETS table.</fsummary>
       <desc>
-        <p>For a table <c><anno>Tab</anno></c> of type <c>set</c> or
+        <p>For a table <c><anno>Table</anno></c> of type <c>set</c> or
           <c>ordered_set</c>, the function returns the
           <c><anno>Pos</anno></c>:th
           element of the object with key <c><anno>Key</anno></c>.</p>
@@ -933,12 +987,40 @@ Error: fun containing local Erlang function calls
           element of every object with key <c><anno>Key</anno></c>.</p>
         <p>If no object with key <c><anno>Key</anno></c> exists, the
           function exits with reason <c>badarg</c>.</p>
+        <p>If <c><anno>Pos</anno></c> is larger than the size of the tuple,
+          the function exits with reason <c>badarg</c>.</p>
         <p>The difference between <c>set</c>, <c>bag</c>, and
           <c>duplicate_bag</c> on one hand, and <c>ordered_set</c> on
           the other, regarding the fact that <c>ordered_set</c>
           view keys as equal when they <em>compare equal</em>
           whereas the other table types regard them equal only when
           they <em>match</em>, holds for <c>lookup_element/3</c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="lookup_element" arity="4" since="OTP 26.0"/>
+      <fsummary>Return the <c>Pos</c>:th element of all objects with a
+        specified key in an ETS table, or <c>Default</c> if there is no such object.</fsummary>
+      <desc>
+        <p>For a table <c><anno>Table</anno></c> of type <c>set</c> or
+          <c>ordered_set</c>, the function returns the
+          <c><anno>Pos</anno></c>:th
+          element of the object with key <c><anno>Key</anno></c>.</p>
+        <p>For tables of type <c>bag</c> or <c>duplicate_bag</c>,
+          the functions returns a list with the <c><anno>Pos</anno></c>:th
+          element of every object with key <c><anno>Key</anno></c>.</p>
+        <p>If no object with key <c><anno>Key</anno></c> exists, the
+          function returns <c><anno>Default</anno></c>.</p>
+        <p>If <c><anno>Pos</anno></c> is larger than the size of
+          any tuple with a matching key, the function exits with
+          reason <c>badarg</c>.</p>
+        <p>The difference between <c>set</c>, <c>bag</c>, and
+          <c>duplicate_bag</c> on one hand, and <c>ordered_set</c> on
+          the other, regarding the fact that <c>ordered_set</c>
+          view keys as equal when they <em>compare equal</em>
+          whereas the other table types regard them equal only when
+          they <em>match</em>, holds for <c>lookup_element/4</c>.</p>
       </desc>
     </func>
 
@@ -961,7 +1043,7 @@ Error: fun containing local Erlang function calls
       <fsummary>Match the objects in an ETS table against a pattern.
       </fsummary>
       <desc>
-        <p>Matches the objects in table <c><anno>Tab</anno></c> against
+        <p>Matches the objects in table <c><anno>Table</anno></c> against
           pattern <c><anno>Pattern</anno></c>.</p>
         <p>A pattern is a term that can contain:</p>
         <list type="bulleted">
@@ -1016,7 +1098,7 @@ Error: fun containing local Erlang function calls
         ETS table.</fsummary>
       <desc>
         <p>Deletes all objects that match pattern <c><anno>Pattern</anno></c>
-          from table <c><anno>Tab</anno></c>. For a description of patterns,
+          from table <c><anno>Table</anno></c>. For a description of patterns,
           see <seemfa marker="#match/2"><c>match/2</c></seemfa>.</p>
       </desc>
     </func>
@@ -1041,7 +1123,7 @@ Error: fun containing local Erlang function calls
       <fsummary>Match the objects in an ETS table against a pattern.
       </fsummary>
       <desc>
-        <p>Matches the objects in table <c><anno>Tab</anno></c> against
+        <p>Matches the objects in table <c><anno>Table</anno></c> against
           pattern <c><anno>Pattern</anno></c>. For a description of patterns,
           see <seemfa marker="#match/2"><c>match/2</c></seemfa>.
           The function returns a list of all objects that
@@ -1183,8 +1265,8 @@ ets:select(Table, MatchSpec),</code>
               means that to an <c>ordered_set</c> table, <c>integer()</c>
               <c>1</c> and <c>float()</c> <c>1.0</c> are regarded as equal.
               This also means that the
-              key used to lookup an element not necessarily
-              <em>matches</em> the key in the returned elements, if
+              key used to lookup an element does not necessarily
+              <em>match</em> the key in the returned elements, if
               <c>float()</c>'s and <c>integer()</c>'s are mixed in
               keys of a table.</p>
           </item>
@@ -1248,17 +1330,24 @@ ets:select(Table, MatchSpec),</code>
               when the owner terminates.</p>
             <marker id="new_2_write_concurrency"></marker>
           </item>
-          <tag><c>{write_concurrency,boolean()}</c></tag>
+          <tag><c>{write_concurrency,WriteConcurrencyAlternative}</c></tag>
           <item>
             <p>Performance tuning. Defaults to <c>false</c>, in which case an
               operation that
               mutates (writes to) the table obtains exclusive access,
               blocking any concurrent access of the same table until finished.
-              If set to <c>true</c>, the table is optimized to concurrent
+              If set to <c>true</c>, the table is optimized for concurrent
               write access. Different objects of the same table can be mutated
               (and read) by concurrent processes. This is achieved to some
               degree at the expense of memory consumption and the performance
               of sequential access and concurrent reading.</p>
+            <p>The <c>auto</c> alternative for the
+            <c>write_concurrency</c> option is similar to the
+            <c>true</c> option but automatically adjusts the
+            synchronization granularity during runtime depending on how the
+            table is used. This is the recommended
+            <c>write_concurrency</c> option when using Erlang/OTP 25
+            and above as it performs well in most scenarios.</p>
               <p>The <c>write_concurrency</c> option can be combined with the options
               <seeerl marker="#new_2_read_concurrency">
               <c>read_concurrency</c></seeerl> and
@@ -1268,12 +1357,9 @@ ets:select(Table, MatchSpec),</code>
               concurrent read bursts and large concurrent
               write bursts are common; for more information, see option
               <seeerl marker="#new_2_read_concurrency">
-              <c>read_concurrency</c></seeerl>. The <c>decentralized_counters</c>
-              option is turned on by default for tables of type <c>ordered_set</c>
-              with the <c>write_concurrency</c> option enabled, and the
-              <c>decentralized_counters</c> option is turned off by default for
-              all other table types.
-              For more information, see the documentation for the
+              <c>read_concurrency</c></seeerl>. It is almost always a
+              good idea to combine the <c>write_concurrency</c> option
+              with the
               <seeerl marker="#new_2_decentralized_counters">
               <c>decentralized_counters</c></seeerl> option.</p>
             <p>Notice that this option does not change any guarantees about
@@ -1281,25 +1367,32 @@ ets:select(Table, MatchSpec),</code>
               Functions that makes such promises over many objects (like
               <seemfa marker="#insert/2"><c>insert/2</c></seemfa>)
               gain less (or nothing) from this option.</p>
-            <p>The memory consumption inflicted by both <c>write_concurrency</c>
-	      and <c>read_concurrency</c> is a constant overhead per table for
-	      <c>set</c>, <c>bag</c> and <c>duplicate_bag</c>. For
-	      <c>ordered_set</c> the memory overhead depends on the number
-	      of inserted objects and the amount of actual detected
-	      concurrency in runtime. The memory overhead can be especially
-	      large when both options are combined.</p>
+            <p>The memory consumption inflicted by both
+            <c>write_concurrency</c> and <c>read_concurrency</c> is a
+            constant overhead per table for <c>set</c>, <c>bag</c> and
+            <c>duplicate_bag</c> when the <c>true</c> alternative for
+            the <c>write_concurrency</c> option is not used. For
+            all tables with the <c>auto</c> alternative and <c>ordered_set</c>
+            tables with <c>true</c> alternative the
+            memory overhead depends on the amount of actual detected concurrency during
+            runtime. The memory overhead can be especially large when
+            both <c>write_concurrency</c> and <c>read_concurrency</c> are combined.</p>
 	    <note>
               <p>Prior to stdlib-3.7 (OTP-22.0) <c>write_concurrency</c> had no
 	      effect on <c>ordered_set</c>.</p>
             </note>
+            <note>
+              <p>The <c>auto</c> alternative for the <c>write_concurrency</c>
+              option is only available in OTP-25.0 and above.</p>
+            </note>
             <marker id="new_2_read_concurrency"></marker>
           </item>
-          <tag><c>{read_concurrency,boolean()}</c></tag>
+          <tag since="OTP R14B"><c>{read_concurrency,boolean()}</c></tag>
           <item>
             <p>Performance tuning. Defaults to <c>false</c>. When set to
               <c>true</c>, the table is optimized for concurrent read
-              operations. When this option is enabled on a runtime system with
-              SMP support, read operations become much cheaper; especially on
+              operations. When this option is enabled read operations
+	      become much cheaper; especially on
               systems with multiple physical processors. However, switching
               between read and write operations becomes more expensive.</p>
             <p>You typically want to enable this option when concurrent read
@@ -1319,15 +1412,18 @@ ets:select(Table, MatchSpec),</code>
               read bursts and large concurrent write bursts are common.</p>
             <marker id="new_2_decentralized_counters"></marker>
           </item>
-          <tag><c>{decentralized_counters,boolean()}</c></tag>
+          <tag since="OTP 23.0"><c>{decentralized_counters,boolean()}</c></tag>
           <item>
             <p>
-              Performance tuning. Defaults to <c>true</c> for tables
-              of type <c>ordered_set</c> with the
-              <seeerl marker="#new_2_write_concurrency">
-              <c>write_concurrency</c></seeerl> option enabled, and defaults to
-	      false for all other   table types. This option has no effect if
-	      the <c>write_concurrency</c> option is set to <c>false</c>.</p>
+              Performance tuning. Defaults to <c>true</c> for all
+              tables with the <c>write_concurrency</c> option set
+              to <c>auto</c>. For
+              tables of type <c>ordered_set</c> the option also
+              defaults to true when the <c>write_concurrency</c> option
+              is set to <c>true</c>. The option defaults to
+              <c>false</c> for all other configurations. This option
+              has no effect if the <c>write_concurrency</c> option is
+              set to <c>false</c>.</p>
 	    <p>
 	      When this option is set to <c>true</c>, the table is optimized for
 	      frequent concurrent calls to operations that modify the tables
@@ -1351,7 +1447,7 @@ ets:select(Table, MatchSpec),</code>
             </p>
               <marker id="new_2_compressed"></marker>
           </item>
-          <tag><c>compressed</c></tag>
+          <tag since="OTP R14B01"><c>compressed</c></tag>
           <item>
             <p>If this option is present, the table data is stored in a more
               compact format to consume less memory. However, it will make
@@ -1368,7 +1464,7 @@ ets:select(Table, MatchSpec),</code>
       <fsummary>Return the next key in an ETS table.</fsummary>
       <desc>
         <p>Returns the next key <c><anno>Key2</anno></c>, following key
-          <c><anno>Key1</anno></c> in table <c><anno>Tab</anno></c>. For table
+          <c><anno>Key1</anno></c> in table <c><anno>Table</anno></c>. For table
           type <c>ordered_set</c>, the next key in Erlang term order is
           returned. For other table types, the next key
           according to the internal order of the table is returned. If no
@@ -1393,7 +1489,7 @@ ets:select(Table, MatchSpec),</code>
       <desc>
         <p>Returns the previous key <c><anno>Key2</anno></c>, preceding key
           <c><anno>Key1</anno></c> according to Erlang term order in table
-          <c><anno>Tab</anno></c> of type <c>ordered_set</c>. For other
+          <c><anno>Table</anno></c> of type <c>ordered_set</c>. For other
           table types, the function is synonymous to
           <seemfa marker="#next/2"><c>next/2</c></seemfa>.
           If no previous key exists, <c>'$end_of_table'</c> is returned.</p>
@@ -1406,7 +1502,7 @@ ets:select(Table, MatchSpec),</code>
       <name name="rename" arity="2" since=""/>
       <fsummary>Rename a named ETS table.</fsummary>
       <desc>
-        <p>Renames the named table <c><anno>Tab</anno></c> to the new name
+        <p>Renames the named table <c><anno>Table</anno></c> to the new name
           <c><anno>Name</anno></c>. Afterwards, the old name cannot be used to
           access the table. Renaming an unnamed table has no effect.</p>
       </desc>
@@ -1478,9 +1574,9 @@ ets:select(ets:repair_continuation(MaybeBroken,MS)).</code>
 	<seemfa marker="#select/3"><c>select/3</c></seemfa> &amp;
 	<seemfa marker="#select/1"><c>select/1</c></seemfa>.</p>
         <p>A process fixes a table by calling
-          <c>safe_fixtable(<anno>Tab</anno>, true)</c>. The table remains
+          <c>safe_fixtable(<anno>Table</anno>, true)</c>. The table remains
           fixed until the process releases it by calling
-          <c>safe_fixtable(<anno>Tab</anno>, false)</c>, or until the process
+          <c>safe_fixtable(<anno>Table</anno>, false)</c>, or until the process
           terminates.</p>
         <p>If many processes fix a table, the table remains fixed
           until all processes have released it (or terminated).
@@ -1496,21 +1592,21 @@ ets:select(ets:repair_continuation(MaybeBroken,MS)).</code>
 	  <c>next/2</c> is called.</p>
         <p><em>Example:</em></p>
         <code type="none">
-clean_all_with_value(Tab,X) ->
-    safe_fixtable(Tab,true),
-    clean_all_with_value(Tab,X,ets:first(Tab)),
-    safe_fixtable(Tab,false).
+clean_all_with_value(Table,X) ->
+    safe_fixtable(Table,true),
+    clean_all_with_value(Table,X,ets:first(Table)),
+    safe_fixtable(Table,false).
 
-clean_all_with_value(Tab,X,'$end_of_table') ->
+clean_all_with_value(Table,X,'$end_of_table') ->
     true;
-clean_all_with_value(Tab,X,Key) ->
-    case ets:lookup(Tab,Key) of
+clean_all_with_value(Table,X,Key) ->
+    case ets:lookup(Table,Key) of
         [{Key,X}] ->
-            ets:delete(Tab,Key);
+            ets:delete(Table,Key);
         _ ->
             true
     end,
-    clean_all_with_value(Tab,X,ets:next(Tab,Key)).</code>
+    clean_all_with_value(Table,X,ets:next(Table,Key)).</code>
         <p>Notice that deleted objects are not freed from a
           fixed table until it has been released. If a process fixes a
           table but never releases it, the memory used by the deleted
@@ -1518,7 +1614,7 @@ clean_all_with_value(Tab,X,Key) ->
           the table also degrades significantly.</p>
         <p>To retrieve information about which processes have fixed which
           tables, use <seeerl marker="#info_2_safe_fixed_monotonic_time">
-          <c>info(Tab, safe_fixed_monotonic_time)</c></seeerl>. A system with
+          <c>info(Table, safe_fixed_monotonic_time)</c></seeerl>. A system with
           many processes fixing tables can need a monitor that sends alarms
           when tables have been fixed for too long.</p>
         <p>Notice that <c>safe_fixtable/2</c> is not necessary for table type
@@ -1546,7 +1642,7 @@ clean_all_with_value(Tab,X,Key) ->
       <fsummary>Match the objects in an ETS table against a
         match specification.</fsummary>
       <desc>
-        <p>Matches the objects in table <c><anno>Tab</anno></c> using a
+        <p>Matches the objects in table <c><anno>Table</anno></c> using a
           <seeerl marker="#match_spec">match specification</seeerl>.
           This is a more general call than
           <seemfa marker="#match/2"><c>match/2</c></seemfa> and
@@ -1575,23 +1671,23 @@ Result = "Term construct"</code>
           match variables in a list), so that the following
           <c>match/2</c> expression:</p>
         <code type="none">
-ets:match(Tab,{'$1','$2','$3'})</code>
+ets:match(Table,{'$1','$2','$3'})</code>
         <p>is exactly equivalent to:</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$3'},[],['$$']}])</code>
+ets:select(Table,[{{'$1','$2','$3'},[],['$$']}])</code>
         <p>And that the following <c>match_object/2</c> call:</p>
         <code type="none">
-ets:match_object(Tab,{'$1','$2','$1'})</code>
+ets:match_object(Table,{'$1','$2','$1'})</code>
         <p>is exactly equivalent to</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$1'},[],['$_']}])</code>
+ets:select(Table,[{{'$1','$2','$1'},[],['$_']}])</code>
         <p>Composite terms can be constructed in the <c>Result</c> part
           either by simply writing a list, so that the following code:</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$3'},[],['$$']}])</code>
+ets:select(Table,[{{'$1','$2','$3'},[],['$$']}])</code>
         <p>gives the same output as:</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$3'},[],[['$1','$2','$3']]}])</code>
+ets:select(Table,[{{'$1','$2','$3'},[],[['$1','$2','$3']]}])</code>
         <p>That is, all the bound variables in the match head as a list. If
           tuples are to be constructed, one has to write a tuple of
           arity 1 where the single element in the tuple is the tuple
@@ -1599,10 +1695,10 @@ ets:select(Tab,[{{'$1','$2','$3'},[],[['$1','$2','$3']]}])</code>
           for a <c>Guard</c>).</p>
         <p>Therefore the following call:</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$1'},[],['$_']}])</code>
+ets:select(Table,[{{'$1','$2','$1'},[],['$_']}])</code>
         <p>gives the same output as:</p>
         <code type="none">
-ets:select(Tab,[{{'$1','$2','$1'},[],[{{'$1','$2','$3'}}]}])</code>
+ets:select(Table,[{{'$1','$2','$1'},[],[{{'$1','$2','$3'}}]}])</code>
         <p>This syntax is equivalent to the syntax used in the trace
           patterns (see the
           <seeerl marker="runtime_tools:dbg">
@@ -1664,14 +1760,14 @@ is_integer(X), is_integer(Y), X + Y < 4711]]></code>
         specification and return the number of objects for which the match
         specification returned <c>true</c>.</fsummary>
       <desc>
-        <p>Matches the objects in table <c><anno>Tab</anno></c> using a
+        <p>Matches the objects in table <c><anno>Table</anno></c> using a
           <seeerl marker="#match_spec">match specification</seeerl>. If the
           match specification returns <c>true</c> for an object, that object
           considered a match and is counted. For any other result from
           the match specification the object is not considered a match and is
           therefore not counted.</p>
         <p>This function can be described as a
-          <seemfa marker="#match_delete/2"><c>match_delete/2</c></seemfa>
+          <seemfa marker="#select_delete/2"><c>select_delete/2</c></seemfa>
           function that does not delete any elements, but only counts them.</p>
         <p>The function returns the number of objects matched.</p>
       </desc>
@@ -1683,7 +1779,7 @@ is_integer(X), is_integer(Y), X + Y < 4711]]></code>
         specification and delete objects where the match specification
         returns <c>true</c>.</fsummary>
       <desc>
-        <p>Matches the objects in table <c><anno>Tab</anno></c> using a
+        <p>Matches the objects in table <c><anno>Table</anno></c> using a
           <seeerl marker="#match_spec">match specification</seeerl>. If the
           match specification returns <c>true</c> for an object, that object is
           removed from the table. For any other result from the match
@@ -1705,7 +1801,7 @@ is_integer(X), is_integer(Y), X + Y < 4711]]></code>
       <name name="select_replace" arity="2" since="OTP 20.0"/>
       <fsummary>Match and replace objects atomically in an ETS table</fsummary>
       <desc>
-        <p>Matches the objects in the table <c><anno>Tab</anno></c> using a
+        <p>Matches the objects in the table <c><anno>Table</anno></c> using a
           <seeerl marker="#match_spec">match specification</seeerl>. For each
           matched object, the existing object is replaced with
           the match specification result.</p>
@@ -1713,7 +1809,7 @@ is_integer(X), is_integer(Y), X + Y < 4711]]></code>
 	  <seeerl marker="#concurrency">atomic and isolated</seeerl>. The
 	  <c>select_replace</c> table traversal as a whole, like all other select functions,
 	  does not give such guarantees.</p>
-	<p>The match specifiction must be guaranteed to <em>retain the key</em>
+	<p>The match specification must be guaranteed to <em>retain the key</em>
 	  of any matched object. If not, <c>select_replace</c> will fail with <c>badarg</c>
 	  without updating any objects.</p>
         <p>For the moment, due to performance and semantic constraints,
@@ -1823,7 +1919,7 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
           <c>first</c>/<c>next</c> or <c>last</c>/<c>prev</c> are to be used
           instead.</p>
         <p>Returns all objects in slot <c><anno>I</anno></c> of table
-          <c><anno>Tab</anno></c>. A table can be traversed by repeatedly
+          <c><anno>Table</anno></c>. A table can be traversed by repeatedly
           calling the function,
           starting with the first slot <c><anno>I</anno>=0</c> and
           ending when <c>'$end_of_table'</c> is returned.
@@ -1843,10 +1939,10 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
       <name name="tab2file" arity="2" since=""/>
       <fsummary>Dump an ETS table to a file.</fsummary>
       <desc>
-        <p>Dumps table <c><anno>Tab</anno></c> to file
+        <p>Dumps table <c><anno>Table</anno></c> to file
           <c><anno>Filename</anno></c>.</p>
         <p>Equivalent to
-          <c>tab2file(<anno>Tab</anno>, <anno>Filename</anno>,[])</c></p>
+          <c>tab2file(<anno>Table</anno>, <anno>Filename</anno>,[])</c></p>
       </desc>
     </func>
 
@@ -1854,7 +1950,7 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
       <name name="tab2file" arity="3" since=""/>
       <fsummary>Dump an ETS table to a file.</fsummary>
       <desc>
-        <p>Dumps table <c><anno>Tab</anno></c> to file
+        <p>Dumps table <c><anno>Table</anno></c> to file
           <c><anno>Filename</anno></c>.</p>
         <p>When dumping the table, some information about the table
           is dumped to a header at the beginning of the dump. This
@@ -1901,7 +1997,7 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
       <name name="tab2list" arity="1" since=""/>
       <fsummary>Return a list of all objects in an ETS table.</fsummary>
       <desc>
-        <p>Returns a list of all objects in table <c><anno>Tab</anno></c>.</p>
+        <p>Returns a list of all objects in table <c><anno>Table</anno></c>.</p>
       </desc>
     </func>
 
@@ -1995,7 +2091,7 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
           tables, Dets tables,
           and lists are also recognized by QLC as sources of
           data. Calling <c>table/1,2</c> is the means to make the
-          ETS table <c>Tab</c> usable to QLC.</p>
+          ETS table <c>Table</c> usable to QLC.</p>
         <p>When there are only simple restrictions on the key position,
           QLC uses <seemfa marker="#lookup/2"><c>lookup/2</c></seemfa>
           to look up the keys. When
@@ -2043,12 +2139,12 @@ Success = (1 =:= ets:select_replace(T, [{Old, [], [{const, New}]}])),
         <p>An explicit match specification is here used to traverse the
           table:</p>
         <pre>
-9> <input>true = ets:insert(Tab = ets:new(t, []), [{1,a},{2,b},{3,c},{4,d}]),</input>
+9> <input>true = ets:insert(Table = ets:new(t, []), [{1,a},{2,b},{3,c},{4,d}]),</input>
 <input>MS = ets:fun2ms(fun({X,Y}) when (X > 1) or (X &lt; 5) -> {Y} end),</input>
-<input>QH1 = ets:table(Tab, [{traverse, {select, MS}}]).</input></pre>
+<input>QH1 = ets:table(Table, [{traverse, {select, MS}}]).</input></pre>
         <p>An example with an implicit match specification:</p>
         <pre>
-10> <input>QH2 = qlc:q([{Y} || {X,Y} &lt;- ets:table(Tab), (X > 1) or (X &lt; 5)]).</input></pre>
+10> <input>QH2 = qlc:q([{Y} || {X,Y} &lt;- ets:table(Table), (X > 1) or (X &lt; 5)]).</input></pre>
         <p>The latter example is equivalent to the former, which
           can be verified using function <c>qlc:info/1</c>:</p>
         <pre>
@@ -2066,7 +2162,7 @@ true</pre>
         ETS table.</fsummary>
       <desc>
         <p>Returns and removes a list of all objects with key
-          <c><anno>Key</anno></c> in table <c><anno>Tab</anno></c>.</p>
+          <c><anno>Key</anno></c> in table <c><anno>Table</anno></c>.</p>
         <p>The specified <c><anno>Key</anno></c> is used to identify the object
           by either <em>comparing equal</em> the key of an object in an
           <c>ordered_set</c> table, or <em>matching</em> in other types of
@@ -2108,7 +2204,7 @@ true</pre>
       </fsummary>
       <desc>
         <p>Fills an already created/opened Dets table with the objects
-          in the already opened ETS table named <c><anno>Tab</anno></c>.
+          in the already opened ETS table named <c><anno>Table</anno></c>.
           The Dets table is emptied before the objects are inserted.</p>
       </desc>
     </func>
@@ -2121,7 +2217,7 @@ true</pre>
       <name name="update_counter" arity="3" clause_i="3" since=""/>
       <name name="update_counter" arity="4" clause_i="3" since="OTP 18.0"/>
       <fsummary>Update a counter object in an ETS table.</fsummary>
-      <type variable="Tab"/>
+      <type variable="Table"/>
       <type variable="Key"/>
       <type variable="UpdateOp" name_i="1"/>
       <type variable="Pos" name_i="1"/>
@@ -2134,8 +2230,8 @@ true</pre>
           the object by incrementing an element, and insert the resulting
           object into the table again. The operation is guaranteed to be
           <seeerl marker="#concurrency">atomic and isolated</seeerl>.</p>
-        <p>This function destructively update the object with key
-          <c><anno>Key</anno></c> in table <c><anno>Tab</anno></c> by adding
+        <p>This function destructively updates the object with key
+          <c><anno>Key</anno></c> in table <c><anno>Table</anno></c> by adding
           <c><anno>Incr</anno></c> to the element at position
           <c><anno>Pos</anno></c>. The new counter value is
           returned. If no position is specified, the element directly
@@ -2201,7 +2297,7 @@ true</pre>
       <name name="update_element" arity="3" clause_i="2" since=""/>
       <fsummary>Update the <c>Pos</c>:th element of the object with a
         specified key in an ETS table.</fsummary>
-      <type variable="Tab"/>
+      <type variable="Table"/>
       <type variable="Key"/>
       <type variable="Value"/>
       <type variable="Pos"/>
@@ -2210,7 +2306,7 @@ true</pre>
           elements within an object, without the trouble of having to look up, 
           update, and write back the entire object.</p>
         <p>This function destructively updates the object with key
-          <c><anno>Key</anno></c> in table <c><anno>Tab</anno></c>.
+          <c><anno>Key</anno></c> in table <c><anno>Table</anno></c>.
           The element at position <c><anno>Pos</anno></c> is given
           the value <c><anno>Value</anno></c>.</p>
         <p>A list of <c>{<anno>Pos</anno>,<anno>Value</anno>}</c> can be

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2002-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -54,15 +54,14 @@
 -export([multiply_timetraps/1, scale_timetraps/1, get_timetrap_parameters/0]).
 -export([create_priv_dir/1]).
 -export([cover/1, cover/2, cover/3,
-	 cover_compile/7, cover_analyse/2, cross_cover_analyse/2,
-	 trc/1, stop_trace/0]).
+	 cover_compile/7, cover_analyse/2, cross_cover_analyse/2]).
 -export([testcase_callback/1]).
 -export([set_random_seed/1]).
 -export([kill_slavenodes/0]).
 
 %%% TEST_SERVER INTERFACE %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 -export([print/2, print/3, print/4, print_timestamp/2]).
--export([start_node/3, stop_node/1, wait_for_node/1, is_release_available/1]).
+-export([start_node/3, stop_node/1, wait_for_node/1, is_release_available/1, find_release/1]).
 -export([format/1, format/2, format/3, to_string/1]).
 -export([get_target_info/0]).
 -export([get_hosts/0]).
@@ -115,9 +114,10 @@
 -record(state,{jobs=[], levels={1,19,10}, reject_io_reqs=false,
 	       multiply_timetraps=1, scale_timetraps=true,
 	       create_priv_dir=auto_per_run, finish=false,
-	       target_info, trc=false, cover=false, wait_for_node=[],
+	       target_info, cover=false, wait_for_node=[],
 	       testcase_callback=undefined, idle_notify=[],
-	       get_totals=false, random_seed=undefined}).
+	       get_totals=false, random_seed=undefined,
+               old_releases=#{}}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% OPERATOR INTERFACE
@@ -224,55 +224,53 @@ add_tests_with_skip(LogDir, Tests, Skip) ->
 %% COMMAND LINE INTERFACE
 
 parse_cmd_line(Cmds) ->
-    parse_cmd_line(Cmds, [], [], local, false, false, undefined).
+    parse_cmd_line(Cmds, [], [], local, false, undefined).
 
-parse_cmd_line(['SPEC',Spec|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+parse_cmd_line(['SPEC',Spec|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     case file:consult(Spec) of
 	{ok, TermList} ->
 	    Name = filename:rootname(Spec),
 	    parse_cmd_line(Cmds, TermList++SpecList, [Name|Names], Param,
-			   Trc, Cov, TCCB);
+			   Cov, TCCB);
 	{error,Reason} ->
 	    io:format("Can't open ~tw: ~tp\n",[Spec, file:format_error(Reason)]),
-	    parse_cmd_line(Cmds, SpecList, Names, Param, Trc, Cov, TCCB)
+	    parse_cmd_line(Cmds, SpecList, Names, Param, Cov, TCCB)
     end;
-parse_cmd_line(['NAME',Name|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+parse_cmd_line(['NAME',Name|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     parse_cmd_line(Cmds, SpecList, [{name,atom_to_list(Name)}|Names],
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['SKIPMOD',Mod|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['SKIPMOD',Mod|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     parse_cmd_line(Cmds, [{skip,{Mod,"by command line"}}|SpecList], Names,
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['SKIPCASE',Mod,Case|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['SKIPCASE',Mod,Case|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     parse_cmd_line(Cmds, [{skip,{Mod,Case,"by command line"}}|SpecList], Names,
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['DIR',Dir|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['DIR',Dir|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     Name = filename:basename(Dir),
     parse_cmd_line(Cmds, [{topcase,{dir,Name}}|SpecList], [Name|Names],
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['MODULE',Mod|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['MODULE',Mod|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     parse_cmd_line(Cmds,[{topcase,{Mod,all}}|SpecList],[atom_to_list(Mod)|Names],
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['CASE',Mod,Case|Cmds], SpecList, Names, Param, Trc, Cov, TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['CASE',Mod,Case|Cmds], SpecList, Names, Param, Cov, TCCB) ->
     parse_cmd_line(Cmds,[{topcase,{Mod,Case}}|SpecList],[atom_to_list(Mod)|Names],
-		   Param, Trc, Cov, TCCB);
-parse_cmd_line(['TRACE',Trc|Cmds], SpecList, Names, Param, _Trc, Cov, TCCB) ->
-    parse_cmd_line(Cmds, SpecList, Names, Param, Trc, Cov, TCCB);
-parse_cmd_line(['COVER',App,CF,Analyse|Cmds], SpecList, Names, Param, Trc, _Cov, TCCB) ->
-    parse_cmd_line(Cmds, SpecList, Names, Param, Trc, {{App,CF}, Analyse}, TCCB);
-parse_cmd_line(['TESTCASE_CALLBACK',Mod,Func|Cmds], SpecList, Names, Param, Trc, Cov, _) ->
-    parse_cmd_line(Cmds, SpecList, Names, Param, Trc, Cov, {Mod,Func});
-parse_cmd_line([Obj|_Cmds], _SpecList, _Names, _Param, _Trc, _Cov, _TCCB) ->
+		   Param, Cov, TCCB);
+parse_cmd_line(['COVER',App,CF,Analyse|Cmds], SpecList, Names, Param, _Cov, TCCB) ->
+    parse_cmd_line(Cmds, SpecList, Names, Param, {{App,CF}, Analyse}, TCCB);
+parse_cmd_line(['TESTCASE_CALLBACK',Mod,Func|Cmds], SpecList, Names, Param, Cov, _) ->
+    parse_cmd_line(Cmds, SpecList, Names, Param, Cov, {Mod,Func});
+parse_cmd_line([Obj|_Cmds], _SpecList, _Names, _Param, __Cov, _TCCB) ->
     io:format("~w: Bad argument: ~tw\n", [?MODULE,Obj]),
     io:format(" Use the `ts' module to start tests.\n", []),
     io:format(" (If you ARE using `ts', there is a bug in `ts'.)\n", []),
     halt(1);
-parse_cmd_line([], SpecList, Names, Param, Trc, Cov, TCCB) ->
+parse_cmd_line([], SpecList, Names, Param, Cov, TCCB) ->
     NameList = lists:reverse(Names, ["suite"]),
     Name = case lists:keysearch(name, 1, NameList) of
 	       {value,{name,N}} -> N;
 	       false -> hd(NameList)
 	   end,
-    {lists:reverse(SpecList), Name, Param, Trc, Cov, TCCB}.
+    {lists:reverse(SpecList), Name, Param, Cov, TCCB}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% cast_to_list(X) -> string()
@@ -311,12 +309,8 @@ start_link() ->
 
 run_test(CommandLine) ->
     process_flag(trap_exit,true),
-    {SpecList,Name,Param,Trc,Cov,TCCB} = parse_cmd_line(CommandLine),
+    {SpecList,Name,Param,Cov,TCCB} = parse_cmd_line(CommandLine),
     {ok,_TSPid} = start_link(Param),
-    case Trc of
-	false -> ok;
-	File -> trc(File)
-    end,
     case Cov of
 	false -> ok;
 	{{App,CoverFile},Analyse} -> cover(App, maybe_file(CoverFile), Analyse)
@@ -398,12 +392,6 @@ get_timetrap_parameters() ->
 
 create_priv_dir(Value) ->
     controller_call({create_priv_dir,Value}).
-
-trc(TraceFile) ->
-    controller_call({trace,TraceFile}, 2*?ACCEPT_TIMEOUT).
-
-stop_trace() ->
-    controller_call(stop_trace).
 
 node_started(Node) ->
     gen_server:cast(?MODULE, {node_started,Node}).
@@ -696,7 +684,7 @@ handle_call({finish,Fini}, _From, State) ->
 %% handle_call({idle_notify,Fun}, From, State) -> {ok,Pid}
 %%
 %% Lets a test client subscribe to receive a notification when the
-%% test server becomes idle (can be used to syncronize jobs).
+%% test server becomes idle (can be used to synchronize jobs).
 %% test_server calls Fun(From) when idle.
 
 handle_call({idle_notify,Fun}, {Cli,_Ref}, State) ->
@@ -721,7 +709,7 @@ handle_call({start_get_totals,Fun}, {Cli,_Ref}, State) ->
 %% handle_call(stop_get_totals, From, State) -> ok
 %%
 %% Lets a test client subscribe to receive a notification when the
-%% test server becomes idle (can be used to syncronize jobs).
+%% test server becomes idle (can be used to synchronize jobs).
 %% test_server calls Fun(From) when idle.
 
 handle_call(stop_get_totals, {_Cli,_Ref}, State) ->
@@ -768,7 +756,7 @@ handle_call({reject_io_reqs,Bool}, _From, State) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% handle_call({multiply_timetraps,N}, _, State) -> ok
-%% N = integer() | infinity
+%% N = number() | infinity
 %%
 %% Multiplies all timetraps set by test cases with N
 
@@ -794,45 +782,6 @@ handle_call({scale_timetraps,Bool}, _From, State) ->
 
 handle_call(get_timetrap_parameters, _From, State) ->
     {reply,{State#state.multiply_timetraps,State#state.scale_timetraps},State};
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% handle_call({trace,TraceFile}, _, State) -> ok | {error,Reason}
-%%
-%% Starts a separate node (trace control node) which
-%% starts tracing on target and all slave nodes
-%%
-%% TraceFile is a text file with elements of type
-%% {Trace,Mod,TracePattern}.
-%% {Trace,Mod,Func,TracePattern}.
-%% {Trace,Mod,Func,Arity,TracePattern}.
-%%
-%% Trace = tp | tpl;  local or global call trace
-%% Mod,Func = atom(), Arity=integer(); defines what to trace
-%% TracePattern = [] | match_spec()
-%%
-%% The 'call' trace flag is set on all processes, and then
-%% the given trace patterns are set.
-
-handle_call({trace,TraceFile}, _From, State=#state{trc=false}) ->
-    TI = State#state.target_info,
-    case test_server_node:start_tracer_node(TraceFile, TI) of
-	{ok,Tracer} -> {reply,ok,State#state{trc=Tracer}};
-	Error -> {reply,Error,State}
-    end;
-handle_call({trace,_TraceFile}, _From, State) ->
-    {reply,{error,already_tracing},State};
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% handle_call(stop_trace, _, State) -> ok | {error,Reason}
-%%
-%% Stops tracing on target and all slave nodes and
-%% terminates trace control node
-
-handle_call(stop_trace, _From, State=#state{trc=false}) ->
-    {reply,{error,not_tracing},State};
-handle_call(stop_trace, _From, State) ->
-    R = test_server_node:stop_tracer_node(State#state.trc),
-    {reply,R,State#state{trc=false}};
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% handle_call({cover,CoverInfo}, _, State) -> ok | {error,Reason}
@@ -962,7 +911,26 @@ handle_call({stop_node, Name}, _From, State) ->
 
 handle_call({is_release_available, Release}, _From, State) ->
     R = test_server_node:is_release_available(Release),
-    {reply, R, State}.
+    {reply, R, State};
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% handle_call({find_release,Name}, _, State) -> PathToReleaseErlFile | not_available
+%%
+%% Find the path of the release's erl file if available
+
+handle_call({find_release, Release}, From, State = #state{ old_releases = OldReleases }) ->
+    case maps:find(Release, OldReleases) of
+        error ->
+            R =
+                case test_server_node:find_release(Release) of
+                    none -> not_available;
+                    PathToRelease -> PathToRelease
+                end,
+            handle_call({find_release, Release}, From,
+                        State#state{ old_releases = OldReleases#{ Release =>  R }});
+        {ok, R} ->
+            {reply, R, State}
+    end.
 
 %%--------------------------------------------------------------------
 set_hosts(Hosts) ->
@@ -974,10 +942,6 @@ set_hosts(Hosts) ->
 %% Called by test_server_node when a slave/peer node is fully started.
 
 handle_cast({node_started,Node}, State) ->
-    case State#state.trc of
-	false -> ok;
-	Trc -> test_server_node:trace_nodes(Trc, [Node])
-    end,
     NewWaitList =
 	case lists:keysearch(Node,1,State#state.wait_for_node) of
 	    {value,{Node,From}} ->
@@ -1052,14 +1016,8 @@ handle_info({'EXIT',Pid,Reason}, State) ->
 %% handle_info({tcp_closed,Sock}, State)
 %%
 %% A Socket was closed. This indicates that a node died.
-%% This can be
-%% *Slave or peer node started by a test suite
-%% *Trace controll node
+%% This can be a slave or peer node started by a test suite
 
-handle_info({tcp_closed,Sock}, State=#state{trc=Sock}) ->
-    %% Tracer node died - can't really do anything
-    %%! Maybe print something???
-    {noreply,State#state{trc=false}};
 handle_info({tcp_closed,Sock}, State) ->
     test_server_node:nodedown(Sock),
     {noreply,State};
@@ -1076,10 +1034,6 @@ handle_info(_, State) ->
 
 terminate(_Reason, State) ->
     test_server_sup:util_stop(),
-    case State#state.trc of
-	false -> ok;
-	Sock -> test_server_node:stop_tracer_node(Sock)
-    end,
     ok = kill_all_jobs(State#state.jobs),
     _ = test_server_node:kill_nodes(),
     ok.
@@ -1130,7 +1084,7 @@ init_tester(Mod, Func, Args, Dir, Name, {_,_,MinLev}=Levels,
     put(app, common_test),
     put(test_server_name, Name),
     put(test_server_dir, Dir),
-    put(test_server_total_time, 0),
+    put(test_server_total_time, 0.0),
     put(test_server_ok, 0),
     put(test_server_failed, 0),
     put(test_server_skipped, {0,0}),
@@ -1181,7 +1135,7 @@ init_tester(Mod, Func, Args, Dir, Name, {_,_,MinLev}=Levels,
 	    report_severe_error(Reason),
 	    print(1, "EXIT, reason ~tp", [Reason])
     end,
-    Time = TimeMy/1000000,
+    ElapsedTimeSeconds = TimeMy/1000000,
     SuccessStr =
 	case get(test_server_failed) of
 	    0 -> "Ok";
@@ -1197,11 +1151,14 @@ init_tester(Mod, Func, Args, Dir, Name, {_,_,MinLev}=Levels,
 	end,
     OkN = get(test_server_ok),
     FailedN = get(test_server_failed),
+    TotalTestTime = get(test_server_total_time),
     print(html,"\n</tbody>\n<tfoot>\n"
-	  "<tr><td></td><td><b>TOTAL</b></td><td></td><td></td><td></td>"
-	  "<td>~.3fs</td><td><b>~ts</b></td><td>~w Ok, ~w Failed~ts of ~w</td></tr>\n"
-	  "</tfoot>\n",
-	  [Time,SuccessStr,OkN,FailedN,SkipStr,OkN+FailedN+SkippedN]),
+          "<tr><td></td><td><b>TOTAL</b></td><td></td><td></td><td></td>"
+          "<td>~.fs<br></td><td><b>~ts</b></td><td>~w Ok, ~w Failed~ts of ~w<br>"
+          "Elapsed Time: ~.3fs</td></tr>\n"
+          "</tfoot>\n",
+          [TotalTestTime,SuccessStr,OkN,FailedN,SkipStr,OkN+FailedN+SkippedN,
+           ElapsedTimeSeconds]),
 
     test_server_io:stop([major,html,unexpected_io]),
     {UnexpectedIoName,UnexpectedIoFooter} = get(test_server_unexpected_footer),
@@ -1293,12 +1250,12 @@ do_spec(SpecName, TimetrapSpec) when is_list(SpecName) ->
 %% cannot be granted during the test run. Skip has the syntax specified
 %% by collect_cases/3.
 %%
-%% {nodes,Nodes} Lists node names avaliable to the test suites. Nodes have
+%% {nodes,Nodes} Lists node names available to the test suites. Nodes have
 %% the syntax specified by collect_cases/3.
 %%
 %% {require_nodenames, Num} Specifies how many nodenames the test suite will
-%% need. Theese are automaticly generated and inserted into the Config by the
-%% test_server. The caller may specify other hosts to run theese nodes by
+%% need. These are automatically generated and inserted into the Config by the
+%% test_server. The caller may specify other hosts to run these nodes by
 %% using the {hosts, Hosts} option. If there are no hosts specified, all
 %% nodenames will be generated from the local host.
 %%
@@ -1309,7 +1266,7 @@ do_spec(SpecName, TimetrapSpec) when is_list(SpecName) ->
 %% all hosts given in this Hosts list. The hostnames are given as atoms or
 %% strings.
 %%
-%% {diskless, true}</c></tag> is kept for backwards compatiblilty and
+%% {diskless, true}</c></tag> is kept for backwards compatibility and
 %% should not be used. Use a configuration test case instead.
 %%
 %% This function is meant to be called by a process created by
@@ -1569,7 +1526,7 @@ do_test_cases(TopCases, SkipCases,
 	    print(html, xhtml("\n<p><b>Host info:</b><br>\n",
 			      "\n<p><b>Host info:</b><br />\n")),
 	    print_who(test_server_sup:hoststr(), test_server_sup:get_username()),
-	    print(html, xhtml("<br>Used Erlang v~ts in <tt>~ts</tt></p>\n",
+	    print(html, xhtml("<br>Used Erlang v~ts in <code>~ts</code></p>\n",
 			      "<br />Used Erlang v~ts in \"~ts\"</p>\n"),
 		  [erlang:system_info(version), code:root_dir()]),
 	    
@@ -1577,7 +1534,7 @@ do_test_cases(TopCases, SkipCases,
 		    print(html, xhtml("\n<p><b>Target Info:</b><br>\n",
 				      "\n<p><b>Target Info:</b><br />\n")),
 		    print_who(TI#target_info.host, TI#target_info.username),
-		    print(html,xhtml("<br>Used Erlang v~ts in <tt>~ts</tt></p>\n",
+		    print(html,xhtml("<br>Used Erlang v~ts in <code>~ts</code></p>\n",
 				     "<br />Used Erlang v~ts in \"~ts\"</p>\n"),
 			  [TI#target_info.version, TI#target_info.root_dir]);
 	       true ->
@@ -2195,7 +2152,7 @@ do_add_end_per_suite_and_skip(LastMod, LastRef, Mod, FwMod) ->
 %% Runs the specified tests, then displays/logs the summary.
 
 run_test_cases(TestSpec, Config, TimetrapData) ->
-    test_server:init_valgrind(),
+    test_server:init_memory_checker(),
     case lists:member(no_src, get(test_server_logopts)) of
 	true ->
 	    ok;
@@ -2548,7 +2505,6 @@ run_test_cases_loop([{conf,Ref,Props,{Mod,Func}}|_Cases]=Cs0,
 			After = ?now,
 			Before = get(test_server_parallel_start_time),
 			Elapsed = timer:now_diff(After, Before)/1000000,
-			put(test_server_total_time, Elapsed),
 			{false,tl(Mode0),undefined,Elapsed,
 			 update_status(Ref, OkSkipFail, Status)};
 		    _ ->
@@ -2659,7 +2615,7 @@ run_test_cases_loop([{conf,Ref,Props,{Mod,Func}}|_Cases]=Cs0,
 		case get_repeat(Props) of
 		    undefined ->
 			%% we *must* have a status entry for every conf since we
-			%% will continously update status with test case results
+			%% will continuously update status with test case results
 			%% without knowing the Ref (but update hd(Status))
 			{false,new_status(Ref, Status1),Cases1,?void_fun};
 		    {_RepType,N} when N =< 1 ->
@@ -2851,7 +2807,7 @@ run_test_cases_loop([{conf,Ref,Props,{Mod,Func}}|_Cases]=Cs0,
 	    stop_minor_log_file(),
 	    run_test_cases_loop(skip_cases_upto(Ref, Cases, Reason, conf,
 						CurrMode, skip_case),
-				[hd(Config)|Config], TimetrapData, Mode,
+				Config, TimetrapData, Mode,
 				delete_status(Ref, Status2));
 	{_,{skip_and_save,Reason,_SavedConfig},_} when StartConf ->
 	    ReportAbortRepeat(skipped),
@@ -3706,37 +3662,50 @@ handle_io_and_exit_loop(_, [], Ok,Skip,Fail) ->
 
 handle_io_and_exits(Main, CurrPid, CaseNum, Mod, Func, Cases) ->
     receive
-	{abort_current_testcase=Tag,_Reason,From} ->
-	    %% If a parallel group is executing, there is no unique
-	    %% current test case, so we must generate an error.
-	    From ! {self(),Tag,{error,parallel_group}},
-	    handle_io_and_exits(Main, CurrPid, CaseNum, Mod, Func, Cases);
-	%% end of io session from test case executed by main process
-	{finished,_,Main,CaseNum,Mod,Func,Result,_RetVal} ->
-	    test_server_io:print_buffered(CurrPid),
-	    {Result,{Mod,Func}};
-	%% end of io session from test case executed by parallel process
-	{finished,_,CurrPid,CaseNum,Mod,Func,Result,RetVal} ->
-	    test_server_io:print_buffered(CurrPid),
-	    case Result of
-		ok ->
-		    put(test_server_ok, get(test_server_ok)+1);
-		failed ->
-		    put(test_server_failed, get(test_server_failed)+1);
-		skipped ->
-		    SkipCounters =
-			update_skip_counters(RetVal, get(test_server_skipped)),
-		    put(test_server_skipped, SkipCounters)
-	    end,
-	    {Result,{Mod,Func}};
+        {abort_current_testcase=Tag,_Reason,From} ->
+            %% If a parallel group is executing, there is no unique
+            %% current test case, so we must generate an error.
+            From ! {self(),Tag,{error,parallel_group}},
+            handle_io_and_exits(Main, CurrPid, CaseNum, Mod, Func, Cases);
+        %% end of io session from test case executed by main process
+        {finished,_,Main,CaseNum,Mod,Func,Result,_RetVal} ->
+            test_server_io:print_buffered(CurrPid),
+            {Result,{Mod,Func}};
+        %% end of io session from test case executed by parallel process
+        {finished,_,CurrPid,CaseNum,Mod,Func,Result,RetVal} ->
+            test_server_io:print_buffered(CurrPid),
+            case Result of
+                ok ->
+                    {ReturnTime, _, _} = RetVal,
+                    put(test_server_total_time, get(test_server_total_time) + ReturnTime),
+                    put(test_server_ok, get(test_server_ok)+1),
+                    ReturnTime;
+                failed ->
+                    ReturnTime = case RetVal of
+                                     {_, T} when is_number(T) -> T;
+                                     {died, {timetrap_timeout, T}, _} -> T/1000;
+                                     {T, _ , _} when is_number(T) -> T;
+                                     _ -> 0
+                                 end,
+                    put(test_server_total_time, get(test_server_total_time) + ReturnTime),
+                    put(test_server_failed, get(test_server_failed)+1),
+                    ReturnTime;
+                skipped ->
+                    {ReturnTime, _, _} = RetVal,
+                    put(test_server_total_time, get(test_server_total_time) + ReturnTime),
+                    SkipCounters =
+                    update_skip_counters(RetVal, get(test_server_skipped)),
+                    put(test_server_skipped, SkipCounters)
+            end,
+            {Result,{Mod,Func}};
 
-	%% unexpected termination of test case process
-	{'EXIT',TCPid,Reason} when Reason /= normal ->
-	    test_server_io:print_buffered(CurrPid),
-	    {value,{_,_,Num,M,F}} = lists:keysearch(TCPid, 2, Cases),
-	    print(1, "Error! Process for test case #~w (~w:~tw) died! Reason: ~tp",
-		  [Num, M, F, Reason]),
-	    exit({unexpected_termination,{Num,M,F},{TCPid,Reason}})
+        %% unexpected termination of test case process
+        {'EXIT',TCPid,Reason} when Reason /= normal ->
+            test_server_io:print_buffered(CurrPid),
+            {value,{_,_,Num,M,F}} = lists:keysearch(TCPid, 2, Cases),
+            print(1, "Error! Process for test case #~w (~w:~tw) died! Reason: ~tp",
+            [Num, M, F, Reason]),
+            exit({unexpected_termination,{Num,M,F},{TCPid,Reason}})
     end.
 
 
@@ -3879,13 +3848,19 @@ run_test_case1(Ref, Num, Mod, Func, Args, RunInit,
 
     %% run the test case
     {Result,DetectedFail,ProcsBefore,ProcsAfter} =
-	run_test_case_apply(Num, Mod, Func, [UpdatedArgs], GrName,
-			    RunInit, TimetrapData),
+    run_test_case_apply(Num, Mod, Func, [UpdatedArgs], GrName,
+                        RunInit, TimetrapData),
     {Time,RetVal,Loc,Opts,Comment} =
-	case Result of
-	    Normal={_Time,_RetVal,_Loc,_Opts,_Comment} -> Normal;
-	    {died,DReason,DLoc,DCmt} -> {died,DReason,DLoc,[],DCmt}
-	end,
+    case Result of
+        {died,DReason,DLoc,DCmt} -> {died,DReason,DLoc,[],DCmt};
+        Died={died,{timetrap_timeout,TimetrapTime},_DLoc,_DOpts,_Comment} when is_number(TimetrapTime) ->
+            put(test_server_total_time, TimetrapTime/1000 + get(test_server_total_time)),
+            Died;
+        Died={died,_,_,_,_}-> Died;
+        Normal={Time1,_RetVal,_Loc,_Opts,_Comment} when is_number(Time1) ->
+            put(test_server_total_time, Time1 + get(test_server_total_time)),
+            Normal
+    end,
 
     print(minor, "<a name=\"end\"></a>", [], internal_raw),
     print(minor, "\n", [], internal_raw),
@@ -3952,18 +3927,18 @@ run_test_case1(Ref, Num, Mod, Func, Args, RunInit,
     %% status count on the main process (status of parallel test cases
     %% is updated later by the handle_test_case_io_and_status/0 function)
     case {RunInit,Status} of
-	{skip_init,_} ->			% conf doesn't count
-	    ok;
-	{_,ok} ->
-	    put(test_server_ok, get(test_server_ok)+1);
-	{_,failed} ->
-	    put(test_server_failed, get(test_server_failed)+1);
-	{_,skip} ->
-	    {US,AS} = get(test_server_skipped),
-	    put(test_server_skipped, {US+1,AS});
-	{_,auto_skip} ->
-	    {US,AS} = get(test_server_skipped),
-	    put(test_server_skipped, {US,AS+1})
+        {skip_init,_} ->			% conf doesn't count
+            ok;
+        {_,ok} ->
+            put(test_server_ok, get(test_server_ok)+1);
+        {_,failed} ->
+            put(test_server_failed, get(test_server_failed)+1);
+        {_,skip} ->
+            {US,AS} = get(test_server_skipped),
+            put(test_server_skipped, {US+1,AS});
+        {_,auto_skip} ->
+            {US,AS} = get(test_server_skipped),
+            put(test_server_skipped, {US,AS+1})
     end,
     %% only if test case execution is sequential do we care about the
     %% remaining processes and slave nodes count
@@ -3971,7 +3946,7 @@ run_test_case1(Ref, Num, Mod, Func, Args, RunInit,
 	Main ->
 	    case test_server_sup:framework_call(warn, [processes], true) of
 		true ->
-		    if ProcsBefore < ProcsAfter ->
+                    if ProcsBefore < ProcsAfter ->
 			    print(minor,
 				  "WARNING: ~w more processes in system after test case",
 				  [ProcsAfter-ProcsBefore]);
@@ -4008,11 +3983,6 @@ run_test_case1(Ref, Num, Mod, Func, Args, RunInit,
     %% if the test case was executed sequentially, this updates the execution
     %% time count on the main process (adding execution time of parallel test
     %% case groups is done in run_test_cases_loop/4)
-    if is_number(Time) ->
-	    put(test_server_total_time, get(test_server_total_time)+Time);
-       true ->
-	    ok
-    end,
     test_server_sup:check_new_crash_dumps(),
 
     %% if io is being buffered, send finished message
@@ -4050,20 +4020,20 @@ num2str(N) -> integer_to_list(N).
 %% Note: Strings that are to be written to the minor log must
 %% be prefixed with "=== " here, or the indentation will be wrong.
 
-progress(skip, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
+progress(skip, CaseNum, Mod, Func, GrName, Loc, Reason, T,
 	 Comment, {St0,St1}) ->
     {Reason1,{Color,Ret,ReportTag}} = 
 	if_auto_skip(Reason,
 		     fun() -> {?auto_skip_color,auto_skip,auto_skipped} end,
 		     fun() -> {?user_skip_color,skip,skipped} end),
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(major, "=result        ~w: ~tp", [ReportTag,Reason1]),
+    print(major, "=elapsed       ~.6fs", [Time]),
     print(1, "*** SKIPPED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
     test_server_sup:framework_call(report, [tc_done,{Mod,{Func,GrName},
 						     {ReportTag,Reason1}}]),
-    TimeStr = io_lib:format(if is_float(Time) -> "~.3fs";
-			       true -> "~w"
-			    end, [Time]),
+    TimeStr = io_lib:format("~.fs", [Time]),
     ReasonStr = escape_chars(reason_to_string(Reason1)),
     ReasonStr1 = lists:flatten([string:trim(S,leading,"\s") ||
 				S <- string:lexemes(ReasonStr,[$\n])]),
@@ -4090,7 +4060,9 @@ progress(skip, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
 
 progress(failed, CaseNum, Mod, Func, GrName, Loc, timetrap_timeout, T,
 	 Comment0, {St0,St1}) ->
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(major, "=result        failed: timeout, ~tp", [Loc]),
+    print(major, "=elapsed       ~.6fs", [Time]),
     print(1, "*** FAILED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
     test_server_sup:framework_call(report,
@@ -4108,15 +4080,17 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, timetrap_timeout, T,
 	  "<td>" ++ St0 ++ "~.3fs" ++ St1 ++ "</td>"
 	  "<td><font color=\"red\">FAILED</font></td>"
 	  "<td>~ts</td></tr>\n",
-	  [T/1000,Comment]),
+	  [Time/1000,Comment]),
     FormatLoc = test_server_sup:format_loc(Loc),
     print(minor, "=== Location: ~ts", [FormatLoc]),
     print(minor, "=== Reason: timetrap timeout", []),
     failed;
 
-progress(failed, CaseNum, Mod, Func, GrName, Loc, {testcase_aborted,Reason}, _T,
+progress(failed, CaseNum, Mod, Func, GrName, Loc, {testcase_aborted,Reason}, T,
 	 Comment0, {St0,St1}) ->
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(major, "=result        failed: testcase_aborted, ~tp", [Loc]),
+    print(major, "=elapsed       ~.6fs", [Time]),
     print(1, "*** FAILED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
     test_server_sup:framework_call(report,
@@ -4143,16 +4117,16 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, {testcase_aborted,Reason}, _T,
 				     [Reason]))]),
     failed;
 
-progress(failed, CaseNum, Mod, Func, GrName, unknown, Reason, Time,
+progress(failed, CaseNum, Mod, Func, GrName, unknown, Reason, T,
 	 Comment0, {St0,St1}) ->
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(major, "=result        failed: ~tp, ~w", [Reason,unknown_location]),
+    print(major, "=elapsed       ~.6fs", [Time]),
     print(1, "*** FAILED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
     test_server_sup:framework_call(report, [tc_done,{Mod,{Func,GrName},
 						     {failed,Reason}}]),
-    TimeStr = io_lib:format(if is_float(Time) -> "~.3fs";
-			       true -> "~w"
-			    end, [Time]),
+    TimeStr = io_lib:format("~.fs", [Time]),
     ErrorReason = escape_chars(lists:flatten(io_lib:format("~tp", [Reason]))),
     ErrorReason1 = lists:flatten([string:trim(S,leading,"\s") ||
 				  S <- string:lexemes(ErrorReason,[$\n])]),
@@ -4182,7 +4156,7 @@ progress(failed, CaseNum, Mod, Func, GrName, unknown, Reason, Time,
 	  [escape_chars(io_lib:format("=== Reason: " ++ FStr, [FormattedReason]))]),
     failed;
 
-progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
+progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, T,
 	 Comment0, {St0,St1}) ->
     {LocMaj,LocMin} = if Func == error_in_suite ->
 			      case get_fw_mod(undefined) of
@@ -4191,14 +4165,14 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
 			      end;
 			 true -> {Loc,Loc}
 		       end,
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(major, "=result        failed: ~tp, ~tp", [Reason,LocMaj]),
+    print(major, "=elapsed       ~.6fs", [Time]),
     print(1, "*** FAILED ~ts ***",
 	  [get_info_str(Mod,Func, CaseNum, get(test_server_cases))]),
     test_server_sup:framework_call(report, [tc_done,{Mod,{Func,GrName},
 						     {failed,Reason}}]),
-    TimeStr = io_lib:format(if is_float(Time) -> "~.3fs";
-			       true -> "~w"
-			    end, [Time]),
+    TimeStr = io_lib:format("~.fs", [Time]),
     Comment =
 	case Comment0 of
 	    "" -> "";
@@ -4218,13 +4192,12 @@ progress(failed, CaseNum, Mod, Func, GrName, Loc, Reason, Time,
            escape_chars(io_lib:format(FStr, [FormattedReason]))]),
     failed;
 
-progress(ok, _CaseNum, Mod, Func, GrName, _Loc, RetVal, Time,
+progress(ok, _CaseNum, Mod, Func, GrName, _Loc, RetVal, T,
 	 Comment0, {St0,St1}) ->
+    Time = if is_number(T) -> float(T); true -> 0.0 end,
     print(minor, "successfully completed test case", []),
     test_server_sup:framework_call(report, [tc_done,{Mod,{Func,GrName},ok}]),
-    TimeStr = io_lib:format(if is_float(Time) -> "~.3fs";
-			       true -> "~w"
-			    end, [Time]),
+    TimeStr = io_lib:format("~.fs", [Time]),
     Comment =
 	case RetVal of
 	    {comment,RetComment} ->
@@ -4241,7 +4214,7 @@ progress(ok, _CaseNum, Mod, Func, GrName, _Loc, RetVal, Time,
 		    _ -> "<td>" ++ to_string(Comment0) ++ "</td>"
 		end
 	end,
-    print(major, "=elapsed       ~p", [Time]),
+    print(major, "=elapsed       ~ts", [TimeStr]),
     print(html,
 	  "<td>" ++ St0 ++ "~ts" ++ St1 ++ "</td>"
 	  "<td><font color=\"green\">Ok</font></td>"
@@ -4678,7 +4651,7 @@ update_config(Config, []) ->
 %% simple list of test cases to call, when executing the test suite.
 %%
 %% CurMod is the "current" module, that is, the module the last instruction
-%% was read from. May be be set to 'none' initially.
+%% was read from. May be set to 'none' initially.
 %%
 %% SkipList is the list of test cases to skip and requirements to deny.
 %%
@@ -4728,7 +4701,7 @@ update_config(Config, []) ->
 %% Configuration manipulation functions are called with the current
 %% configuration list as only argument, and are expected to return a new
 %% configuration list. Such a pair of function may, for example, start a
-%% server and stop it after a serie of test cases.
+%% server and stop it after a series of test cases.
 %%
 %% SkipCases is expected to be in the format:
 %%
@@ -5172,6 +5145,14 @@ is_release_available(Release) ->
     controller_call({is_release_available,Release}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% handle_call({find_release,Name}, _, State) -> PathToReleaseErlFile | not_available
+%%
+%% Find the path of the release's erl file if available
+
+find_release(Release) ->
+    controller_call({find_release,Release}).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% stop_node(Name) -> ok | {error,Reason}
 %%
 %% Clean up - test_server will stop this node
@@ -5406,7 +5387,7 @@ check_cross([]) ->
 %% This analysis is executed on the target node once the test is
 %% completed for an application. This is not the same as the cross
 %% cover analysis, which can be executed on any node after the tests
-%% are finshed.
+%% are finished.
 %%
 %% This per application analysis writes the file cover.html in the
 %% application's run.<timestamp> directory.

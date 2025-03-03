@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,13 +23,31 @@
 -module(ssh_compat_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
--include_lib("ssh/src/ssh_transport.hrl"). % #ssh_msg_kexinit{}
+-include("ssh_transport.hrl"). % #ssh_msg_kexinit{}
 -include_lib("kernel/include/inet.hrl"). % #hostent{}
 -include_lib("kernel/include/file.hrl"). % #file_info{}
 -include("ssh_test_lib.hrl").
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+         suite/0,
+         all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2
+        ]).
+
+-export([
+         all_algorithms_sftp_exec_reneg_otp_is_client/1,
+         check_docker_present/1,
+         login_otp_is_client/1,
+         login_otp_is_server/1,
+         renegotiation_otp_is_server/1,
+         send_recv_big_with_renegotiate_otp_is_client/1
+        ]).
 
 -define(USER,"sshtester").
 -define(PASSWD, "foobar").
@@ -53,7 +71,7 @@ groups() ->
                        send_recv_big_with_renegotiate_otp_is_client
                       ]},
      {otp_server, [], [login_otp_is_server,
-                       all_algorithms_sftp_exec_reneg_otp_is_server
+                       renegotiation_otp_is_server
                       ]} |
      [{G, [], [{group,otp_client}, {group,otp_server}]} || G <- ssh_image_versions()]
     ].
@@ -62,7 +80,7 @@ groups() ->
 ssh_image_versions() ->
     try
         %% Find all useful containers in such a way that undefined command, too low
-        %% priviliges, no containers and containers found give meaningful result:
+        %% privileges, no containers and containers found give meaningful result:
         L0 = ["REPOSITORY"++_|_] = string:tokens(os:cmd("docker images"), "\r\n"),
         [["REPOSITORY","TAG"|_]|L1] = [string:tokens(E, " ") || E<-L0],
         [list_to_atom(V) || [?DOCKER_PFX,V|_] <- L1]
@@ -82,7 +100,9 @@ init_per_suite(Config) ->
                {skip, "No docker"};
            _ ->
                ssh:start(),
+               log_image_versions(ssh_image_versions(), Config),
                ct:log("Crypto info: ~p",[crypto:info_lib()]),
+               ct:log("ssh image versions: ~p",[ssh_image_versions()]),
                Config
        end).
 
@@ -132,7 +152,7 @@ init_per_group(G, Config0) ->
                                     ct:comment("~s",[NewCmnt])
                             end,
                             AuthMethods =
-                                %% This should be obtained by quering the peer, but that
+                                %% This should be obtained by querying the peer, but that
                                 %% is a bit hard. It is possible with ssh_protocol_SUITE
                                 %% techniques, but it can wait.
                                 case Vssh of
@@ -176,6 +196,26 @@ end_per_group(G, Config) ->
             ok
     end.
 
+
+init_per_testcase(TC, Config) when TC==login_otp_is_client ; 
+				   TC==all_algorithms_sftp_exec_reneg_otp_is_client ->
+    case proplists:get_value(ssh_version, Config) of
+        "openssh4.4p1-openssl0.9.8c"  -> {skip, "Not tested"};
+        "openssh4.5p1-openssl0.9.8m"  -> {skip, "Not tested"};
+        "openssh5.0p1-openssl0.9.8za" -> {skip, "Not tested"};
+        "openssh6.2p2-openssl0.9.8c"  -> {skip, "Not tested"};
+        "openssh6.3p1-openssl0.9.8zh" -> {skip, "Not tested"};
+        "openssh6.6p1-openssl1.0.2n"  -> {skip, "Not tested"};
+        _ ->
+            Config
+    end;
+init_per_testcase(_, Config) ->
+    Config.
+        
+
+end_per_testcase(_TC, _Config) ->
+    ok.
+
 %%--------------------------------------------------------------------
 %% Test Cases --------------------------------------------------------
 %%--------------------------------------------------------------------
@@ -212,6 +252,7 @@ login_otp_is_client(Config) ->
                                                  {user,?USER},
                                                  {user_dir, Dir},
                                                  {silently_accept_hosts,true},
+                                                 {save_accepted_host, false},
                                                  {user_interaction,false}
                                                  | Opts
                                                 ])
@@ -280,6 +321,7 @@ all_algorithms_sftp_exec_reneg_otp_is_client(Config) ->
                                            {user_dir, new_dir(Config)},
                                            {preferred_algorithms, [{Tag,[Alg]} | PrefAlgs]},
                                            {silently_accept_hosts,true},
+                                           {save_accepted_host, false},
                                            {user_interaction,false}
                                           ])  ,
                           test_erl_client_reneg(ConnRes, % Seems that max 10 channels may be open in sshd
@@ -292,52 +334,65 @@ all_algorithms_sftp_exec_reneg_otp_is_client(Config) ->
                   end).
 
 %%--------------------------------------------------------------------
-all_algorithms_sftp_exec_reneg_otp_is_server(Config) ->
-    CommonAlgs = proplists:get_value(common_remote_client_algs, Config),
-    UserDir = setup_remote_priv_and_local_auth_keys('ssh-rsa', Config),
-    chk_all_algos(?FUNCTION_NAME, CommonAlgs, Config,
-                  fun(Tag,Alg) ->
-                          HostKeyAlg = case Tag of
-                                           public_key -> Alg;
-                                           _ -> 'ssh-rsa'
-                                       end,
-                          PrefAlgs =
-                              [{T,L} || {T,L} <- ssh_transport:supported_algorithms(),
-                                        T =/= Tag],
-                          SftpRootDir = new_dir(Config),
-                          %% ct:log("Rootdir = ~p",[SftpRootDir]),
-                          {Server, Host, HostPort} =
-                              ssh_test_lib:daemon(0,
-                                                  [{preferred_algorithms, [{Tag,[Alg]} | PrefAlgs]},
-                                                   {system_dir, setup_local_hostdir(HostKeyAlg, Config)},
-                                                   {user_dir, UserDir},
-                                                   {user_passwords, [{?USER,?PASSWD}]},
-                                                   {failfun, fun ssh_test_lib:failfun/2},
-                                                   {subsystems,
-                                                    [ssh_sftpd:subsystem_spec([{cwd,SftpRootDir},
-                                                                               {root,SftpRootDir}]),
-                                                     {"echo_10",{ssh_echo_server,[10,[{dbg,true}]]}}
-                                                    ]}
-                                                  ]),
-                          R = do([fun() ->
-                                          exec_from_docker(Config, Host, HostPort,
-                                                           "hi_there.\r\n",
-                                                           [<<"hi_there">>],
-                                                           "")
-                                  end,
-                                  fun() ->
-                                          sftp_tests_erl_server(Config, Host, HostPort, SftpRootDir, UserDir)
-                                  end
-                                 ]),
-                          ssh:stop_daemon(Server),
-                          R
-                  end).
+renegotiation_otp_is_server(Config) ->
+    PublicKeyAlgs = [A || {public_key,A} <- proplists:get_value(common_remote_client_algs, Config, [])],
+    ct:log("PublicKeyAlgs = ~p", [PublicKeyAlgs]),
+    UserDir = setup_remote_priv_and_local_auth_keys(hd(PublicKeyAlgs), Config),
+    SftpRootDir = new_dir(Config),
+    ct:log("Rootdir = ~p",[SftpRootDir]),
+    Parent = self(),
+    Ref = make_ref(),
+    {Server, Host, Port} =
+        ssh_test_lib:daemon(0,
+                            [{system_dir, setup_local_hostdir(Config)},
+                             {user_dir, UserDir},
+                             {user_passwords, [{?USER,?PASSWD}]},
+                             {failfun, fun ssh_test_lib:failfun/2},
+                             {modify_algorithms, [{append, [{public_key,PublicKeyAlgs}]}]},
+                             {connectfun,
+                              fun(_,_,_) ->
+                                      HostConnRef = self(),
+                                      reneg_tester(Parent, Ref, HostConnRef),
+                                      ct:log("Connected ~p",[HostConnRef]),
+                                      timer:sleep(1100), % Just a bit more than  1 s
+                                      ok
+                              end},
+                             {subsystems,
+                              [ssh_sftpd:subsystem_spec([{cwd,SftpRootDir},
+                                                         {root,SftpRootDir}])
+                              ]}
+                            ]),
+    case sftp_tests_erl_server(Config, Host, Port, SftpRootDir, UserDir, Ref) of
+        ok ->
+            ssh:stop_daemon(Server);
+        {error,Error} ->
+            ssh:stop_daemon(Server),
+            ct:log("Error: ~p", [Error]),
+            {fail, Error}
+    end.
+
+
+reneg_tester(Parent, Ref, HostConnRef) ->
+    spawn(fun() ->
+                  reneg_tester_loop(Parent, Ref, HostConnRef, renegotiate_test(init,HostConnRef))
+          end).
+                  
+reneg_tester_loop(Parent, Ref, HostConnRef, Kex1) ->  
+    case ssh_test_lib:get_kex_init(HostConnRef) of
+        Kex1 ->
+            timer:sleep(500),
+            reneg_tester_loop(Parent, Ref, HostConnRef, Kex1);
+        _OtherKex ->
+            ct:log("Kex is changed.", []),
+            Parent ! {kex_changed, Ref}
+    end.
+
 
 %%--------------------------------------------------------------------
 send_recv_big_with_renegotiate_otp_is_client(Config) ->
     %% Connect to the remote openssh server:
     {IP,Port} = ip_port(Config),
-    {ok,C} = ssh:connect(IP, Port, [{user,?USER},
+    C = ssh_test_lib:connect(IP, Port, [{user,?USER},
                                     {password,?PASSWD},
                                     {user_dir, setup_remote_auth_keys_and_local_priv('ssh-rsa', Config)},
                                     {silently_accept_hosts,true},
@@ -355,7 +410,7 @@ send_recv_big_with_renegotiate_otp_is_client(Config) ->
     Data = << <<X:32>> || X <- lists:seq(1, HalfSizeBytes div 4)>>,
 
     %% Send the data. Must spawn a process to avoid deadlock. The client will block
-    %% until all is sent through the send window. But the server will stop receiveing
+    %% until all is sent through the send window. But the server will stop receiving
     %% when the servers send-window towards the client is full.
     %% Since the client can't receive before the server has received all but 655k from the client
     %% ssh_connection:send/4 is blocking...
@@ -446,7 +501,7 @@ loop_until(CondFun, DoFun, Acc) ->
 exec_from_docker(Config, HostIP, HostPort, Command, Expects, ExtraSshArg) when is_binary(hd(Expects)),
                                                                                is_list(Config) ->
     {DockerIP,DockerPort} = ip_port(Config),
-    {ok,C} = ssh:connect(DockerIP, DockerPort,
+    C = ssh_test_lib:connect(DockerIP, DockerPort,
                          [{user,?USER},
                           {password,?PASSWD},
                           {user_dir, new_dir(Config)},
@@ -560,38 +615,26 @@ chk_all_algos(FunctionName, CommonAlgs, Config, DoTestFun) when is_function(DoTe
 
 
 
-%%%----------------------------------------------------------------
-%%%
-%%% Call all Funs as Fun() which returns 'ok', {ok,C} or Other.
-%%% do/1 returns 'ok' or the first encountered value that is not
-%%% successful.
-%%%
-
-do(Funs) ->
-    do(Funs, 1).
-
-do([Fun|Funs], N) ->
-    case Fun() of
-        ok ->
-            %% ct:log("Fun ~p ok",[N]),
-            do(Funs, N-1);
-        {ok,C} ->
-            %% ct:log("Fun ~p {ok,C}",[N]),
-            ssh:close(C),
-            do(Funs, N-1);
-        Other ->
-            ct:log("Fun ~p FAILED:~n~p",[N, Other]),
-            Other
-    end;
-
-do([], _) ->
-    %% ct:log("All Funs ok",[]),
-    ok.
-
 %%--------------------------------------------------------------------
 %%
 %% Functions to set up local and remote host's and user's keys and directories
 %% 
+
+setup_local_hostdir(Config) ->
+    KeyAlgs = lists:usort(
+                [A || From <- [common_remote_client_algs,
+                               common_remote_server_algs],
+                      {public_key,A} <- proplists:get_value(From, Config, [])]),
+    setup_local_hostdirs(KeyAlgs, new_dir(Config), Config).
+
+
+setup_local_hostdirs(KeyAlgs, HostDir, Config) ->
+    lists:foreach(
+      fun(KeyAlg) ->
+              setup_local_hostdir(KeyAlg, HostDir, Config)
+      end, KeyAlgs),
+    HostDir.
+
 
 setup_local_hostdir(KeyAlg, Config) ->
     setup_local_hostdir(KeyAlg, new_dir(Config), Config).
@@ -608,13 +651,6 @@ setup_remote_auth_keys_and_local_priv(KeyAlg, Config) ->
     {IP,Port} = ip_port(Config),
     setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, new_dir(Config), Config).
 
-setup_remote_auth_keys_and_local_priv(KeyAlg, UserDir, Config) ->
-    {IP,Port} = ip_port(Config),
-    setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, UserDir, Config).
-
-setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, Config) ->
-    setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, new_dir(Config), Config).
-
 setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, UserDir, Config) ->
     {ok, {Priv,Publ}} = user_priv_pub_keys(Config, KeyAlg),
     %% Local private and public keys
@@ -626,6 +662,7 @@ setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, UserDir, Config) ->
                                                    {password, ?PASSWD   },
                                                    {auth_methods, "password"},
                                                    {silently_accept_hosts,true},
+                                                   {save_accepted_host, false},
                                                    {preferred_algorithms, ssh_transport:supported_algorithms()},
                                                    {user_interaction,false}
                                                   ]),
@@ -640,13 +677,6 @@ setup_remote_auth_keys_and_local_priv(KeyAlg, IP, Port, UserDir, Config) ->
 
 setup_remote_priv_and_local_auth_keys(KeyAlg, Config) ->
     {IP,Port} = ip_port(Config),
-    setup_remote_priv_and_local_auth_keys(KeyAlg, IP, Port, new_dir(Config), Config).
-
-setup_remote_priv_and_local_auth_keys(KeyAlg, UserDir, Config) ->
-    {IP,Port} = ip_port(Config),
-    setup_remote_priv_and_local_auth_keys(KeyAlg, IP, Port, UserDir, Config).
-
-setup_remote_priv_and_local_auth_keys(KeyAlg, IP, Port, Config) ->
     setup_remote_priv_and_local_auth_keys(KeyAlg, IP, Port, new_dir(Config), Config).
 
 setup_remote_priv_and_local_auth_keys(KeyAlg, IP, Port, UserDir, Config) ->
@@ -805,11 +835,6 @@ ip_port(Config) ->
     {_Ver,{IP,Port},_} = proplists:get_value(id,Config),
     {IP,Port}.
 
-port_mapped_to(Id) ->
-    Cmnd = lists:concat(["docker ps --format \"{{.Ports}}\"  --filter id=",Id]),
-    [_, PortStr | _] = string:tokens(os:cmd(Cmnd), ":->/"),
-    list_to_integer(PortStr).
-
 ip(Id) ->
     Cmnd = lists:concat(["docker inspect --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ",
 			 Id]),
@@ -849,32 +874,9 @@ new_dir(Config) ->
             new_dir(Config)
     end.
 
-clear_dir(Dir) ->
-    delete_all_contents(Dir),
-    {ok,[]} = file:list_dir(Dir),
-    Dir.
-
-delete_all_contents(Dir) ->
-    {ok,Fs} = file:list_dir(Dir),
-    lists:map(fun(F0) ->
-                      F = filename:join(Dir, F0),
-                      case filelib:is_file(F) of
-                          true ->
-                              file:delete(F);
-                          false ->
-                              case filelib:is_dir(F) of
-                                  true ->
-                                      delete_all_contents(F),
-                                      file:del_dir(F);
-                                  false ->
-                                      ct:log("Neither file nor dir: ~p",[F])
-                              end
-                      end
-              end, Fs).
-
 %%--------------------------------------------------------------------
 %%
-%% Find the intersection of algoritms for otp ssh and the docker ssh.
+%% Find the intersection of algorithms for otp ssh and the docker ssh.
 %% Returns {ok, ServerHello, Server, ClientHello, Client} where Server are the algorithms common
 %% with the docker server and analogous for Client.
 %%
@@ -942,10 +944,6 @@ use_algorithms(RemoteHelloBin) ->
     ssh_transport:adjust_algs_for_peer_version(binary_to_list(RemoteHelloBin)++"\r\n",
                                                MyAlgos).
 
-
-alg_class_diff(Tag) ->
-    alg_diff(proplists:get_value(Tag, ssh:default_algorithms()),
-             proplists:get_value(Tag, ssh_transport:supported_algorithms())).
 
 alg_diff() ->
     alg_diff(ssh:default_algorithms(), ssh_transport:supported_algorithms()).
@@ -1100,7 +1098,7 @@ receive_hello(S, Ack) ->
 
 
 receive_kexinit(_S, <<PacketLen:32, PaddingLen:8, PayloadAndPadding/binary>>)
-  when PacketLen < 5000, % heuristic max len to stop huge attempts if packet decodeing get out of sync
+  when PacketLen < 5000, % heuristic max len to stop huge attempts if packet decoding get out of sync
        size(PayloadAndPadding) >= (PacketLen-1) % Need more bytes?
        ->
     ct:log("Has all ~p packet bytes",[PacketLen]),
@@ -1126,14 +1124,18 @@ receive_kexinit(S, Ack) ->
 %%% Test of sftp from the OpenSSH client side
 %%%
 
-sftp_tests_erl_server(Config, ServerIP, ServerPort, ServerRootDir, UserDir) ->
+sftp_tests_erl_server(Config, ServerIP, ServerPort, ServerRootDir, UserDir, Ref) ->
     try
         Cmnds = prepare_local_directory(ServerRootDir),
-        call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir),
-        check_local_directory(ServerRootDir)
+        case call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir, Ref) of
+            ok ->
+                check_local_directory(ServerRootDir);
+            {error,Error} ->
+                {error,Error}
+        end
     catch
-        Class:Error:ST ->
-            {error, {Class,Error,ST}}
+        Class:Excep:ST ->
+            {error, {Class,Excep,ST}}
     end.
 
 
@@ -1206,9 +1208,10 @@ do_check_local_directory(ServerRootDir) ->
     end.
 
 
-call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir) ->
+call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir, Ref) ->
     {DockerIP,DockerPort} = ip_port(Config),
-    {ok,C} = ssh:connect(DockerIP, DockerPort,
+    ct:log("Going to connect ~p:~p", [DockerIP, DockerPort]),
+    C = ssh_test_lib:connect(DockerIP, DockerPort,
                          [{user,?USER},
                           {password,?PASSWD},
                           {user_dir, UserDir},
@@ -1225,7 +1228,7 @@ call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir) ->
     PostExpectCmnds= [],
     ExpectCmnds = 
         PreExpectCmnds ++
-        ["expect \"sftp>\" {send \""++Cmnd++"\n\"}\n" || Cmnd <- Cmnds] ++
+        ["expect \"sftp>\" {sleep 1; send \""++Cmnd++"\n\"}\n" || Cmnd <- Cmnds] ++
         PostExpectCmnds,
     
     %% Make an commands file in the docker
@@ -1235,26 +1238,48 @@ call_sftp_in_docker(Config, ServerIP, ServerPort, Cmnds, UserDir) ->
 
     %% Call expect in the docker
     {ok, Ch1} = ssh_connection:session_channel(C, infinity),
-    Kex1 = renegotiate_test(init, C),
+    ct:log("Going to execute 'expect commands' in docker", []),
     success = ssh_connection:exec(C, Ch1, "expect commands", infinity),
+    ct:log("'expect commands' in docker executed!", []),
+    case recv_log_msgs(C, Ch1) of
+        ok ->
+            receive
+                {kex_changed, Ref} ->
+                    %% success
+                    ct:log("Kex changed",[]),
+                    ssh:close(C),
+                    ok
+            after
+                30000 ->
+                    %% failure
+                    ct:log("Kex NOT changed",[]),
+                    ssh:close(C),
+                    {error,"Kex NOT changed"}
+            end;
 
-    renegotiate_test(Kex1, C),
-    recv_log_msgs(C, Ch1),
+        {error,Error} ->
+            ssh:close(C),
+            {error,Error}
+    end.
 
-    %% Done.
-    ssh:close(C).
 
 recv_log_msgs(C, Ch) ->
     receive
         {ssh_cm,C,{closed,Ch}} ->
-            %% ct:log("Channel closed ~p",[{closed,1}]),
+            ct:log("Channel closed ~p",[{closed,1}]),
             ok;
         {ssh_cm,C,{data,Ch,1,Msg}} ->
             ct:log("*** ERROR from docker:~n~s",[Msg]),
             recv_log_msgs(C, Ch);
         {ssh_cm,C,_Msg} ->
-            %% ct:log("Got ~p",[_Msg]),
+            ct:log("Got ~p",[_Msg]),
             recv_log_msgs(C, Ch)
+    after
+        30000 ->
+            %% failure
+            ct:log("Exec Channel ~p in ~p NOT closed properly", [Ch,C]),
+            ssh:close(C),
+            {error,"Exec channel NOT closed"}
     end.
 
 %%%----------------------------------------------------------------
@@ -1319,7 +1344,7 @@ one_test_erl_client(exec, Id, C) ->
         {eof,<<"Hi there\n">>} ->
             ok;
         Other ->
-            ct:pal("exec Got other ~p", [Other]),
+            ct:log("exec Got other ~p", [Other]),
             {error, {exec,Id,bad_msg,Other,undefined}}
     end;
 
@@ -1329,7 +1354,7 @@ one_test_erl_client(no_subsyst, Id, C) ->
         failure ->
             ok;
         Other ->
-            ct:pal("no_subsyst Got other ~p", [Other]),
+            ct:log("no_subsyst Got other ~p", [Other]),
             {error, {no_subsyst,Id,bad_ret,Other,undefined}}
     end;
 
@@ -1357,7 +1382,7 @@ one_test_erl_client(setenv, Id, C) ->
         {eof,Env} ->
             ok;
         Other ->
-            ct:pal("setenv Got other ~p", [Other]),
+            ct:log("setenv Got other ~p", [Other]),
             {error, {setenv,Id,bad_msg,Other,undefined}}
     end;
 
@@ -1461,4 +1486,51 @@ renegotiate_test(Kex1, ConnectionRef) ->
         _ ->
             %% ct:log("Renegotiate test passed!",[]),
             ok
+    end.
+
+%%%----------------------------------------------------------------
+%% ImageVersions = ['dropbearv2016.72',
+%%                  'openssh4.4p1-openssl0.9.8c',
+%%                  ...
+%%                  'openssh8.8p1-openssl1.1.1l']
+
+log_image_versions(ImageVersions, Config) ->
+    case true == (catch
+                      lists:member({save_ssh_data,3},
+                                   ssh_collect_labmachine_info_SUITE:module_info(exports)))
+    of
+        true ->
+            HostPfx = hostname()++"_docker",
+            {_Imax, Entries} = lists:foldl(fix_entry(HostPfx), {0,[]}, ImageVersions),
+            ssh_collect_labmachine_info_SUITE:save_ssh_data(HostPfx, Entries, Config);
+        false ->
+            Config
+    end.
+
+
+fix_entry(HostPfx) ->
+    fun(E, {I,Acc}) ->
+            Entry =
+                [{hostname,           lists:flatten(io_lib:format("~s:~2..0w",[HostPfx,I]))},
+                 {type,               compat_test},
+                 {date,               date()},
+                 {time,               time()},
+                 {os_type,            os:type()},
+                 {os_version,         os:version()},
+                 {full_ssh_version,   fix_version(E)}
+                ],
+            {I+1, [Entry|Acc]}
+    end.
+
+fix_version(E) ->
+    case string:tokens(atom_to_list(E), "-") of
+        ["openssh"++Vs, "openssl"++Vc ] -> lists:concat(["OpenSSH_",Vs," OpenSSL ",Vc]);
+        ["openssh"++Vs, "libressl"++Vc] -> lists:concat(["OpenSSH_",Vs," LibreSSL ",Vc]);
+        _ -> atom_to_list(E)
+    end.
+
+hostname() ->
+    case inet:gethostname() of
+	{ok,Name} -> string:to_lower(Name);
+	_ -> "undefined"
     end.

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2006-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2006-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,6 +70,12 @@
  */
 #  define _DARWIN_UNLIMITED_SELECT
 #endif
+
+/*
+ * According to posix, select() implementations should
+ * support a max timeout value of at least 31 days.
+ */
+#define ERTS_SELECT_MAX_TV_SEC__ (31*24*60*60-1)
 
 #ifndef WANT_NONBLOCKING
 #  define WANT_NONBLOCKING
@@ -219,12 +225,12 @@ int ERTS_SELECT(int nfds, ERTS_fd_set *readfds, ERTS_fd_set *writefds,
 
 #else
 
-#define ERTS_POLLSET_SET_HAVE_UPDATE_REQUESTS(PS)
-#define ERTS_POLLSET_UNSET_HAVE_UPDATE_REQUESTS(PS)
+#define ERTS_POLLSET_SET_HAVE_UPDATE_REQUESTS(PS) do {} while(0)
+#define ERTS_POLLSET_UNSET_HAVE_UPDATE_REQUESTS(PS) do {} while(0)
 #define ERTS_POLLSET_HAVE_UPDATE_REQUESTS(PS) 0
 
-#define ERTS_POLLSET_LOCK(PS)
-#define ERTS_POLLSET_UNLOCK(PS)
+#define ERTS_POLLSET_LOCK(PS) do {} while(0)
+#define ERTS_POLLSET_UNLOCK(PS) do {} while(0)
 
 #endif
 
@@ -374,6 +380,7 @@ uint32_t epoll_events(int kp_fd, int fd);
 #define ERTS_POLL_NOT_WOKEN	0
 #define ERTS_POLL_WOKEN		-1
 #define ERTS_POLL_WOKEN_INTR	1
+#define ERTS_POLL_WSTATE_UNUSED ~0
 
 static ERTS_INLINE void
 reset_wakeup_state(ErtsPollSet *ps)
@@ -384,12 +391,16 @@ reset_wakeup_state(ErtsPollSet *ps)
 static ERTS_INLINE int
 is_woken(ErtsPollSet *ps)
 {
+    if (!ERTS_POLL_USE_WAKEUP(ps))
+        return 0;
     return erts_atomic32_read_acqb(&ps->wakeup_state) != ERTS_POLL_NOT_WOKEN;
 }
 
 static ERTS_INLINE int
 is_interrupted_reset(ErtsPollSet *ps)
 {
+    if (!ERTS_POLL_USE_WAKEUP(ps))
+        return 0;
     return (erts_atomic32_xchg_acqb(&ps->wakeup_state, ERTS_POLL_NOT_WOKEN)
 	    == ERTS_POLL_WOKEN_INTR);
 }
@@ -397,7 +408,10 @@ is_interrupted_reset(ErtsPollSet *ps)
 static ERTS_INLINE void
 woke_up(ErtsPollSet *ps)
 {
-    erts_aint32_t wakeup_state = erts_atomic32_read_acqb(&ps->wakeup_state);
+    erts_aint32_t wakeup_state;
+    if (!ERTS_POLL_USE_WAKEUP(ps))
+        return;
+    wakeup_state = erts_atomic32_read_acqb(&ps->wakeup_state);
     if (wakeup_state == ERTS_POLL_NOT_WOKEN)
 	(void) erts_atomic32_cmpxchg_nob(&ps->wakeup_state,
 					 ERTS_POLL_WOKEN,
@@ -450,6 +464,7 @@ cleanup_wakeup_pipe(ErtsPollSet *ps)
     int intr = 0;
     int fd = ps->wake_fds[0];
     int res;
+    ASSERT(ERTS_POLL_USE_WAKEUP(ps));
     do {
 	char buf[32];
 	res = read(fd, buf, sizeof(buf));
@@ -475,6 +490,13 @@ create_wakeup_pipe(ErtsPollSet *ps)
     int wake_fds[2];
     ps->wake_fds[0] = -1;
     ps->wake_fds[1] = -1;
+    if (!ERTS_POLL_USE_WAKEUP(ps)) {
+        erts_atomic32_init_nob(&ps->wakeup_state,
+                               (erts_aint32_t) ERTS_POLL_WSTATE_UNUSED);
+        return;
+    }
+    erts_atomic32_init_nob(&ps->wakeup_state,
+                           (erts_aint32_t) ERTS_POLL_NOT_WOKEN);
     if (pipe(wake_fds) < 0) {
 	fatal_error("%s:%d:create_wakeup_pipe(): "
 		    "Failed to create pipe: %s (%d)\n",
@@ -483,6 +505,7 @@ create_wakeup_pipe(ErtsPollSet *ps)
 		    erl_errno_id(errno),
 		    errno);
     }
+
     SET_NONBLOCKING(wake_fds[0]);
     SET_NONBLOCKING(wake_fds[1]);
 
@@ -629,12 +652,13 @@ int erts_poll_new_table_len(int old_len, int need_len)
     }
     else {
         new_len = old_len;
+        if (new_len < ERTS_FD_TABLE_MIN_LENGTH)
+            new_len = ERTS_FD_TABLE_MIN_LENGTH;
         do {
             if (new_len < ERTS_FD_TABLE_EXP_THRESHOLD)
                 new_len *= 2;
             else
                 new_len += ERTS_FD_TABLE_EXP_THRESHOLD;
-
         } while (new_len < need_len);
     }
     ASSERT(new_len >= need_len);
@@ -732,7 +756,8 @@ grow_fds_status(ErtsPollSet *ps, int min_fd)
 
 #if ERTS_POLL_USE_EPOLL
 static int
-update_pollset(ErtsPollSet *ps, int fd, ErtsPollOp op, ErtsPollEvents events)
+concurrent_update_pollset(ErtsPollSet *ps, int fd, ErtsPollOp op,
+                          ErtsPollEvents events)
 {
     int res;
     int epoll_op = EPOLL_CTL_MOD;
@@ -848,7 +873,8 @@ update_pollset(ErtsPollSet *ps, int fd, ErtsPollOp op, ErtsPollEvents events)
     } while(0)
 
 static int
-update_pollset(ErtsPollSet *ps, int fd, ErtsPollOp op, ErtsPollEvents events)
+concurrent_update_pollset(ErtsPollSet *ps, int fd, ErtsPollOp op,
+                          ErtsPollEvents events)
 {
     int res = 0, len = 0;
     struct kevent evts[2];
@@ -1136,6 +1162,8 @@ static int update_pollset(ErtsPollSet *ps, ErtsPollResFd pr[], int fd)
 	int last_pix;
 
         if (reset) {
+            /* pr is only null during poll initialization and then no reset should happen */
+            ASSERT(pr != NULL);
             /* When a fd has been reset, we tell the caller of erts_poll_wait
                this by setting the fd as ERTS_POLL_EV_NONE */
             ERTS_POLL_RES_SET_FD(&pr[res], fd);
@@ -1341,7 +1369,7 @@ poll_control(ErtsPollSet *ps, int fd, ErtsPollOp op,
 
     if (fd < ps->internal_fd_limit || fd >= max_fds) {
 	if (fd < 0 || fd >= max_fds) {
-	    new_events = ERTS_POLL_EV_ERR;
+	    new_events = ERTS_POLL_EV_NVAL;
 	    goto done;
 	}
 #if ERTS_POLL_USE_KERNEL_POLL
@@ -1364,7 +1392,7 @@ poll_control(ErtsPollSet *ps, int fd, ErtsPollOp op,
 
 #if ERTS_POLL_USE_CONCURRENT_UPDATE
 
-    new_events = update_pollset(ps, fd, op, events);
+    new_events = concurrent_update_pollset(ps, fd, op, events);
 
 #else /* !ERTS_POLL_USE_CONCURRENT_UPDATE */
     if (fd >= ps->fds_status_len)
@@ -1735,6 +1763,17 @@ get_timeout_timeval(ErtsPollSet *ps,
     }
     else {
 	ErtsMonotonicTime sec = timeout/(1000*1000);
+        if (sec >= ERTS_SELECT_MAX_TV_SEC__) {
+            tvp->tv_sec = ERTS_SELECT_MAX_TV_SEC__;
+            tvp->tv_usec = 0;
+            /*
+             * If we actually should time out on
+             * this (huge) timeout, the select() call
+             * will be restarted with a newly calculated
+             * timeout after verifying the timeout...
+             */
+            return 1;
+        }
 	tvp->tv_sec = sec;
 	tvp->tv_usec = timeout - sec*(1000*1000);
 
@@ -1770,8 +1809,15 @@ get_timeout_timespec(ErtsPollSet *ps,
     }
     else {
 	ErtsMonotonicTime sec = timeout/(1000*1000*1000);
-	tsp->tv_sec = sec;
-	tsp->tv_nsec = timeout - sec*(1000*1000*1000);
+        if (sizeof(tsp->tv_sec) == 8
+            || sec <= (ErtsMonotonicTime) INT_MAX) {
+            tsp->tv_sec = sec;
+            tsp->tv_nsec = timeout - sec*(1000*1000*1000);
+        }
+        else {
+            tsp->tv_sec = INT_MAX;
+            tsp->tv_nsec = 0;
+        }
 
 	ASSERT(tsp->tv_sec >= 0);
 	ASSERT(tsp->tv_nsec >= 0);
@@ -1926,7 +1972,7 @@ ERTS_POLL_EXPORT(erts_poll_wait)(ErtsPollSet *ps,
         /*
          * This may have happened because another thread deselected
          * a fd in our poll set and then closed it, i.e. the driver
-         * behaved correctly. We wan't to avoid looking for a bad
+         * behaved correctly. We want to avoid looking for a bad
          * fd, that may even not exist anymore. Therefore, handle
          * update requests and try again. This behaviour should only
          * happen when using SELECT as the polling mechanism.
@@ -1955,8 +2001,7 @@ ERTS_POLL_EXPORT(erts_poll_wait)(ErtsPollSet *ps,
         ERTS_MSACC_SET_STATE_CACHED(ERTS_MSACC_STATE_CHECK_IO);
     }
 
-    if (ERTS_POLL_USE_WAKEUP(ps))
-        woke_up(ps);
+    woke_up(ps);
 
     if (res < 0) {
 #if ERTS_POLL_USE_SELECT
@@ -2046,6 +2091,21 @@ ERTS_POLL_EXPORT(erts_poll_init)(int *concurrent_updates)
     max_fds = OPEN_MAX;
 #endif
 
+    if (max_fds < 0 && errno == 0) {
+        /* On macOS 11 and higher, it possible to have an unlimited
+         * number of open files per process.  ERTS will need an actual
+         * limit, though, so we will set it to a largish value.  The
+         * number below is the hard number of file descriptors per
+         * process as returned by `sysctl kern.maxfilesperproc`, which
+         * seems to be the limit in practice.
+         *
+         * Note: The size of the port table will be based on max_fds,
+         * so we don't want to set it to a huge value such as
+         * MAX_INT.
+         */
+        max_fds = 24576;
+    }
+
 #if ERTS_POLL_USE_SELECT && defined(FD_SETSIZE) && \
 	!defined(_DARWIN_UNLIMITED_SELECT)
     if (max_fds > FD_SETSIZE)
@@ -2134,7 +2194,6 @@ ERTS_POLL_EXPORT(erts_poll_create_pollset)(int id)
         ps->oneshot = 1;
 #endif
 
-    erts_atomic32_init_nob(&ps->wakeup_state, (erts_aint32_t) 0);
     create_wakeup_pipe(ps);
 
 #if ERTS_POLL_USE_TIMERFD
@@ -2414,7 +2473,7 @@ ERTS_POLL_EXPORT(erts_poll_get_selected_events)(ErtsPollSet *ps,
     char fname[30];
     char s[256];
     FILE *f;
-    unsigned int pos, flags, mnt_id;
+    unsigned int pos, flags, mnt_id, ino;
     int hdr_lines, line = 1;
     sprintf(fname,"/proc/%d/fdinfo/%d",getpid(), ps->kp_fd);
     for (fd = 0; fd < len; fd++)
@@ -2424,14 +2483,16 @@ ERTS_POLL_EXPORT(erts_poll_get_selected_events)(ErtsPollSet *ps,
         fprintf(stderr,"failed to open file %s, errno = %d\n", fname, errno);
         return;
     }
-    hdr_lines = fscanf(f,"pos:\t%x\nflags:\t%x\nmnt_id:\t%x\n",
-                       &pos, &flags, &mnt_id);
+
+    hdr_lines = fscanf(f,"pos:\t%x\nflags:\t%x\nmnt_id:\t%x\nino:\t%x\n",
+                       &pos, &flags, &mnt_id, &ino);
     if (hdr_lines < 2) {
         fprintf(stderr,"failed to parse file %s, errno = %d\n", fname, errno);
         ASSERT(0);
         fclose(f);
         return;
     }
+
     line += hdr_lines;
     while (fgets(s, sizeof(s) / sizeof(*s), f)) {
         /* tfd:       10 events: 40000019 data:       180000000a */

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2022. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -287,7 +287,7 @@ client_loop() ->
 	    client_loop()
     end.
     
-do(Pid, Fun) -> do(Pid, Fun, 30?sec).
+do(Pid, Fun) -> do(Pid, Fun, 60?sec).
 
 do(Pid, Fun, Timeout) when is_function(Fun,0) ->
     Pid ! {please_do,Fun,Ref=make_ref(),self()},
@@ -299,7 +299,7 @@ do(Pid, Fun, Timeout) when is_function(Fun,0) ->
 	    
 %%%----------------
 %%% Start a new connection
-%%% Precondition:  deamon exists
+%%% Precondition:  daemon exists
 
 ssh_open_connection_pre(S) -> S#state.servers /= [].
     
@@ -418,7 +418,7 @@ ssh_send(C=#chan{conn_ref=ConnectionRef, ref=ChannelRef, client_pid=Pid}, Type, 
 		   ok ->
 		       receive
 			   {ssh_cm,ConnectionRef,{data,ChannelRef,Type,Answer}} -> Answer
-		       after 15?sec -> 
+		       after 30?sec ->
 			       %% receive
 			       %% 	   Other -> {error,{unexpected,Other}}
 			       %% after 0 ->

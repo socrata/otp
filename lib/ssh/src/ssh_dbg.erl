@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@
 	]).
 
 -export([shrink_bin/1,
-         reduce_state/1,
+         reduce_state/2, reduce_state/3,
          wr_record/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
@@ -113,7 +113,7 @@ start(IoFmtFun) when is_function(IoFmtFun,2) ; is_function(IoFmtFun,3) ->
 
 stop() ->
     try
-        dbg:stop_clear(),
+        dbg:stop(),
         gen_server:stop(?SERVER)
     catch
         _:_ -> ok
@@ -156,28 +156,33 @@ go_on() ->
     on(IsOn).
 
 %%%----------------------------------------------------------------
-shrink_bin(B) when is_binary(B), size(B)>256 -> {'*** SHRINKED BIN',
-						 size(B),
-						 element(1,split_binary(B,64)),
-						 '...',
-						 element(2,split_binary(B,size(B)-64))
-						};
+shrink_bin(B) when is_binary(B), byte_size(B)>256 -> {'*** SHRUNK BIN',
+                                              byte_size(B),
+                                              element(1,split_binary(B,64)),
+                                              '...',
+                                              element(2,split_binary(B,byte_size(B)-64))
+                                             };
 shrink_bin(L) when is_list(L) -> lists:map(fun shrink_bin/1, L);
 shrink_bin(T) when is_tuple(T) -> list_to_tuple(shrink_bin(tuple_to_list(T)));
 shrink_bin(X) -> X.
 
 %%%----------------------------------------------------------------    
-%% Replace last element (the state) with "#<state-name>{}"
-reduce_state(T) ->
-    try
-        erlang:setelement(size(T), 
-                          T,
-                          lists:concat(['#',element(1,element(size(T),T)),'{}'])
-                         )
-    catch
-        _:_ ->
-            T
-    end.
+%% Replace any occurrence of {Name,...}, with "#Name{}"
+reduce_state(T, RecordExample) ->
+    Name = element(1, RecordExample),
+    Arity = tuple_size(RecordExample),
+    reduce_state(T, Name, Arity).
+
+%% Replace any occurrence of {Name,...}, with "#Name{}"
+reduce_state(T, Name, Arity) when element(1,T) == Name,
+                                  tuple_size(T) == Arity ->
+    lists:concat(['#',Name,'{}']);
+reduce_state(L, Name, Arity) when is_list(L) ->
+    [reduce_state(E,Name,Arity) || E <- L];
+reduce_state(T, Name, Arity) when is_tuple(T) ->
+    list_to_tuple( reduce_state(tuple_to_list(T),Name,Arity) );
+reduce_state(X, _, _) ->
+    X.
 
 %%%================================================================
 -record(data, {
@@ -341,34 +346,22 @@ switch(X, Types) when is_list(Types) ->
 %%%   {send,Msg,To}
 %%%   {'receive',Msg}
 
-trace_pid({trace,Pid,_}) -> Pid;
-trace_pid({trace,Pid,_,_}) -> Pid;
-trace_pid({trace,Pid,_,_,_}) -> Pid;
-trace_pid({trace,Pid,_,_,_,_}) -> Pid;
-trace_pid({trace,Pid,_,_,_,_,_}) -> Pid;
-trace_pid({trace_ts,Pid,_,_TS}) -> Pid;
-trace_pid({trace_ts,Pid,_,_,_TS}) -> Pid;
-trace_pid({trace_ts,Pid,_,_,_,_TS}) -> Pid;
-trace_pid({trace_ts,Pid,_,_,_,_,_TS}) -> Pid;
-trace_pid({trace_ts,Pid,_,_,_,_,_,_TS}) -> Pid.
+%% Pick 2nd element, the Pid
+trace_pid(T) when element(1,T)==trace
+                  ; element(1,T)==trace_ts ->
+    element(2,T).
 
-trace_ts({trace_ts,_Pid,_,TS}) -> ts(TS);
-trace_ts({trace_ts,_Pid,_,_,TS}) -> ts(TS);
-trace_ts({trace_ts,_Pid,_,_,_,TS}) -> ts(TS);
-trace_ts({trace_ts,_Pid,_,_,_,_,TS}) -> ts(TS);
-trace_ts({trace_ts,_Pid,_,_,_,_,_,TS}) -> ts(TS);
-trace_ts(_) -> "-".
+%% Pick last element, the Time Stamp, and format it
+trace_ts(T) when  element(1,T)==trace_ts ->
+    ts( element(tuple_size(T), T) ).
 
-trace_info({trace,_Pid,A}) -> A;
-trace_info({trace,_Pid,A,B}) -> {A,B};
-trace_info({trace,_Pid,A,B,C}) -> {A,B,C};
-trace_info({trace,_Pid,A,B,C,D}) -> {A,B,C,D};
-trace_info({trace,_Pid,A,B,C,D,E}) -> {A,B,C,D,E};
-trace_info({trace_ts,_Pid,A,_TS}) -> A;
-trace_info({trace_ts,_Pid,A,B,_TS}) -> {A,B};
-trace_info({trace_ts,_Pid,A,B,C,_TS}) -> {A,B,C};
-trace_info({trace_ts,_Pid,A,B,C,D,_TS}) -> {A,B,C,D};
-trace_info({trace_ts,_Pid,A,B,C,D,E,_TS}) -> {A,B,C,D,E}.
+%% Make a tuple of all elements but the 1st, 2nd and last
+trace_info(T) ->
+    case tuple_to_list(T) of
+        [trace,_Pid | Info] -> list_to_tuple(Info);
+        [trace_ts,_Pid | InfoTS] -> list_to_tuple(
+                                      lists:droplast(InfoTS))
+    end.
 
 
 try_all_types_in_all_modules(TypesOn, Arg, WriteFun, Acc0) ->
@@ -407,7 +400,7 @@ try_all_types_in_all_modules(TypesOn, Arg, WriteFun, Acc0) ->
                                     catch
                                         _:_ ->
                                             %% and finally, signal for special formatting
-                                            %% if noone else formats it
+                                            %% if no one else formats it
                                             Acc
                                     end
                             end
@@ -424,7 +417,7 @@ try_all_types_in_all_modules(TypesOn, Arg, WriteFun, Acc0) ->
 
 
 write_txt(WriteFun, TS, PID, Txt) when is_list(Txt) ->
-    WriteFun("~n~s ~p ~s~n", 
+    WriteFun("~n~s ~p ~ts~n", 
              [lists:flatten(TS),
               PID,
               lists:flatten(Txt)],

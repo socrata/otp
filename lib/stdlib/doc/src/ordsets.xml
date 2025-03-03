@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2018</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -48,6 +48,11 @@
       that while <c>sets</c> considers two elements as different if they
       do not match (<c>=:=</c>), this module considers two elements as
       different if and only if they do not compare equal (<c>==</c>).</p>
+
+    <p>See the <seeerl marker="sets#compatibility">Compatibility Section
+      in the <c>sets(3)</c> module</seeerl> for more information about
+      the compatibility of the different implementations of sets in the
+      Standard Library.</p>
   </description>
 
   <datatypes>
@@ -155,7 +160,9 @@
       <fsummary>Test for an <c>Ordset</c>.</fsummary>
       <desc>
         <p>Returns <c>true</c> if <c><anno>Ordset</anno></c> is an ordered set
-          of elements, otherwise <c>false</c>.</p>
+          of elements, otherwise <c>false</c>.  This function will
+        return <c>true</c> for any ordered list, even when not
+        constructed by the functions in this module.</p>
       </desc>
     </func>
 

@@ -2,7 +2,7 @@
 # 
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 2007-2016. All Rights Reserved.
+# Copyright Ericsson AB 2007-2021. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -153,7 +153,7 @@ fi
 
 # Frantic search through two roots with different 
 # version directories. We want to be very specific about the
-# directory structures as we wouldnt want to find the wrong 
+# directory structures as we wouldn't want to find the wrong 
 # redistributables...
 
 #echo $BPATH_LIST

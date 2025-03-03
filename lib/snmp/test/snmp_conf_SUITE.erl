@@ -1,7 +1,7 @@
 %% 
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2003-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@
 %% Include files
 %%----------------------------------------------------------------------
 
+-include_lib("kernel/include/file.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include("snmp_test_lib.hrl").
 
@@ -60,7 +61,9 @@
 	 check_timer/1,
 
 	 read/1,
-	 read_files/1
+	 read_files/1,
+
+         fd_leak_check/1
 	]).
 
 
@@ -85,7 +88,8 @@ all() ->
      check_sec_model2,
      check_sec_level,
      check_timer, 
-     read, read_files
+     read, read_files,
+     fd_leak_check
     ].
 
 groups() -> 
@@ -109,10 +113,15 @@ init_per_suite(Config0) when is_list(Config0) ->
             %% We need a monitor on this node also
             snmp_test_sys_monitor:start(),
 
+            PrivDir    = ?config(priv_dir, Config1),
+            PrivSubdir = filename:join(PrivDir, "snmp_conf_test"),
+            ok = filelib:ensure_dir(filename:join(PrivSubdir, "dummy")),
+            Config2 = [{priv_subdir, PrivSubdir} | Config1],
+
             ?IPRINT("init_per_suite -> end when"
-                    "~n      Config: ~p", [Config1]),
+                    "~n      Config: ~p", [Config2]),
             
-            Config1
+            Config2
     end.
 
 end_per_suite(Config0) when is_list(Config0) ->
@@ -144,6 +153,71 @@ end_per_group(_GroupName, Config) ->
 %% -----
 %%
 
+init_per_testcase(fd_leak_check = _Case, Config) when is_list(Config) ->
+    ?IPRINT("init_per_testcase -> entry with"
+            "~n   Config: ~p", [Config]),
+
+    %% There are other ways to test this:
+    %% lsof (linux and maybe FreeBSD):    lsof -p <pid>
+    %%    os:cmd("lsof -p " ++ os:getpid() ++ " | grep -v COMMAND | wc -l").
+    %% fstat (FreeBSD, OpenBSD and maybe NetBSD): fstat -p <pid>
+    %%    os:cmd("fstat -p " ++ os:getpid() ++ " | grep -v USER | wc -l").
+    %% But this (list:dir) is good enough...
+    case os:type() of
+        {unix, linux} ->
+            ?IPRINT("init_per_testcase -> linux: check proc fs"),
+            case file:read_file_info("/proc/" ++ os:getpid() ++ "/fd") of
+                {ok, #file_info{type   = directory,
+                                access = Access}}
+                  when (Access =:= read) orelse
+                       (Access =:= read_write) ->
+                    ?IPRINT("init_per_testcase -> linux: usingh proc fs"),
+                    [{num_open_fd, fun num_open_fd_using_list_dir/0} |
+                     Config];
+                _ ->
+                    {skip, "Not proc fd"}
+            end;
+        {unix, solaris} ->
+            %% Something strange happens when we use pfiles from within erlang,
+            %% so skip the test for now
+
+            %% For some reason even though 'which' exists (at least in
+            %% a tcsh shell), it hangs when called via os:cmd/1.
+            %% And type produces results that is not so easy to
+            %% "analyze". So, we 'try it' and know that it starts 
+            %% by writing the pid and program on the first line...
+
+            %% ?IPRINT("init_per_testcase -> solaris: check pfiles"),
+            %% PID = os:getpid(),
+            %% case string:find(os:cmd("pfiles -n " ++ PID), PID) of
+            %%     nomatch ->
+            %%         {skip, "pfiles not found"};
+            %%     _ ->
+            %%         ?IPRINT("init_per_testcase -> solaris: pfiles found"),
+            %%         [{num_open_fd, fun num_open_fd_using_pfiles/0} |
+            %%          Config]
+            %% end;
+            {skip, "pfiles not found"};
+
+        {unix, BSD} when (BSD =:= freebsd) orelse
+                         (BSD =:= openbsd) orelse
+                         (BSD =:= netbsd) ->
+            ?IPRINT("init_per_testcase -> ~w: check fstat", [BSD]),
+            case os:cmd("which fstat") of
+                [] ->
+                    {skip, "fstat not found"};
+                _ ->
+                    ?IPRINT("init_per_testcase -> ~w: fstat found", [BSD]),
+                    [{num_open_fd, fun num_open_fd_using_fstat/0} |
+                     Config]
+            end;
+        {win32, _} ->
+            ?IPRINT("init_per_testcase -> windows: no check"),
+            {skip, "Not implemented"};
+        _ ->
+            ?IPRINT("init_per_testcase -> no check"),
+            {skip, "Not implemented"}
+    end;
 init_per_testcase(_Case, Config) when is_list(Config) ->
     Config.
 
@@ -165,14 +239,14 @@ check_mandatory(Config) when is_list(Config) ->
 	  {b, mandatory}, 
 	  {d, {value, 20202}}, 
 	  {e, {value, "kalle"}}],
-    ?line {ok, _L1} = verify_mandatory(A1, B1),
+    {ok, _L1} = verify_mandatory(A1, B1),
     ?DBG("check_mandatory -> L1: ~p", [L1]),
     A2 = [{a, hej}, {c, 10}, {d, 10101}, {f, 10.88}],
     B2 = [{a, {value, hejsan}}, 
 	  {b, mandatory}, 
 	  {d, {value, 20202}}, 
 	  {e, {value, "kalle"}}],
-    ?line ok = verify_not_mandatory(A2, B2),
+    ok = verify_not_mandatory(A2, B2),
     ok.
 
 verify_mandatory(A, B) ->
@@ -209,16 +283,16 @@ verify_not_mandatory(A, B) ->
 check_integer1(suite) -> [];
 check_integer1(Config) when is_list(Config) ->
     ?P(check_integer1),
-    ?line ok = verify_int(0),
-    ?line ok = verify_int(16#FF),
-    ?line ok = verify_int(16#FFFF),
-    ?line ok = verify_int(16#FFFFFFFF),
-    ?line ok = verify_int(-1),
-    ?line ok = verify_int(-333),
+    ok = verify_int(0),
+    ok = verify_int(16#FF),
+    ok = verify_int(16#FFFF),
+    ok = verify_int(16#FFFFFFFF),
+    ok = verify_int(-1),
+    ok = verify_int(-333),
 
-    ?line ok = verify_not_int("kalle & hobbe"),
-    ?line ok = verify_not_int(kalle_och_hobbe),
-    ?line ok = verify_not_int(1.5),
+    ok = verify_not_int("kalle & hobbe"),
+    ok = verify_not_int(kalle_och_hobbe),
+    ok = verify_not_int(1.5),
 
     ok.
 
@@ -244,49 +318,49 @@ check_integer2(suite) -> [];
 check_integer2(Config) when is_list(Config) ->
     ?P(check_integer2),
 
-    ?line ok = verify_int(0,      any),
-    ?line ok = verify_int(-22222, any),
-    ?line ok = verify_int(33333,  any),
-    ?line ok = verify_int(1,      pos),
-    ?line ok = verify_int(9999,   pos),
-    ?line ok = verify_int(-1,     neg),
-    ?line ok = verify_int(-9999,  neg),
-    ?line ok = verify_int(1,      {gt, 0}),
-    ?line ok = verify_int(88888,  {gt, -255}),
-    ?line ok = verify_int(88888,  {gte, -255}),
-    ?line ok = verify_int(88888,  {gte, 88888}),
-    ?line ok = verify_int(88888,  {lt,  88889}),
-    ?line ok = verify_int(88888,  {lte, 88888}),
-    ?line ok = verify_int(88888,  {eq,  88888}),
-    ?line ok = verify_int(88888,  {range, 88887,88889}),
+    ok = verify_int(0,      any),
+    ok = verify_int(-22222, any),
+    ok = verify_int(33333,  any),
+    ok = verify_int(1,      pos),
+    ok = verify_int(9999,   pos),
+    ok = verify_int(-1,     neg),
+    ok = verify_int(-9999,  neg),
+    ok = verify_int(1,      {gt, 0}),
+    ok = verify_int(88888,  {gt, -255}),
+    ok = verify_int(88888,  {gte, -255}),
+    ok = verify_int(88888,  {gte, 88888}),
+    ok = verify_int(88888,  {lt,  88889}),
+    ok = verify_int(88888,  {lte, 88888}),
+    ok = verify_int(88888,  {eq,  88888}),
+    ok = verify_int(88888,  {range, 88887,88889}),
 
-    ?line ok = verify_not_int("kalle & hobbe", any),
-    ?line ok = verify_not_int(kalle_och_hobbe, any),
-    ?line ok = verify_not_int(1.5,             any),
+    ok = verify_not_int("kalle & hobbe", any),
+    ok = verify_not_int(kalle_och_hobbe, any),
+    ok = verify_not_int(1.5,             any),
 
-    ?line ok = verify_not_int(0,      pos),
-    ?line ok = verify_not_int(-22222, pos),
-    ?line ok = verify_not_int(33333,  neg),
-    ?line ok = verify_not_int(0,      {gt,  0}),
-    ?line ok = verify_not_int(33333,  {gt,  99999}),
-    ?line ok = verify_not_int(33333,  {gt,  33333}),
-    ?line ok = verify_not_int(33333,  {gte, 33334}),
-    ?line ok = verify_not_int(33333,  {lt,  33333}),
-    ?line ok = verify_not_int(33333,  {lte, 33332}),
-    ?line ok = verify_not_int(33333,  {eq,  33332}),
-    ?line ok = verify_not_int(33333,  {eq,  -33333}),
-    ?line ok = verify_not_int(33333,  {range, 33334, 33338}),
-    ?line ok = verify_not_int(33339,  {range, 33334, 33338}),
-    ?line ok = verify_not_int(33333,  {gt,  kalle}),
-    ?line ok = verify_not_int(33333,  {gt,  1.55}),
-    ?line ok = verify_not_int(33333,  {gte, "hejsan"}),
-    ?line ok = verify_not_int(33333,  {lt,  hobbe}),
-    ?line ok = verify_not_int(33333,  {lte, 1.7666}),
-    ?line ok = verify_not_int(33333,  {eq,  33333.0}),
-    ?line ok = verify_not_int(33333,  {eq,  -33333.0}),
-    ?line ok = verify_not_int(33333,  {range, kalle, 33338}),
-    ?line ok = verify_not_int(33339,  {range, 33334, kalle}),
-    ?line ok = verify_not_int(33339,  {kalle, 33334, kalle}),
+    ok = verify_not_int(0,      pos),
+    ok = verify_not_int(-22222, pos),
+    ok = verify_not_int(33333,  neg),
+    ok = verify_not_int(0,      {gt,  0}),
+    ok = verify_not_int(33333,  {gt,  99999}),
+    ok = verify_not_int(33333,  {gt,  33333}),
+    ok = verify_not_int(33333,  {gte, 33334}),
+    ok = verify_not_int(33333,  {lt,  33333}),
+    ok = verify_not_int(33333,  {lte, 33332}),
+    ok = verify_not_int(33333,  {eq,  33332}),
+    ok = verify_not_int(33333,  {eq,  -33333}),
+    ok = verify_not_int(33333,  {range, 33334, 33338}),
+    ok = verify_not_int(33339,  {range, 33334, 33338}),
+    ok = verify_not_int(33333,  {gt,  kalle}),
+    ok = verify_not_int(33333,  {gt,  1.55}),
+    ok = verify_not_int(33333,  {gte, "hejsan"}),
+    ok = verify_not_int(33333,  {lt,  hobbe}),
+    ok = verify_not_int(33333,  {lte, 1.7666}),
+    ok = verify_not_int(33333,  {eq,  33333.0}),
+    ok = verify_not_int(33333,  {eq,  -33333.0}),
+    ok = verify_not_int(33333,  {range, kalle, 33338}),
+    ok = verify_not_int(33339,  {range, 33334, kalle}),
+    ok = verify_not_int(33339,  {kalle, 33334, kalle}),
 
     ok.
 
@@ -311,10 +385,10 @@ verify_not_int(Val, Cond) ->
 check_string1(suite) -> [];
 check_string1(Config) when is_list(Config) ->
     ?P(check_string1),
-    ?line ok = verify_string("kalle & hobbe"),
-    ?line ok = verify_not_string(kalle_hobbe),
-    ?line ok = verify_not_string(1000),
-    ?line ok = verify_not_string(1.0),
+    ok = verify_string("kalle & hobbe"),
+    ok = verify_not_string(kalle_hobbe),
+    ok = verify_not_string(1000),
+    ok = verify_not_string(1.0),
     ok.
 
 verify_string(Val) ->
@@ -340,21 +414,21 @@ check_string2(suite) -> [];
 check_string2(Config) when is_list(Config) ->
     ?P(check_string2),
     Str = "kalle & hobbe",
-    ?line ok = verify_string(Str, any),
-    ?line ok = verify_string(Str, {gt,  length(Str) - 1}),
-    ?line ok = verify_string(Str, {gte, length(Str)}),
-    ?line ok = verify_string(Str, {lt,  length(Str) + 1}),
-    ?line ok = verify_string(Str, {lte, length(Str)}),
-    ?line ok = verify_string(Str, length(Str)),
+    ok = verify_string(Str, any),
+    ok = verify_string(Str, {gt,  length(Str) - 1}),
+    ok = verify_string(Str, {gte, length(Str)}),
+    ok = verify_string(Str, {lt,  length(Str) + 1}),
+    ok = verify_string(Str, {lte, length(Str)}),
+    ok = verify_string(Str, length(Str)),
 
-    ?line ok = verify_not_string(kalle_hobbe, any),
-    ?line ok = verify_not_string(1000, any),
-    ?line ok = verify_not_string(1.0, any),
-    ?line ok = verify_not_string(Str, {gt,  length(Str)}),
-    ?line ok = verify_not_string(Str, {gte, length(Str) + 1}),
-    ?line ok = verify_not_string(Str, {lt,  length(Str)}),
-    ?line ok = verify_not_string(Str, {lte, length(Str) - 1}),
-    ?line ok = verify_not_string(Str, length(Str) + 1),
+    ok = verify_not_string(kalle_hobbe, any),
+    ok = verify_not_string(1000, any),
+    ok = verify_not_string(1.0, any),
+    ok = verify_not_string(Str, {gt,  length(Str)}),
+    ok = verify_not_string(Str, {gte, length(Str) + 1}),
+    ok = verify_not_string(Str, {lt,  length(Str)}),
+    ok = verify_not_string(Str, {lte, length(Str) - 1}),
+    ok = verify_not_string(Str, length(Str) + 1),
     ok.
 
 verify_string(Val, Limit) ->
@@ -380,10 +454,10 @@ check_atom(suite) -> [];
 check_atom(Config) when is_list(Config) ->
     ?P(check_atom),
     Atoms = [{kalle, "kalle"}, {hobbe, "hobbe"}, {dummy, "dummy"}],
-    ?line ok = verify_atom(kalle, Atoms),
-    ?line ok = verify_not_atom(anka, Atoms),
-    ?line ok = verify_not_atom("kalle", Atoms),
-    ?line ok = verify_not_atom(1000, Atoms),
+    ok = verify_atom(kalle, Atoms),
+    ok = verify_not_atom(anka, Atoms),
+    ok = verify_not_atom("kalle", Atoms),
+    ok = verify_not_atom(1000, Atoms),
     ok.
 
 verify_atom(Val, Atoms) ->
@@ -408,13 +482,13 @@ verify_not_atom(Val, Atoms) ->
 check_ip(suite) -> [];
 check_ip(Config) when is_list(Config) ->
     ?P(check_ip),
-    ?line ok = verify_ip([1,2,3,4]),
-    ?line ok = verify_not_ip([1,2,3]),
-    ?line ok = verify_not_ip([1,2,3,4,5]),
-    ?line ok = verify_not_ip(kalle),
-    ?line ok = verify_not_ip(1000),
-    ?line ok = verify_not_ip([1,2,3.0,4]),
-    ?line ok = verify_not_ip([1,two,3,4]),
+    ok = verify_ip([1,2,3,4]),
+    ok = verify_not_ip([1,2,3]),
+    ok = verify_not_ip([1,2,3,4,5]),
+    ok = verify_not_ip(kalle),
+    ok = verify_not_ip(1000),
+    ok = verify_not_ip([1,2,3.0,4]),
+    ok = verify_not_ip([1,two,3,4]),
     ok.
 
 verify_ip(Val) ->
@@ -441,13 +515,13 @@ verify_not_ip(Val) ->
 check_taddress(suite) -> [];
 check_taddress(Config) when is_list(Config) ->
     ?P(check_taddress),
-    ?line ok = verify_taddress([1,2,3,4,5,6]),
-    ?line ok = verify_not_taddress([1,2,3,4,5]),
-    ?line ok = verify_not_taddress([1,2,3,4,5,6,7]),
-    ?line ok = verify_not_taddress(kalle),
-    ?line ok = verify_not_taddress(1000),
-    ?line ok = verify_not_taddress([1,2,3.0,4,5,6]),
-    ?line ok = verify_not_taddress([1,two,3,4,5,6]),
+    ok = verify_taddress([1,2,3,4,5,6]),
+    ok = verify_not_taddress([1,2,3,4,5]),
+    ok = verify_not_taddress([1,2,3,4,5,6,7]),
+    ok = verify_not_taddress(kalle),
+    ok = verify_not_taddress(1000),
+    ok = verify_not_taddress([1,2,3.0,4,5,6]),
+    ok = verify_not_taddress([1,two,3,4,5,6]),
     ok.
 
 verify_taddress(Val) ->
@@ -474,15 +548,15 @@ check_packet_size(Config) when is_list(Config) ->
     ?P(check_packet_size),
     Min = 484,
     Max = 2147483647,
-    ?line ok = verify_packet_size(Min),
-    ?line ok = verify_packet_size(2*Min),
-    ?line ok = verify_packet_size(Max),
-    ?line ok = verify_not_packet_size(Min-1),
-    ?line ok = verify_not_packet_size(Max+1),
-    ?line ok = verify_not_packet_size(kalle),
-    ?line ok = verify_not_packet_size("kalle"),
-    ?line ok = verify_not_packet_size(1.0),
-    ?line ok = verify_not_packet_size(1.0*Max),
+    ok = verify_packet_size(Min),
+    ok = verify_packet_size(2*Min),
+    ok = verify_packet_size(Max),
+    ok = verify_not_packet_size(Min-1),
+    ok = verify_not_packet_size(Max+1),
+    ok = verify_not_packet_size(kalle),
+    ok = verify_not_packet_size("kalle"),
+    ok = verify_not_packet_size(1.0),
+    ok = verify_not_packet_size(1.0*Max),
     ok.
 
 verify_packet_size(Val) ->
@@ -509,14 +583,14 @@ check_oid(Config) when is_list(Config) ->
     ?P(check_oid),
     [_,_|Rest] = ?otpSnmpeaModule,
     ErrOid = [6,16|Rest],
-    ?line ok = verify_oid(?system),
-    ?line ok = verify_oid(?sysDescr_instance),
-    ?line ok = verify_oid(?otpSnmpeaModule),
-    ?line ok = verify_not_oid(kalle),
-    ?line ok = verify_not_oid("kalle"),
-    ?line ok = verify_not_oid(1000),
-    ?line ok = verify_not_oid(1.0),
-    ?line ok = verify_not_oid(ErrOid),
+    ok = verify_oid(?system),
+    ok = verify_oid(?sysDescr_instance),
+    ok = verify_oid(?otpSnmpeaModule),
+    ok = verify_not_oid(kalle),
+    ok = verify_not_oid("kalle"),
+    ok = verify_not_oid(1000),
+    ok = verify_not_oid(1.0),
+    ok = verify_not_oid(ErrOid),
     ok.
 
 verify_oid(Val) ->
@@ -544,15 +618,15 @@ check_sec_model1(Config) when is_list(Config) ->
     Exclude1 = [],
     Exclude2 = [v1],
     Exclude3 = [v1,usm],
-    ?line ok = verify_sec_model(any, Exclude1),
-    ?line ok = verify_sec_model(v1,  Exclude1),
-    ?line ok = verify_sec_model(v2c, Exclude1),
-    ?line ok = verify_sec_model(usm, Exclude1),
-    ?line ok = verify_sec_model(any, Exclude2),
-    ?line ok = verify_sec_model(v2c, Exclude2),
-    ?line ok = verify_not_sec_model(v1, Exclude2),
-    ?line ok = verify_not_sec_model(v1, Exclude3),
-    ?line ok = verify_not_sec_model(usm, Exclude3),
+    ok = verify_sec_model(any, Exclude1),
+    ok = verify_sec_model(v1,  Exclude1),
+    ok = verify_sec_model(v2c, Exclude1),
+    ok = verify_sec_model(usm, Exclude1),
+    ok = verify_sec_model(any, Exclude2),
+    ok = verify_sec_model(v2c, Exclude2),
+    ok = verify_not_sec_model(v1, Exclude2),
+    ok = verify_not_sec_model(v1, Exclude3),
+    ok = verify_not_sec_model(usm, Exclude3),
     ok.
 
 verify_sec_model(Val, Exclude) ->
@@ -577,24 +651,24 @@ verify_not_sec_model(Val, Exclude) ->
 check_sec_model2(suite) -> [];
 check_sec_model2(Config) when is_list(Config) ->
     ?P(check_sec_model2),
-    ?line ok = verify_sec_model(v1,  v1,  []),
-    ?line ok = verify_sec_model(v1,  v1,  [v2c]),
-    ?line ok = verify_sec_model(v2c, v2c, []),
-    ?line ok = verify_sec_model(v2c, v2c, [v1]),
-    ?line ok = verify_sec_model(v3,  usm, []),
-    ?line ok = verify_sec_model(v3,  usm, [v2c]),
-    ?line ok = verify_not_sec_model(v1,    v2c, []),
-    ?line ok = verify_not_sec_model(v1,    v3,  [v2c]),
-    ?line ok = verify_not_sec_model(v1,    v1,  [v1]),
-    ?line ok = verify_not_sec_model(v2c,   v1,  []),
-    ?line ok = verify_not_sec_model(v2c,   v3,  [v3]),
-    ?line ok = verify_not_sec_model(v2c,   v2c, [v2c]),
-    ?line ok = verify_not_sec_model(v3,    v1,  []),
-    ?line ok = verify_not_sec_model(v3,    v2c, [v1]),
-    ?line ok = verify_not_sec_model(v3,    v3,  [v2c]),
-    ?line ok = verify_not_sec_model(kalle, v3,  []),
-    ?line ok = verify_not_sec_model(1000,  v3,  []),
-    ?line ok = verify_not_sec_model(1.0,   v3,  []),
+    ok = verify_sec_model(v1,  v1,  []),
+    ok = verify_sec_model(v1,  v1,  [v2c]),
+    ok = verify_sec_model(v2c, v2c, []),
+    ok = verify_sec_model(v2c, v2c, [v1]),
+    ok = verify_sec_model(v3,  usm, []),
+    ok = verify_sec_model(v3,  usm, [v2c]),
+    ok = verify_not_sec_model(v1,    v2c, []),
+    ok = verify_not_sec_model(v1,    v3,  [v2c]),
+    ok = verify_not_sec_model(v1,    v1,  [v1]),
+    ok = verify_not_sec_model(v2c,   v1,  []),
+    ok = verify_not_sec_model(v2c,   v3,  [v3]),
+    ok = verify_not_sec_model(v2c,   v2c, [v2c]),
+    ok = verify_not_sec_model(v3,    v1,  []),
+    ok = verify_not_sec_model(v3,    v2c, [v1]),
+    ok = verify_not_sec_model(v3,    v3,  [v2c]),
+    ok = verify_not_sec_model(kalle, v3,  []),
+    ok = verify_not_sec_model(1000,  v3,  []),
+    ok = verify_not_sec_model(1.0,   v3,  []),
     ok.
 
 
@@ -620,13 +694,13 @@ verify_not_sec_model(M1, M2, Exclude) ->
 check_sec_level(suite) -> [];
 check_sec_level(Config) when is_list(Config) ->
     ?P(check_sec_level),
-    ?line ok = verify_sec_level(noAuthNoPriv),
-    ?line ok = verify_sec_level(authNoPriv),
-    ?line ok = verify_sec_level(authPriv),
-    ?line ok = verify_not_sec_level(kalle),
-    ?line ok = verify_not_sec_level("noAuthNoPriv"),
-    ?line ok = verify_not_sec_level(1000),
-    ?line ok = verify_not_sec_level(1.0),
+    ok = verify_sec_level(noAuthNoPriv),
+    ok = verify_sec_level(authNoPriv),
+    ok = verify_sec_level(authPriv),
+    ok = verify_not_sec_level(kalle),
+    ok = verify_not_sec_level("noAuthNoPriv"),
+    ok = verify_not_sec_level(1000),
+    ok = verify_not_sec_level(1.0),
     ok.
 
 
@@ -656,30 +730,30 @@ verify_not_sec_level(Val) ->
 check_timer(suite) -> [];
 check_timer(Config) when is_list(Config) ->
     ?P(check_timer),
-    ?line ok = verify_timer(infinity),
-    ?line ok = verify_timer(1),
-    ?line ok = verify_timer(10),
-    ?line ok = verify_timer(2147483647),
-    ?line ok = verify_timer(2*2147483647),
-    ?line ok = verify_timer({1,1,0,0}),
-    ?line ok = verify_timer({10,10,10,10}),
-    ?line ok = verify_timer({2147483647,2147483647,2147483647,2147483647}),
-    ?line ok = verify_not_timer(ytinifni),
-    ?line ok = verify_not_timer("ytinifni"),
-    ?line ok = verify_not_timer(0),
-    ?line ok = verify_not_timer(-10),
-    ?line ok = verify_not_timer({0,1,0,0}),
-    ?line ok = verify_not_timer({1,0,0,0}),
-    ?line ok = verify_not_timer({1,1,-1,0}),
-    ?line ok = verify_not_timer({1,1,0,-1}),
-    ?line ok = verify_not_timer({1.0,1,0,0}),
-    ?line ok = verify_not_timer({1,1.0,0,0}),
-    ?line ok = verify_not_timer({1,1,1.0,0}),
-    ?line ok = verify_not_timer({1,1,0,1.0}),
-    ?line ok = verify_not_timer({"1",1,0,0}),
-    ?line ok = verify_not_timer({1,"1",0,0}),
-    ?line ok = verify_not_timer({1,1,"0",0}),
-    ?line ok = verify_not_timer({1,1,0,"0"}),
+    ok = verify_timer(infinity),
+    ok = verify_timer(1),
+    ok = verify_timer(10),
+    ok = verify_timer(2147483647),
+    ok = verify_timer(2*2147483647),
+    ok = verify_timer({1,1,0,0}),
+    ok = verify_timer({10,10,10,10}),
+    ok = verify_timer({2147483647,2147483647,2147483647,2147483647}),
+    ok = verify_not_timer(ytinifni),
+    ok = verify_not_timer("ytinifni"),
+    ok = verify_not_timer(0),
+    ok = verify_not_timer(-10),
+    ok = verify_not_timer({0,1,0,0}),
+    ok = verify_not_timer({1,0,0,0}),
+    ok = verify_not_timer({1,1,-1,0}),
+    ok = verify_not_timer({1,1,0,-1}),
+    ok = verify_not_timer({1.0,1,0,0}),
+    ok = verify_not_timer({1,1.0,0,0}),
+    ok = verify_not_timer({1,1,1.0,0}),
+    ok = verify_not_timer({1,1,0,1.0}),
+    ok = verify_not_timer({"1",1,0,0}),
+    ok = verify_not_timer({1,"1",0,0}),
+    ok = verify_not_timer({1,1,"0",0}),
+    ok = verify_not_timer({1,1,0,"0"}),
     ok.
 
 verify_timer(Val) ->
@@ -713,6 +787,103 @@ read_files(suite) -> [];
 read_files(Config) when is_list(Config) ->
     ?P(read_files),
     ?SKIP(not_implemented_yet).
+
+
+%%======================================================================
+
+%% Since we need something to read, we also write.
+%% And we can just as well check then (after write) too...
+fd_leak_check(suite) -> [];
+fd_leak_check(Config) when is_list(Config) ->
+    ?TC_TRY(fd_leak_check,
+            fun() -> ok end,
+            fun(_) -> do_fd_leak_check(Config) end,
+            fun(_) -> ok end).
+
+do_fd_leak_check(Config) ->
+    Dir       = ?config(priv_subdir, Config),
+    NumOpenFD = ?config(num_open_fd, Config),
+
+    %% Create "some" config
+    ?IPRINT("do_fd_leak_check -> create some config"),
+    Entries = [
+               snmpa_conf:agent_entry(intAgentIpAddress, {0,0,0,0}),
+               snmpa_conf:agent_entry(intAgentUDPPort, 161),
+               snmpa_conf:agent_entry(snmpEngineMaxMessageSize, 484),
+               snmpa_conf:agent_entry(snmpEngineID, "fooBarEI")
+              ],
+
+    ?IPRINT("do_fd_leak_check -> get number of FD (before test)"),
+    NumFD01 = NumOpenFD(),
+    ?IPRINT("do_fd_leak_check -> before config write: ~w", [NumFD01]),
+
+    ?IPRINT("do_fd_leak_check -> write config to file"),
+    ok = snmpa_conf:write_agent_config(Dir, Entries),
+
+    NumFD02 = NumOpenFD(),
+    ?IPRINT("do_fd_leak_check -> (after write) before config read: ~w", [NumFD02]),
+
+    {ok, _} = snmpa_conf:read_agent_config(Dir),
+
+
+    NumFD03 = NumOpenFD(),
+    ?IPRINT("do_fd_leak_check -> after config read: ~w", [NumFD03]),
+    if
+        (NumFD01 =:= NumFD02) andalso (NumFD02 =:= NumFD03) ->
+            ?IPRINT("do_fd_leak_check -> fd leak check ok"),
+            ok;
+        true ->
+            ?EPRINT("do_fd_leak_check -> fd leak check failed: "
+                    "~n      Before write: ~w"
+                    "~n      Before read:  ~w"
+                    "~n      After read:   ~w", [NumFD01, NumFD02, NumFD03]),
+            ?FAIL({num_open_fd, NumFD01, NumFD02, NumFD03})
+    end.
+
+
+
+%% There are other ways to test this:
+%% lsof (linux and maybe FreeBSD):    lsof -p <pid>
+%%    os:cmd("lsof -p " ++ os:getpid() ++ " | grep -v COMMAND | wc -l").
+%% fstat (FreeBSD and maybe OpenBSD): fstat -p <pid>
+%%    os:cmd("fstat -p " ++ os:getpid() ++ " | grep -v USER | wc -l").
+%% But this is good enough...
+num_open_fd_using_list_dir() ->
+    case file:list_dir("/proc/" ++ os:getpid() ++ "/fd") of
+        {ok, FDs} ->
+            length(FDs);
+        {error, Reason} ->
+            ?EPRINT("Failed listing proc fs (for fd): "
+                    "~n      Reason: ~p", [Reason]),
+            ?SKIP({failed_listing_fd, Reason})
+    end.
+
+
+%% num_open_fd_using_pfiles() ->
+%%     NumString = os:cmd("pfiles -n " ++ os:getpid() ++
+%%                            " | grep -v " ++ os:getpid() ++
+%%                            " | grep -v \"Current rlimit\" | wc -l"),
+%%     try list_to_integer(string:trim(NumString))
+%%     catch
+%%         C:E ->
+%%             ?EPRINT("Failed pfiles: "
+%%                     "~n      Error Class: ~p"
+%%                     "~n      Error:       ~p", [C, E]),
+%%             ?SKIP({failed_pfiles, C, E})
+%%     end.
+
+
+num_open_fd_using_fstat() ->
+    NumString = os:cmd("fstat -p " ++ os:getpid() ++
+                           " | grep -v MOUNT | wc -l"),
+    try list_to_integer(string:trim(NumString))
+    catch
+        C:E ->
+            ?EPRINT("Failed fstat: "
+                    "~n      Error Class: ~p"
+                    "~n      Error:       ~p", [C, E]),
+            ?SKIP({failed_fstat, C, E})
+    end.
 
 
 %%======================================================================

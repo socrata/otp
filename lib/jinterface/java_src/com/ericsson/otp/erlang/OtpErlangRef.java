@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2016. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2021. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,12 +106,11 @@ public class OtpErlangRef extends OtpErlangObject {
      *            three numbers will be read from the array.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be
-     *            used.
+	 *  		  node incarnation number. Avoid values 0 to 3.
      */
     public OtpErlangRef(final String node, final int[] ids, final int creation) {
-	this(OtpExternal.newRefTag, node, ids, creation);
-    }
+		this(OtpExternal.newerRefTag, node, ids, creation);
+	}
 
     /**
      * Create a new(er) style Erlang ref from its components.
@@ -136,15 +135,20 @@ public class OtpErlangRef extends OtpErlangObject {
 			final int creation) {
         this.node = node;
 
-        // use at most 3 words
+        // use at most 5 words
         int len = ids.length;
-        this.ids = new int[3];
-        this.ids[0] = 0;
-        this.ids[1] = 0;
-        this.ids[2] = 0;
-
-        if (len > 3) {
-            len = 3;
+        if (len < 3) {
+            this.ids = new int[3];
+            this.ids[0] = 0;
+            this.ids[1] = 0;
+            this.ids[2] = 0;
+        }
+        else if (len <= 5) {
+            this.ids = new int[len];
+        }
+        else {
+            this.ids = new int[5];
+            len = 5;
         }
         System.arraycopy(ids, 0, this.ids, 0, len);
 	if (tag == OtpExternal.newRefTag) {
@@ -173,7 +177,7 @@ public class OtpErlangRef extends OtpErlangObject {
     /**
      * Get the array of id numbers from the ref. If this is an old style ref,
      * the array is of length 1. If this is a new style ref, the array has
-     * length 3.
+     * length 3-5.
      *
      * @return the array of id numbers from the ref.
      */
@@ -241,7 +245,7 @@ public class OtpErlangRef extends OtpErlangObject {
     /**
      * Determine if two refs are equal. Refs are equal if their components are
      * equal. New refs and old refs are considered equal if the node, creation
-     * and first id numnber are equal.
+     * and first id number are equal.
      *
      * @param o
      *            the other ref to compare to.
@@ -260,11 +264,28 @@ public class OtpErlangRef extends OtpErlangObject {
             return false;
         }
 
-        if (isNewRef() && ref.isNewRef()) {
-            return ids[0] == ref.ids[0] && ids[1] == ref.ids[1]
-                    && ids[2] == ref.ids[2];
+        if (ids.length != ref.ids.length) {
+            if (ids.length > ref.ids.length) {
+                for (int i = ref.ids.length; i < ids.length; i++) {
+                    if (ids[i] != 0) {
+                        return false;
+                    }
+                }
+            }
+            else {
+                for (int i = ids.length; i < ref.ids.length; i++) {
+                    if (ref.ids[i] != 0) {
+                        return false;
+                    }
+                }
+            }
         }
-        return ids[0] == ref.ids[0];
+        for (int i = 0; i < ids.length; i++) {
+            if (ids[i] != ref.ids[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

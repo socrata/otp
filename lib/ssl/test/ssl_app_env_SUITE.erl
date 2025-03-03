@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2019. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,10 +21,31 @@
 %%
 -module(ssl_app_env_SUITE).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-behaviour(ct_suite).
+
 -include_lib("common_test/include/ct.hrl").
 -include_lib("ssl/src/ssl_api.hrl").
+
+%% Common test
+-export([all/0,
+         groups/0,
+         init_per_suite/1,
+         init_per_group/2,
+         init_per_testcase/2,
+         end_per_suite/1,
+         end_per_group/2,
+         end_per_testcase/2
+        ]).
+
+%% Test cases
+-export([internal_active_1/0,
+         internal_active_1/1,
+         protocol_versions/0,
+         protocol_versions/1,
+         empty_protocol_versions/0,
+         empty_protocol_versions/1
+         ]).
+
 -define(TIMEOUT, {seconds, 5}).
 -define(SLEEP, 500).
 %%--------------------------------------------------------------------
@@ -74,13 +95,15 @@ end_per_suite(_Config) ->
     application:unload(ssl),
     application:stop(crypto).
 
-init_per_group(GroupName, Config0) ->
-    case ssl_test_lib:init_per_group(GroupName, Config0) of
-        {skip, _} = Skip ->
-            Skip;
-        Config ->
-            [{client_type, erlang},
-             {server_type, erlang}| Config]
+init_per_group(GroupName, Config) ->
+    case ssl_test_lib:is_protocol_version(GroupName) of
+	true ->
+            ssl_test_lib:init_per_group(GroupName, 
+                                        [{client_type, erlang},
+                                         {server_type, erlang},
+                                         {version, GroupName} | Config]);
+        false ->
+            Config
     end.
 
 end_per_group(GroupName, Config) ->
@@ -146,7 +169,16 @@ empty_protocol_versions() ->
     [{doc,"Test to set an empty list of protocol versions in app environment."}].
 
 empty_protocol_versions(Config) when is_list(Config) -> 
+    Version = proplists:get_value(version, Config),
+    VersionsR =  ssl:versions(),
+    Supported = proplists:get_value(supported, VersionsR) ++
+        proplists:get_value(supported_dtls, VersionsR),
     ClientOpts = ssl_test_lib:ssl_options(client_rsa_opts, Config),
     ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),
-    ssl_test_lib:basic_test(ClientOpts, ServerOpts, Config).
-
+    case lists:member(Version, Supported) of
+        true ->
+            ssl_test_lib:basic_test([{versions, [Version]} | ClientOpts], ServerOpts, Config);
+        false ->
+            ssl_test_lib:basic_alert([{versions, [Version]} | ClientOpts],
+                                     ServerOpts, Config, protocol_version)
+    end.

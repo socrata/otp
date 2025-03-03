@@ -232,7 +232,7 @@ print_test_error({error, Exception}, Data, #state{print_depth = Depth}) ->
 	_ ->
 	    fwrite("  output:<<\"~ts\">>\n\n", [Output])
     end;
-print_test_error({skipped, Reason}, _, St) ->
+print_test_error({skipped, Reason}, _, _St) ->
     fwrite("*did not run*\n::~ts\n", [format_skipped(Reason)]).
 
 format_skipped({module_not_found, M}) ->
@@ -253,6 +253,9 @@ format_cancel(undefined, _) ->
     "*skipped*\n";
 format_cancel(timeout, _) ->
     "*timed out*\n";
+format_cancel({timeout, #{stacktrace := Stack}}, _) ->
+    ["*timed out*\n",
+     eunit_lib:format_stacktrace(Stack)];
 format_cancel({startup, Reason}, Depth) ->
     io_lib:fwrite("*could not start test process*\n::~tP\n\n",
 		  [Reason, Depth]);

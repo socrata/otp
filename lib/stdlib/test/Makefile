@@ -7,9 +7,12 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
 MODULES= \
 	array_SUITE \
+	argparse_SUITE \
 	base64_SUITE \
+	base64_property_test_SUITE \
 	beam_lib_SUITE \
 	binary_module_SUITE \
+	binary_property_test_SUITE \
 	binref \
 	c_SUITE \
 	calendar_SUITE \
@@ -22,6 +25,7 @@ MODULES= \
 	dummy_h \
 	dummy_via \
 	edlin_expand_SUITE \
+	edlin_context_SUITE \
 	epp_SUITE \
 	erl_anno_SUITE \
 	erl_eval_SUITE \
@@ -30,6 +34,7 @@ MODULES= \
 	erl_lint_SUITE \
 	erl_pp_SUITE \
 	erl_scan_SUITE \
+	error_info_lib \
 	error_logger_h_SUITE \
 	escript_SUITE \
 	ets_SUITE \
@@ -47,14 +52,17 @@ MODULES= \
 	io_SUITE \
 	io_proto_SUITE \
 	lists_SUITE \
+	lists_property_test_SUITE \
 	log_mf_h_SUITE \
 	math_SUITE \
 	ms_transform_SUITE \
+	peer_SUITE \
 	pool_SUITE \
 	proc_lib_SUITE \
 	proplists_SUITE \
 	qlc_SUITE \
 	queue_SUITE \
+	queue_property_test_SUITE \
 	rand_SUITE \
 	random_SUITE \
 	re_SUITE \
@@ -71,6 +79,7 @@ MODULES= \
 	supervisor_1 \
 	supervisor_2 \
 	supervisor_3 \
+	supervisor_4 \
 	supervisor_deadlock \
 	naughty_child \
 	shell_SUITE \
@@ -98,8 +107,15 @@ MODULES= \
 	zzz_SUITE
 
 ERTS_MODULES= erts_test_utils
+SASL_MODULES= otp_vsns
+KERNEL_MODULES= rtnode
 
-ERL_FILES= $(MODULES:%=%.erl) $(ERTS_MODULES:%=$(ERL_TOP)/erts/emulator/test/%.erl)
+ERL_FILES=	$(MODULES:%=%.erl) \
+		$(ERTS_MODULES:%=$(ERL_TOP)/erts/emulator/test/%.erl) \
+		$(SASL_MODULES:%=$(ERL_TOP)/lib/sasl/test/%.erl) \
+		$(KERNEL_MODULES:%=$(ERL_TOP)/lib/kernel/test/%.erl)
+
+EXTRA_FILES= $(ERL_TOP)/otp_versions.table
 
 # ----------------------------------------------------
 # Release directory specification
@@ -110,24 +126,25 @@ RELSYSDIR = $(RELEASE_PATH)/stdlib_test
 # FLAGS
 # ----------------------------------------------------
 
-ERL_MAKE_FLAGS +=
 ERL_COMPILE_FLAGS += -I$(ERL_TOP)/lib/kernel/include \
 		-I$(ERL_TOP)/lib/stdlib/include
+ERL_COMPILE_FLAGS := $(filter-out +deterministic,$(ERL_COMPILE_FLAGS))
 
 EBIN = .
 
 EMAKEFILE=Emakefile
-COVERFILE=stdlib.cover
+COVERFILE=stdlib.cover tty.cover
 
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
 
 make_emakefile:
-	$(ERL_TOP)/make/make_emakefile $(ERL_COMPILE_FLAGS) -o$(EBIN) $(MODULES) $(ERTS_MODULES) \
+	$(ERL_TOP)/make/make_emakefile $(ERL_COMPILE_FLAGS) -o$(EBIN) \
+		$(MODULES) $(ERTS_MODULES) $(SASL_MODULES) $(KERNEL_MODULES) \
 	> $(EMAKEFILE)
 
-tests debug opt: make_emakefile
+tests $(TYPES): make_emakefile
 	erl $(ERL_MAKE_FLAGS) -make
 
 clean:
@@ -146,9 +163,11 @@ release_spec: opt
 
 release_tests_spec: make_emakefile
 	$(INSTALL_DIR) "$(RELSYSDIR)"
-	$(INSTALL_DATA) stdlib.spec stdlib_bench.spec $(EMAKEFILE) \
-		$(ERL_FILES) $(COVERFILE) "$(RELSYSDIR)"
+	$(INSTALL_DATA) stdlib.spec stdlib_bench.spec stdlib_gh.spec error_info.spec $(EMAKEFILE) \
+		$(ERL_FILES) $(COVERFILE) $(EXTRA_FILES) "$(RELSYSDIR)"
 	chmod -R u+w "$(RELSYSDIR)"
 	@tar cf - *_SUITE_data property_test | (cd "$(RELSYSDIR)"; tar xf -)
+	$(INSTALL_DIR) "$(RELSYSDIR)/stdlib_SUITE_data"
+	$(INSTALL_DATA) $(ERL_TOP)/make/otp_version_tickets "$(RELSYSDIR)/stdlib_SUITE_data"
 
 release_docs_spec:

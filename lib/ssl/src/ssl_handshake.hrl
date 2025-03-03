@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 %%
 %%----------------------------------------------------------------------
-%% Purpose: Record and constant defenitions for the SSL-handshake protocol
+%% Purpose: Record and constant definitions for the SSL-handshake protocol
 %% see RFC 5246. Also includes supported hello extensions.
 %%----------------------------------------------------------------------
 
@@ -38,27 +38,30 @@
 -define(ECDSA, 3).
 
 -record(session, {
-	  session_id,
-	  peer_certificate,
-	  own_certificate,
-	  compression_method,
-	  cipher_suite,
-	  master_secret,
-	  srp_username,
-	  is_resumable,
-	  time_stamp,
-	  ecc,                   %% TLS 1.3 Group
-	  sign_alg,              %% TLS 1.3 Signature Algorithm
-	  dh_public_value        %% TLS 1.3 DH Public Value from peer
-	  }).
+                  session_id,
+                  internal_id,
+                  peer_certificate,
+                  own_certificates,
+                  private_key,
+                  compression_method,
+                  cipher_suite,
+                  master_secret,
+                  srp_username,
+                  is_resumable,
+                  time_stamp,
+                  ecc,                   %% TLS 1.3 Group
+                  sign_alg,              %% TLS 1.3 Signature Algorithm
+                  dh_public_value        %% TLS 1.3 DH Public Value from peer
+                 }).
 
+-define(EMPTY_ID, <<>>).
 -define(NUM_OF_SESSION_ID_BYTES, 32).  % TSL 1.1 & SSL 3
 -define(NUM_OF_PREMASTERSECRET_BYTES, 48).
 -define(DEFAULT_DIFFIE_HELLMAN_GENERATOR, ssl_dh_groups:modp2048_generator()).
 -define(DEFAULT_DIFFIE_HELLMAN_PRIME, ssl_dh_groups:modp2048_prime()).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Handsake protocol - RFC 4346 section 7.4
+%%% Handshake protocol - RFC 4346 section 7.4
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% enum {
@@ -80,9 +83,14 @@
 -define(CERTIFICATE_VERIFY, 15).
 -define(CLIENT_KEY_EXCHANGE, 16).
 -define(FINISHED, 20).
-
 -define(MAX_UNIT24, 8388607).
--define(DEFAULT_MAX_HANDSHAKE_SIZE,  (256*1024)).
+
+%% Usually the biggest handshake message will be the message conveying the
+%% certificate chain. This size should be sufficient for usual certificate
+%% chains, certificates without special extensions have a typical size of
+%%  1-2kB. By dividing the old default value by 2 we still have a slightly
+%% bigger margin than OpenSSL
+-define(DEFAULT_MAX_HANDSHAKE_SIZE, ((256*1024) div 2)).
 
 -record(random, {
 	  gmt_unix_time, % uint32
@@ -368,6 +376,17 @@
 -define(ECPOINT_ANSIX962_COMPRESSED_CHAR2, 2).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% RFC 5764 section 4 Datagram Transport Layer Security (DTLS) Extensions
+%% for SRTP (Secure Real-time Transport Protocol) Key Establishment
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-define(USE_SRTP_EXT, 14).
+
+-record(use_srtp, {
+    protection_profiles,
+    mki
+   }).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% ECC RFC 4492 Handshake Messages, Section 5
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -376,7 +395,7 @@
 -define(NAMED_CURVE, 3).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% RFC 6066 Server name indication 
+%% RFC 6066 TLS Extensions: Extension Definitions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% section 3
@@ -400,11 +419,31 @@
           enum = undefined  %% contains the enum value 1..4
         }).
 
+%% Section 8, Certificate Status Request
+-define(STATUS_REQUEST, 5).
+-define(CERTIFICATE_STATUS_TYPE_OCSP, 1).
+-define(CERTIFICATE_STATUS, 22).
+
+%% status request record defined in RFC 6066, section 8
+-record(certificate_status_request, {
+	status_type,
+	request
+}).
+
+-record(ocsp_status_request, {
+	responder_id_list = [],
+	request_extensions = []
+}).
+
+-record(certificate_status, {
+	status_type,
+	response
+}).
+
 %% Other possible values from RFC 6066, not supported
 -define(CLIENT_CERTIFICATE_URL, 2).
 -define(TRUSTED_CA_KEYS, 3).
 -define(TRUNCATED_HMAC, 4).
--define(STATUS_REQUEST, 5).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% RFC 7250 Using Raw Public Keys in Transport Layer Security (TLS)

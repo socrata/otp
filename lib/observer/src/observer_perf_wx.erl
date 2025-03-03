@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -99,13 +99,9 @@ make_win(Name, Parent, Sizer, Border) ->
     #win{name=Name, panel=Panel}.
 
 setup_graph_drawing(Panels) ->
-    IsWindows = element(1, os:type()) =:= win32,
-    IgnoreCB = {callback, fun(_,_) -> ok end},
     Do = fun(#win{panel=Panel}) ->
-		 wxWindow:setBackgroundStyle(Panel, ?wxBG_STYLE_SYSTEM),
-		 wxPanel:connect(Panel, paint, [callback]),
-		 IsWindows andalso
-		     wxPanel:connect(Panel, erase_background, [IgnoreCB])
+		 wxWindow:setBackgroundStyle(Panel, ?wxBG_STYLE_PAINT),
+		 wxPanel:connect(Panel, paint, [callback])
 	 end,
     _ = [Do(Panel) || Panel <- Panels],
     UseGC = haveGC(),

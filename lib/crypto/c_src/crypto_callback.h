@@ -1,7 +1,7 @@
 /* 
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2012-2017. All Rights Reserved.
+ * Copyright Ericsson AB 2012-2021. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,8 @@ struct crypto_callbacks
     /* openssl callbacks */
 #if OPENSSL_VERSION_NUMBER < 0x10100000
   #ifdef OPENSSL_THREADS
+    int (*add_lock_function)(int *num, int amount, int type,
+			     const char *file, int line);
     void (*locking_function)(int mode, int n, const char *file, int line);
     unsigned long (*id_function)(void);
     struct CRYPTO_dynlock_value* (*dyn_create_function)(const char *file,

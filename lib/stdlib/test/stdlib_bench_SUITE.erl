@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ suite() -> [{ct_hooks,[{ts_install_cth,[{nodenames,2}]}]}].
 
 
 all() ->
-    [{group,unicode},{group,base64},{group,binary},
+    [{group,unicode},{group,base64},{group,binary},{group, io},
      {group,gen_server},{group,gen_statem},
      {group,gen_server_comparison},{group,gen_statem_comparison}].
 
@@ -52,6 +52,7 @@ groups() ->
        encode_list, encode_list_to_string,
        mime_binary_decode, mime_binary_decode_to_string,
        mime_list_decode, mime_list_decode_to_string]},
+     {io, [{repeat, 5}], [double_random_to_list, double_random_to_list_array]},
      {gen_server, [{repeat,5}], cases(gen_server)},
      {gen_statem, [{repeat,3}], cases(gen_statem)},
      {gen_server_comparison, [],
@@ -279,6 +280,79 @@ mbb(N, Acc) ->
     B = list_to_binary(lists:seq(0, N-1)),
     lists:reverse(Acc, B).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-define(MAX_DOUBLE, (1 bsl 62) - 1).
+-define(DOUBLE_SAMPLE, 100000).
+-define(SMALL_DIGITS, 6).
+
+double_random_to_list(_Config) ->
+    comment(test_double(0)).
+
+double_random_to_list_array(_Config) ->
+    comment(test_double_array(0)).
+
+double_small_digit_to_list(_Config) ->
+    comment(test_double(?SMALL_DIGITS)).
+
+double(0) ->
+    Int = rand:uniform(?MAX_DOUBLE),
+    <<F:64/float>> = <<Int:64/unsigned-integer>>,
+    F;
+% Example:
+% SmallDigits is 3
+% Lower is 100
+% Upper is 1000
+% R % (1000 - 100) + 100;
+% R % 900 + 100;
+% R1 is [0, 899] + 100
+% R1 is [100, 999]
+% R1 / 100 is [1.00, 9.99]
+double(SmallDigits) ->
+    F = double(0),
+    Lower = exp10(SmallDigits),
+    Upper = Lower * 10,
+    F1 = (F rem (Upper - Lower)) + Lower,
+    F1 / float(Lower).
+
+exp10(X) ->
+    exp10(1, X).
+exp10(Acc, 0) ->
+    Acc;
+exp10(Acc, X) ->
+    exp10(Acc, X - 1).
+
+test_double(Samples) when is_list(Samples) ->
+    F = fun() -> loop_double(Samples) end,
+    {Time, ok} = timer:tc(fun() -> lspawn(F) end),
+    report_mfa(?DOUBLE_SAMPLE, Time, io_lib_format);
+test_double(SmallDigits) when is_integer(SmallDigits) ->
+    rand:seed(exsplus, {1201,855653,380975}),
+    Samples = [double(SmallDigits) || _ <- lists:seq(1, ?DOUBLE_SAMPLE)],
+    test_double(Samples).
+
+loop_double([]) -> garbage_collect(), ok;
+loop_double([Sample | Rest]) ->
+    _ = io_lib_format:fwrite_g(Sample),
+    loop_double(Rest).
+
+test_double_array(SmallDigits) when is_integer(SmallDigits) ->
+    rand:seed(exsplus, {1201,855653,380975}),
+    Samples = [double(SmallDigits) || _ <- lists:seq(1, ?DOUBLE_SAMPLE)],
+    Samples_array = array:from_list(Samples),
+    test_double_array(?DOUBLE_SAMPLE - 1, Samples_array).
+test_double_array(Iter, Samples_array) ->
+    F = fun() -> loop_double_array(Iter, Samples_array) end,
+    {Time, ok} = timer:tc(fun() -> lspawn(F) end),
+    report_mfa(?DOUBLE_SAMPLE, Time, io_lib_format).
+
+loop_double_array(0, _Samples_array) -> garbage_collect(), ok;
+loop_double_array(Iter, Samples_array) ->
+    _ = io_lib_format:fwrite_g(array:get(Iter, Samples_array)),
+    loop_double_array(Iter - 1, Samples_array).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 simple(Config) when is_list(Config) ->
     comment(do_tests(simple, single_small, Config)).
 
@@ -377,7 +451,7 @@ norm(T, Ref) ->
             "---"
     end.
 
--define(MAX_TIME_SECS, 3).   % s
+-define(MAX_TIME_SECS, 1).   % s
 -define(MAX_TIME, 1000 * ?MAX_TIME_SECS). % ms
 -define(CALLS_PER_LOOP, 5).
 

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2010-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2010-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,7 @@
 #include "global.h"
 #include "erl_process.h"
 #include "error.h"
-#define ERL_WANT_HIPE_BIF_WRAPPER__
 #include "bif.h"
-#undef ERL_WANT_HIPE_BIF_WRAPPER__
 #include "big.h"
 #include "erl_binary.h"
 #include "erl_bits.h"
@@ -648,7 +646,7 @@ static BFReturn ac_find_first_match(BinaryFindContext *ctx, byte *haystack)
     register Uint reds = *reductions;
 
     while (i < len) {
-	if (--reds == 0) {
+	if (reds == 0) {
 	    state->q = q;
 	    state->pos = i;
 	    state->len = len;
@@ -656,6 +654,8 @@ static BFReturn ac_find_first_match(BinaryFindContext *ctx, byte *haystack)
 	    state->candidate_start = candidate_start;
 	    return BF_RESTART;
 	}
+
+    reds--;
 
 	while (q->g[haystack[i]] == NULL && q->h != q) {
 	    q = q->h;
@@ -846,22 +846,21 @@ static BFReturn bm_find_first_match(BinaryFindContext *ctx, byte *haystack)
     Sint mem_read = len - needle_last - j;
 
     if (mem_read <= 0) {
-	return BF_NOT_FOUND;
+        return BF_NOT_FOUND;
     }
-    mem_read = MIN(mem_read, reds * MC_LOOP_FACTOR);
+
+    /* Save at least one reduction for the loop below. */
+    mem_read = MIN(mem_read, 1 + (reds - 1) * MC_LOOP_FACTOR);
     ASSERT(mem_read > 0);
 
     pos_pointer = memchr(&haystack[j + needle_last], needle[needle_last], mem_read);
     if (pos_pointer == NULL) {
-	reds -= mem_read / MC_LOOP_FACTOR;
-	j += mem_read;
+        reds -= mem_read / MC_LOOP_FACTOR;
+        j += mem_read;
     } else {
-	reds -= (pos_pointer - &haystack[j]) / MC_LOOP_FACTOR;
-	j = pos_pointer - haystack - needle_last;
+        reds -= (pos_pointer - &haystack[j]) / MC_LOOP_FACTOR;
+        j = pos_pointer - haystack - needle_last;
     }
-
-    // Ensure we have at least one reduction before entering the loop
-    ++reds;
 
     for(;;) {
 	if (j > len - blen) {
@@ -936,7 +935,8 @@ static BFReturn bm_find_all_non_overlapping(BinaryFindContext *ctx, byte *haysta
 	    if(mem_read <= 0) {
 		goto done;
 	    }
-	    mem_read = MIN(mem_read, reds * MC_LOOP_FACTOR);
+            /* Save at least one reduction for the loop below. */
+	    mem_read = MIN(mem_read, 1 + (reds - 1) * MC_LOOP_FACTOR);
 	    ASSERT(mem_read > 0);
 	    pos_pointer = memchr(&haystack[j + needle_last], needle[needle_last], mem_read);
 	    if (pos_pointer == NULL) {
@@ -946,8 +946,6 @@ static BFReturn bm_find_all_non_overlapping(BinaryFindContext *ctx, byte *haysta
 		reds -= (pos_pointer - &haystack[j]) / MC_LOOP_FACTOR;
 		j = pos_pointer - haystack - needle_last;
 	    }
-	    // Ensure we have at least one reduction when resuming the loop
-	    ++reds;
 	}
 	if (j > len - blen) {
 	    goto done;
@@ -1277,7 +1275,7 @@ static int parse_match_opts_list(Eterm l, Eterm bin, Uint *posp, Uint *endp)
 	*endp = binary_size(bin);
 	return 0;
     } else if (is_list(l)) {
-	while(is_list(l)) {
+	do {
 	    Eterm t = CAR(list_val(l));
 	    Uint orig_size;
 	    if (!is_tuple(t)) {
@@ -1320,10 +1318,13 @@ static int parse_match_opts_list(Eterm l, Eterm bin, Uint *posp, Uint *endp)
 		goto badarg;
 	    }
 	    l = CDR(list_val(l));
-	}
+	} while (is_list(l));
 	return 0;
     } else {
     badarg:
+        /* Ensure initialization. */
+	*posp = 0;
+	*endp = 0;
 	return 1;
     }
 }
@@ -1462,7 +1463,6 @@ static BFReturn do_binary_find(Process *p, Eterm subject, BinaryFindContext **ct
 	    }
 	    erts_free_aligned_binary_bytes(temp_alloc);
 	    *res_term = THE_NON_VALUE;
-	    BUMP_ALL_REDS(p);
 	    return BF_RESTART;
 	} else {
 	    *res_term = ctx->found(p, subject, &ctx);
@@ -1473,7 +1473,6 @@ static BFReturn do_binary_find(Process *p, Eterm subject, BinaryFindContext **ct
 	    if (is_first_call) {
 		erts_set_gc_state(p, 0);
 	    }
-	    BUMP_ALL_REDS(p);
 	    return BF_RESTART;
 	}
 	if (ctx->search->done != NULL) {
@@ -1493,7 +1492,6 @@ static BFReturn do_binary_find(Process *p, Eterm subject, BinaryFindContext **ct
 	    if (is_first_call) {
 		erts_set_gc_state(p, 0);
 	    }
-	    BUMP_ALL_REDS(p);
 	    return BF_RESTART;
 	}
 	if (ctx->search->done != NULL) {
@@ -1554,6 +1552,7 @@ binary_match(Process *p, Eterm arg1, Eterm arg2, Eterm arg3, Uint flags)
     case BF_OK:
 	BIF_RET(result);
     case BF_RESTART:
+        BUMP_ALL_REDS(p);
 	ASSERT(result == THE_NON_VALUE && ctx->trap_term != result && ctx->pat_term != result);
 	BIF_TRAP3(&binary_find_trap_export, p, arg1, ctx->trap_term, ctx->pat_term);
     default:
@@ -1615,6 +1614,7 @@ binary_split(Process *p, Eterm arg1, Eterm arg2, Eterm arg3)
     case BF_OK:
 	BIF_RET(result);
     case BF_RESTART:
+        BUMP_ALL_REDS(p);
 	ASSERT(result == THE_NON_VALUE && ctx->trap_term != result && ctx->pat_term != result);
 	BIF_TRAP3(&binary_find_trap_export, p, arg1, ctx->trap_term, ctx->pat_term);
     default:
@@ -1915,7 +1915,7 @@ static Eterm do_split_global_result(Process *p, Eterm subject, BinaryFindContext
 static BIF_RETTYPE binary_find_trap(BIF_ALIST_3)
 {
     int runres;
-    Eterm result;
+    Eterm result = THE_NON_VALUE; /* Used in debug build. */
     Binary *ctx_bin = erts_magic_ref2bin(BIF_ARG_2);
     Binary *pat_bin = erts_magic_ref2bin(BIF_ARG_3);
     BinaryFindContext *ctx = NULL;
@@ -1923,10 +1923,10 @@ static BIF_RETTYPE binary_find_trap(BIF_ALIST_3)
     ASSERT(ERTS_MAGIC_BIN_DESTRUCTOR(ctx_bin) == bf_context_destructor);
     runres = do_binary_find(BIF_P, BIF_ARG_1, &ctx, pat_bin, ctx_bin, &result);
     if (runres == BF_OK) {
-	ASSERT(result != THE_NON_VALUE);
+	ASSERT(is_value(result));
 	BIF_RET(result);
     } else {
-	ASSERT(result == THE_NON_VALUE && ctx->trap_term != result && ctx->pat_term != result);
+	ASSERT(is_non_value(result) && ctx->trap_term != result && ctx->pat_term != result);
 	BIF_TRAP3(&binary_find_trap_export, BIF_P, BIF_ARG_1, BIF_ARG_2, BIF_ARG_3);
     }
 }
@@ -2409,11 +2409,9 @@ BIF_RETTYPE binary_at_2(BIF_ALIST_2)
     BIF_ERROR(BIF_P,BADARG);
 }
 
-HIPE_WRAPPER_BIF_DISABLE_GC(binary_list_to_bin, 1)
-
 BIF_RETTYPE binary_list_to_bin_1(BIF_ALIST_1)
 {
-    return erts_list_to_binary_bif(BIF_P, BIF_ARG_1, &bif_trap_export[BIF_binary_list_to_bin_1]);
+    return erts_list_to_binary_bif(BIF_P, BIF_ARG_1, BIF_TRAP_EXPORT(BIF_binary_list_to_bin_1));
 }
 
 typedef struct {

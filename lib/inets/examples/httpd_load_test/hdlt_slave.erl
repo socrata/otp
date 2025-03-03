@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2010-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2010-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@
 %% master in the description below.
 %%
 %% If hostname is the same for the master and the slave,
-%% the Erlang node will simply be spawned.  The only requirment for
+%% the Erlang node will simply be spawned.  The only requirement for
 %% this to work is that the 'erl' program can be found in PATH.
 %%
 %% If the master and slave are on different hosts, start/N uses
@@ -108,7 +108,7 @@ wait_for_slave(Parent, Host, Name, Node, Paths, Args,
     ?SET_LEVEL(DebugLevel),
     ?DEBUG("begin", []),
     Waiter = register_unique_name(0),
-    case mk_cmd(Host, Name, Paths, Args, Waiter, Prog) of
+    case (catch mk_cmd(Host, Name, Paths, Args, Waiter, Prog)) of
 	{ok, Cmd} ->
   	    ?DEBUG("command generated: ~n~s", [Cmd]),
 	    case (catch ssh_slave_start(Host, Cmd)) of

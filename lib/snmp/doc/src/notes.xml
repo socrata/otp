@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>1996</year><year>2020</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -34,7 +34,561 @@
   </header>
 
 
-  <section><title>SNMP 5.6</title>
+  <section><title>SNMP 5.15</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Make snmp handle gen_udp with socket backend on Windows
+	    (completion).</p>
+          <p>
+	    Own Id: OTP-18598 Aux Id: OTP-18029 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.14</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p> The implementation has been fixed to use
+	    <c>proc_lib:init_fail/2,3</c> where appropriate, instead
+	    of <c>proc_lib:init_ack/1,2</c>. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18490 Aux Id: OTP-18471, GH-6339, PR-6843 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13.5</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Attempts to minimize the number of the error reports
+	    during a failed agent init.</p>
+          <p>
+	    Own Id: OTP-18422 Aux Id: ERIERL-873 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13.4</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Replace size/1 with either tuple_size/1 or byte_size/1</p>
+          <p>
+	    The <c>size/1</c> BIF is not optimized by the JIT, and
+	    its use can result in worse types for Dialyzer.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    tuple, <c>tuple_size/1</c> should always be preferred.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    binary, <c>byte_size/1</c> should be preferred. However,
+	    <c>byte_size/1</c> also accepts a bitstring (rounding up
+	    size to a whole number of bytes), so one must make sure
+	    that the call to <c>byte_size/</c> is preceded by a call
+	    to <c>is_binary/1</c> to ensure that bitstrings are
+	    rejected. Note that the compiler removes redundant calls
+	    to <c>is_binary/1</c>, so if one is not sure whether
+	    previous code had made sure that the argument is a
+	    binary, it does not harm to add an <c>is_binary/1</c>
+	    test immediately before the call to <c>byte_size/1</c>.</p>
+          <p>
+	    Own Id: OTP-18432 Aux Id:
+	    GH-6672,PR-6793,PR-6784,PR-6787,PR-6785,PR-6682,PR-6800,PR-6797,PR-6798,PR-6799,PR-6796,PR-6813,PR-6671,PR-6673,PR-6684,PR-6694,GH-6677,PR-6696,PR-6670,PR-6674 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Single threaded agent crash when vacm table not properly
+	    initiated.</p>
+          <p>
+	    Own Id: OTP-18379 Aux Id: ERIERL-904 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Explicitly close the socket(s) when terminating
+	    (default-) net-if process.</p>
+          <p>
+	    Own Id: OTP-18352 Aux Id: ERIERL-881 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.13.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Single threaded agent crash when vacm table not properly
+	    initiated.</p>
+          <p>
+	    Own Id: OTP-18379 Aux Id: ERIERL-904 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Improved the get-bulk response max size calculation. Its
+	    now possible to configure 'empty pdu size', see appendix
+	    c for more info.</p>
+          <p>
+	    Own Id: OTP-17115 Aux Id: ERIERL-456 </p>
+        </item>
+        <item>
+          <p>
+	    Fix various example dialyzer issues</p>
+          <p>
+	    Own Id: OTP-18180 Aux Id: ERIERL-837 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.13</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Input for <c>configure</c> scripts adapted to
+	    <c>autoconf</c> 2.71.</p>
+          <p>
+	    Own Id: OTP-17414 Aux Id: PR-4967 </p>
+        </item>
+        <item>
+          <p>
+	    Removed deprecated functions slated for removal in
+	    OTP-25. Also removed "dead" code, kept for backward
+	    compatibility reasons.</p>
+          <p>
+	    Own Id: OTP-17612</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.12.0.3</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Attempts to minimize the number of the error reports
+	    during a failed agent init.</p>
+          <p>
+	    Own Id: OTP-18422 Aux Id: ERIERL-873 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.12.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Single threaded agent crash when vacm table not properly
+	    initiated.</p>
+          <p>
+	    Own Id: OTP-18379 Aux Id: ERIERL-904 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.12.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Explicitly close the socket(s) when terminating
+	    (default-) net-if process.</p>
+          <p>
+	    Own Id: OTP-18352 Aux Id: ERIERL-881 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.12</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>The compilation time is no longer recorded in BEAM
+	    files. There remained several undocumented functions that
+	    attempted to retrieve compilation times. Those have now
+	    been removed.</p>
+          <p>
+	    Own Id: OTP-17962</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    [agent] Remove expectation of socket being a port.</p>
+          <p>
+	    Own Id: OTP-16559</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.11</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Handling of test config flag when starting "empty".</p>
+          <p>
+	    Own Id: OTP-17671</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add support for new authentication algorithms (SHA-224,
+	    SHA-256, SHA-384 and SHA-512), according to RFC 7860.</p>
+          <p>
+	    Own Id: OTP-17615 Aux Id: MR9501-1 </p>
+        </item>
+        <item>
+          <p>
+	    Improve debug info for (snmp) manager.</p>
+          <p>
+	    Own Id: OTP-17783</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.10.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Sockets are monitored, but the handling of the 'DOWN'
+	    message expected a new style socket ('socket'), old style
+	    (port) was not handled.</p>
+          <p>
+	    Own Id: OTP-17641 Aux Id: OTP-17640 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.10</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    It is now possible to configure the built-in net-if
+	    processes (both agent and manager) to use the new
+	    (gen_udp-) option 'inet_backend'.</p>
+          <p>
+	    Own Id: OTP-17526</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.9.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.9</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Removed deprecated functions marked for removal.</p>
+          <p>
+	    Own Id: OTP-17049</p>
+        </item>
+        <item>
+	    <p>Removed timestamps from files generated by <c>snmp</c>
+	    to enable deterministic builds.</p>
+          <p>
+	    Own Id: OTP-17354</p>
+        </item>
+        <item>
+          <p>
+	    Fixed warnings in code matching on underscore prefixed
+	    variables.</p>
+          <p>
+	    Own Id: OTP-17385 Aux Id: OTP-17123 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.8.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.8</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add function to get a list of configured agent
+	    transports. Also improved agent info with regards to
+	    transports.</p>
+          <p>
+	    Own Id: OTP-17109 Aux Id: ERIERL-583 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.7.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    [manager] In a function handling snmp errors, an unused
+	    result (_Error) could result in matching issues and
+	    therefore case clause runtime errors (crash). Note that
+	    this would only happen in *very* unusual error cases.</p>
+          <p>
+	    Own Id: OTP-17161</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.7.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    [manager] Misspelled priv protocol (atom) made it
+	    impossible to update usm user 'priv_key' configuration
+	    for usmAesCfb128Protocol via function calls.</p>
+          <p>
+	    Own Id: OTP-17110 Aux Id: ERIERL-586 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.7.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed usage of <c>AC_CONFIG_AUX_DIRS()</c> macros in
+	    configure script sources.</p>
+          <p>
+	    Own Id: OTP-17093 Aux Id: ERL-1447, PR-2948 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.7</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    If an attempt was made to send a v1 trap on a IPv6
+	    transport this could cause a master agent crash (if the
+	    agent was *not* multi-threaded).</p>
+          <p>
+	    Own Id: OTP-16920 Aux Id: OTP-16649 </p>
+        </item>
+        <item>
+          <p>
+	    The deprecation info for a couple of the deprecated MIB
+	    compiler functions where incorrect. Referred to functions
+	    in the 'snmpa' module instead of 'snmpc'.</p>
+          <p>
+	    Own Id: OTP-17056 Aux Id: OTP-17049 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Make it possible for the agent to configure separate
+	    transports (sockets) for request-responder and
+	    trap-sender.</p>
+          <p>
+	    Own Id: OTP-16649</p>
+        </item>
+        <item>
+          <p>
+	    The mib server cache handling has been improved. First,
+	    the default gclimit has been changed from 100 to infinity
+	    (to ensure the size is as small as possible). Also, the
+	    method of removing old elements has been optimized.</p>
+          <p>
+	    Own Id: OTP-16989 Aux Id: ERIERL-544 </p>
+        </item>
+        <item>
+          <p>
+	    It is now possible to configure the agent in such a way
+	    that the order of outgoing notifications are processed in
+	    order in the agent. What happens after the notification
+	    message has left the agent (been sent) is of course still
+	    out of our control.</p>
+          <p>
+	    Own Id: OTP-17022 Aux Id: ERIERL-492 </p>
+        </item>
+        <item>
+          <p>
+	    Improve handling of the udp_error message. Basically an
+	    improved error/warning message.</p>
+          <p>
+	    Own Id: OTP-17033</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.6.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    For agent fix PrivParams for SNMPv3 USM with AES privacy,
+	    as earlier fixed for the manager in OTP_16541.</p>
+          <p>
+	    Own Id: OTP-15130 Aux Id: ERIERL-524, OTP-16541 </p>
+        </item>
+        <item>
+          <p>
+	    The SNMP Agent missed to re-activate datagram reception
+	    in an odd timeout case and went deaf. This bug has been
+	    fixed.</p>
+          <p>
+	    Own Id: OTP-15767 Aux Id: ERIERL-523 </p>
+        </item>
+        <item>
+          <p>
+	    Use of deprecated functions in example 2 has been removed
+	    (no more compiler warnings).</p>
+          <p>
+	    Own Id: OTP-16716</p>
+        </item>
+        <item>
+          <p>
+	    A file descriptor leak has been plugged. When calling the
+	    reconfigure function of a mib, it opened the config
+	    file(s) but never closed them on successful read.</p>
+          <p>
+	    Own Id: OTP-16760 Aux Id: ERIERL-511 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SNMP 5.6</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
       <list>
@@ -97,6 +651,100 @@
 	    removed functions.</p>
           <p>
 	    Own Id: OTP-16469</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.5.0.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.5.0.4</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    The mib server cache handling has been improved. First,
+	    the default gclimit has been changed from 100 to infinity
+	    (in order to ensure the size is as small as possible).
+	    Also the method of removing old elements has been
+	    optimized.</p>
+          <p>
+	    Own Id: OTP-16989 Aux Id: ERIERL-544 </p>
+        </item>
+        <item>
+          <p>
+	    It is now possible to configure the agent in such a way
+	    that the order of outgoing notifications are processed in
+	    order in the agent. What happens after the notification
+	    message has left the agent (been sent) is of course still
+	    out of our control.</p>
+          <p>
+	    Own Id: OTP-17022 Aux Id: ERIERL-492 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.5.0.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    For agent fix PrivParams for SNMPv3 USM with AES privacy,
+	    as earlier fixed for the manager in OTP_16541.</p>
+          <p>
+	    Own Id: OTP-15130 Aux Id: ERIERL-524, OTP-16541 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.5.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The SNMP Agent missed to re-activate datagram reception
+	    in an odd timeout case and went deaf. This bug has been
+	    fixed.</p>
+          <p>
+	    Own Id: OTP-15767 Aux Id: ERIERL-523 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+  <section><title>SNMP 5.5.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A file descriptor leak has been plugged. When calling the
+	    reconfigure function of a mib, it opened the config
+	    file(s) but never closed them on successful read.</p>
+          <p>
+	    Own Id: OTP-16760 Aux Id: ERIERL-511 </p>
         </item>
       </list>
     </section>
@@ -653,7 +1301,7 @@
       <list>
         <item>
           <p>
-	    Improved cryptocraphic capability.</p>
+	    Improved cryptographic capability.</p>
           <p>
 	    Own Id: OTP-12452</p>
         </item>
@@ -909,7 +1557,7 @@
           <p>Add (atl) log conversion block option. </p>
 	  <p>It is now possible to request that the Audit Trail Log should
 	  be blocked during conversion (<c>log_to_txt</c> or <c>log_to_io</c>).
-	  This could be usefull when coverting an entire large log (when
+	  This could be useful when converting an entire large log (when
 	  there is a chance it may otherwise wrap during conversion). </p>
 	  <p>See
 	  agent
@@ -1380,7 +2028,7 @@
 
       <list type="bulleted">
         <item>
-          <p>[agent] Sematic fixes to SNMP-USER-BASED-SM-MIB.
+          <p>[agent] Semantic fixes to SNMP-USER-BASED-SM-MIB.
 	  The semantics allow the <c>usmUserAuthKeyChange</c> and
 	  <c>usmUserPrivKeyChange</c> objects to be written to in the
 	  same set requests that also creates and clones the user.
@@ -1489,7 +2137,7 @@
         <item>
           <p>[manager] Introduced a new transport module,
 	  <c>snmpm_net_if_mt</c>,
-	  which handles all incomming and outgoing
+	  which handles all incoming and outgoing
 	  traffic in newly created processes. The message/request is
 	  processed and then the process exits. </p>
           <p>Own Id: OTP-9876</p>
@@ -1503,7 +2151,7 @@
 
         <item>
           <p>[agent] Improve error handling while reading agent config files.
-	  Some files contain mandatory information and is therefor themself
+	  Some files contain mandatory information and is therefore themself
 	  mandatory. </p>
 	  <p>Own Id: OTP-9943</p>
         </item>
@@ -1690,8 +2338,8 @@
           conflict. When dumping the vacm table to disk, a temoporary
           file with a fixed name was used. If the table dumping
           (snmpa_vacm:dump_table/0) was initiated from several different
-          processes in rapid succesion, the dumping could fail because the
-          different processes was simultaniously trying to write to the
+          processes in rapid succession, the dumping could fail because the
+          different processes was simultaneously trying to write to the
           same file. This problem has been eliminated by creating a unique
           name for the temporary file. </p>
           <p>Own Id: OTP-9851</p>
@@ -2154,7 +2802,7 @@
 	  <p>See
 	  <seeerl marker="snmpa#send_notification2">
 	  snmpa:send_notification2/3</seeerl> for more info.
-	  See also the incomming net-if messages when sending a
+	  See also the incoming net-if messages when sending a
 	  <seeguide marker="snmp_agent_netif#im_send_pdu">trap</seeguide>
 	  (send_pdu message) and
 	  <seeguide marker="snmp_agent_netif#im_send_pdu_req">

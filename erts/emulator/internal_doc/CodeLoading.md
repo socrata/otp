@@ -1,4 +1,4 @@
-Non-Blocking Code Loading
+Non-blocking code loading
 =========================
 
 Introduction
@@ -41,8 +41,8 @@ only be done by one loader process at a time. A second loader process
 trying to enter finishing phase will be suspended until the first
 loader is done. This will only block the process, the scheduler is
 free to schedule other work while the second loader is waiting. (See
-`erts_try_seize_code_write_permission` and
-`erts_release_code_write_permission`).
+`erts_try_seize_code_load_permission` and
+`erts_release_code_load_permission`).
 
 The ability to prepare several modules in parallel is not currently
 used as almost all code loading is serialized by the code\_server
@@ -56,7 +56,7 @@ different modules and returns a "magic binary" containing the internal
 state of each prepared module. Function `finish_loading` could take a
 list of such states and do the finishing of all of them in one go.
 
-Currenlty we use the legacy BIF `erlang:load_module` which is now
+Currently we use the legacy BIF `erlang:load_module` which is now
 implemented in Erlang by calling the above two functions in
 sequence. Function `finish_loading` is limited to only accepts a list
 with one module state as we do not yet use the multi module loading
@@ -101,7 +101,7 @@ result of a half loaded module.
 The finishing phase is carried out in the following sequence by the
 BIF `erlang:finish_loading`:
 
-1. Seize exclusive code write permission (suspend process if needed
+1. Seize exclusive code load permission (suspend process if needed
    until we get it).
 
 2. Make a full copy of all the active access structures. This copy is
@@ -119,7 +119,7 @@ BIF `erlang:finish_loading`:
 6. After thread progress, commit the staging area by assigning
    `the_staging_code_index` to `the_active_code_index`.
 
-7. Release the code write permission allowing other processes to stage
+7. Release the code load permission allowing other processes to stage
    new code.
 
 8. Resume the loader process allowing it to return from

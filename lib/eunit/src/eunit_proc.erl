@@ -29,13 +29,12 @@
 -include("eunit.hrl").
 -include("eunit_internal.hrl").
 
--export([start/4, get_output/0]).
+-export([start/5, get_output/0]).
 
 %% This must be exported; see new_group_leader/1 for details.
 -export([group_leader_process/1]).
 
--record(procstate, {ref, id, super, insulator, parent, order}).
-
+-record(procstate, {ref, id, super, insulator, parent, order, options}).
 
 %% Spawns test process and returns the process Pid; sends {done,
 %% Reference, Pid} to caller when finished. See the function
@@ -44,12 +43,13 @@
 %% The `Super' process receives a stream of status messages; see
 %% message_super/3 for details.
 
-start(Tests, Order, Super, Reference)
+start(Tests, Order, Super, Reference, Options)
   when is_pid(Super), is_reference(Reference) ->
     St = #procstate{ref = Reference,
 		    id = [],
 		    super = Super,
-		    order = Order},
+		    order = Order,
+                    options = Options},
     spawn_group(local, #group{tests = Tests}, St).
 
 %% Fetches the output captured by the eunit group leader. This is
@@ -95,6 +95,9 @@ get_output() ->
 %%   {cancel, Descriptor}
 %%       where Descriptor can be:
 %%           timeout            a timeout occurred
+%%           {timeout, #{stacktrace := Stacktrace}
+%%                              a timeout occurred and there is a stacktrace
+%%                              of the eunit test
 %%           {blame, Id}        forced to terminate because of item `Id'
 %%           {abort, Cause}     the test or group failed to execute
 %%           {exit, Reason}     the test process terminated unexpectedly
@@ -273,7 +276,13 @@ insulator_wait(Child, Parent, Buf, St) ->
 	    io_request(From, ReplyAs, Req, []),
 	    insulator_wait(Child, Parent, Buf, St);
 	{timeout, Child, Id} ->
-	    exit_messages(Id, timeout, St),
+	    Timeout = case process_info(Child, current_stacktrace) of
+			  undefined ->
+			      timeout;
+			  {current_stacktrace, Stack} ->
+			      {timeout, #{stacktrace => Stack}}
+		      end,
+	    exit_messages(Id, Timeout, St),
 	    kill_task(Child, St);
 	{'EXIT', Child, normal} ->
 	    terminate_insulator(St);
@@ -327,9 +336,21 @@ clear_timeout(Ref) ->
     erlang:cancel_timer(Ref).
 
 with_timeout(undefined, Default, F, St) ->
-    with_timeout(Default, F, St);
+    with_timeout(scale_timeout(Default, St), F, St);
 with_timeout(Time, _Default, F, St) ->
-    with_timeout(Time, F, St).
+    with_timeout(scale_timeout(Time, St), F, St).
+
+scale_timeout(infinity, _St) ->
+    infinity;
+scale_timeout(Time, St) ->
+    case proplists:get_value(scale_timeouts, St#procstate.options) of
+        undefined ->
+            Time;
+        N when is_integer(N) ->
+            N * Time;
+        N when is_float(N) ->
+            round(N * Time)
+    end.
 
 with_timeout(infinity, F, _St) ->
     %% don't start timers unnecessarily
@@ -427,7 +448,7 @@ wait_for_tasks(PidSet, St) ->
 %% TODO: Flow control, starting new job as soon as slot is available
 
 tests(T, St) ->
-    I = eunit_data:iter_init(T, St#procstate.id),
+    I = eunit_data:iter_init(T, St#procstate.id, St#procstate.options),
     case St#procstate.order of
 	inorder -> tests_inorder(I, St);
 	inparallel -> tests_inparallel(I, 0, St);

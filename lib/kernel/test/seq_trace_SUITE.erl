@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,18 +19,15 @@
 %%
 -module(seq_trace_SUITE).
 
-%% label_capability_mismatch needs to run a part of the test on an OTP 20 node.
--compile(r20).
-
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2,end_per_testcase/2]).
 -export([token_set_get/1, tracer_set_get/1, print/1,
-         old_heap_token/1,
+         old_heap_token/1,mature_heap_token/1,
 	 send/1, distributed_send/1, recv/1, distributed_recv/1,
 	 trace_exit/1, distributed_exit/1, call/1, port/1,
          port_clean_token/1,
-	 match_set_seq_token/1, gc_seq_token/1, label_capability_mismatch/1,
+	 match_set_seq_token/1, gc_seq_token/1,
          send_literal/1,inherit_on_spawn/1,inherit_on_dist_spawn/1,
          dist_spawn_error/1]).
 
@@ -54,10 +51,10 @@ suite() ->
 all() -> 
     [token_set_get, tracer_set_get, print, send, send_literal,
      distributed_send, recv, distributed_recv, trace_exit,
-     old_heap_token,
+     old_heap_token, mature_heap_token,
      distributed_exit, call, port, match_set_seq_token,
      port_clean_token,
-     gc_seq_token, label_capability_mismatch,
+     gc_seq_token,
      inherit_on_spawn, inherit_on_dist_spawn, dist_spawn_error].
 
 groups() -> 
@@ -194,21 +191,31 @@ do_send(TsType) ->
 do_send(TsType, Msg) ->
     seq_trace:reset_trace(),
     start_tracer(),
-    Receiver = spawn(?MODULE,n_time_receiver,[2]),
+    Tester = self(),
+    Receiver = spawn(fun () ->
+                             A = alias(),
+                             Tester ! {alias, A},
+                             n_time_receiver(3)
+                     end),
+    Alias = receive {alias, A} -> A end,
     register(n_time_receiver, Receiver),
     Label = make_ref(),
     seq_trace:set_token(label,Label),
     set_token_flags([send, TsType]),
     Receiver ! Msg,
     n_time_receiver ! Msg,
+    Alias ! Msg,
     Self = self(),
     seq_trace:reset_trace(),
     [{Label,{send,_,Self,Receiver,Msg}, Ts1},
      %% Apparently named local destination process is traced as pid (!?)
-     {Label,{send,_,Self,Receiver,Msg}, Ts2}
-    ] = stop_tracer(2),
+     {Label,{send,_,Self,Receiver,Msg}, Ts2},
+     {Label,{send,_,Self,Alias,Msg}, Ts3}
+    ] = stop_tracer(3),
     check_ts(TsType, Ts1),
-    check_ts(TsType, Ts2).
+    check_ts(TsType, Ts2),
+    check_ts(TsType, Ts3).
+
 
 %% This testcase tests that we do not segfault when we have a
 %% literal as the message and the message is copied onto the
@@ -239,13 +246,17 @@ distributed_send(Config) when is_list(Config) ->
     lists:foreach(fun do_distributed_send/1, ?TIMESTAMP_MODES).
 
 do_distributed_send(TsType) ->
-    {ok,Node} = start_node(seq_trace_other,[]),
-    {_,Dir} = code:is_loaded(?MODULE),
-    Mdir = filename:dirname(Dir),
-    true = rpc:call(Node,code,add_patha,[Mdir]),
+    {ok, Peer, Node} = ?CT_PEER(),
     seq_trace:reset_trace(),
     start_tracer(),
-    Receiver = spawn(Node,?MODULE,n_time_receiver,[2]),
+    Tester = self(),
+    Receiver = spawn(Node,
+                     fun () ->
+                             A = alias(),
+                             Tester ! {alias, A},
+                             n_time_receiver(3)
+                     end),
+    Alias = receive {alias, A} -> A end,
     true = rpc:call(Node,erlang,register,[n_time_receiver, Receiver]),
 
     %% Make sure complex labels survive the trip.
@@ -255,16 +266,19 @@ do_distributed_send(TsType) ->
 
     Receiver ! send,
     {n_time_receiver, Node} ! "dsend",
+    Alias ! "alias_dsend",
 
     Self = self(),
     seq_trace:reset_trace(),
-    stop_node(Node),
+    peer:stop(Peer),
     [{Label,{send,_,Self,Receiver,send}, Ts1},
-     {Label,{send,_,Self,{n_time_receiver,Node}, "dsend"}, Ts2}
-    ] = stop_tracer(2),
+     {Label,{send,_,Self,{n_time_receiver,Node}, "dsend"}, Ts2},
+     {Label,{send,_,Self,Alias,"alias_dsend"}, Ts3}
+    ] = stop_tracer(3),
 
     check_ts(TsType, Ts1),
-    check_ts(TsType, Ts2).
+    check_ts(TsType, Ts2),
+    check_ts(TsType, Ts3).
 
 
 recv(Config) when is_list(Config) ->
@@ -273,43 +287,62 @@ recv(Config) when is_list(Config) ->
 do_recv(TsType) ->
     seq_trace:reset_trace(),
     start_tracer(),
-    Receiver = spawn(?MODULE,one_time_receiver,[]),
+    Tester = self(),
+    Receiver = spawn(fun () ->
+                             A = alias([reply]),
+                             Tester ! {alias, A},
+                             n_time_receiver(2)
+                     end),
+    Alias = receive {alias, A} -> A end,
     set_token_flags(['receive',TsType]),
+    Alias ! 'alias_receive',
+    Alias ! 'alias_no_receive',
     Receiver ! 'receive',
     %% let the other process receive the message:
     receive after 1 -> ok end,
     Self = self(),
     seq_trace:reset_trace(),
-    [{0,{'receive',_,Self,Receiver,'receive'}, Ts}] = stop_tracer(1),
-    check_ts(TsType, Ts).
+    [{0,{'receive',_,Self,Receiver,'alias_receive'}, Ts1},
+     {0,{'receive',_,Self,Receiver,'receive'}, Ts2}] = stop_tracer(2),
+    check_ts(TsType, Ts1),
+    check_ts(TsType, Ts2).
 
 distributed_recv(Config) when is_list(Config) ->
     lists:foreach(fun do_distributed_recv/1, ?TIMESTAMP_MODES).
 
 do_distributed_recv(TsType) ->
-    {ok,Node} = start_node(seq_trace_other,[]),
-    {_,Dir} = code:is_loaded(?MODULE),
-    Mdir = filename:dirname(Dir),
-    true = rpc:call(Node,code,add_patha,[Mdir]),
+    {ok, Peer, Node} = ?CT_PEER(),
     seq_trace:reset_trace(),
     rpc:call(Node,?MODULE,start_tracer,[]),
-    Receiver = spawn(Node,?MODULE,one_time_receiver,[]),
+    Tester = self(),
+    Receiver = spawn(Node,
+                     fun () ->
+                             A = alias([reply]),
+                             Tester ! {alias, A},
+                             n_time_receiver(2)
+                     end),
+    Alias = receive {alias, A} -> A end,
 
     %% Make sure complex labels survive the trip.
     Label = make_ref(),
     seq_trace:set_token(label,Label),
     set_token_flags(['receive',TsType]),
 
+    Alias ! 'alias_receive',
+    Alias ! 'alias_no_receive',
     Receiver ! 'receive',
+
     %% let the other process receive the message:
     receive after 1 -> ok end,
     Self = self(),
     seq_trace:reset_trace(),
-    Result = rpc:call(Node,?MODULE,stop_tracer,[1]),
-    stop_node(Node),
+    Result = rpc:call(Node,?MODULE,stop_tracer,[2]),
+    peer:stop(Peer),
     ok = io:format("~p~n",[Result]),
-    [{Label,{'receive',_,Self,Receiver,'receive'}, Ts}] = Result,
-    check_ts(TsType, Ts).
+    [{Label,{'receive',_,Self,Receiver,'alias_receive'}, Ts1},
+     {Label,{'receive',_,Self,Receiver,'receive'}, Ts2}] = Result,
+    check_ts(TsType, Ts1),
+    check_ts(TsType, Ts2).
 
 trace_exit(Config) when is_list(Config) ->
     lists:foreach(fun do_trace_exit/1, ?TIMESTAMP_MODES).
@@ -348,10 +381,7 @@ distributed_exit(Config) when is_list(Config) ->
     lists:foreach(fun do_distributed_exit/1, ?TIMESTAMP_MODES).
 
 do_distributed_exit(TsType) ->
-    {ok, Node} = start_node(seq_trace_other, []),
-    {_, Dir} = code:is_loaded(?MODULE),
-    Mdir = filename:dirname(Dir),
-    true = rpc:call(Node, code, add_patha, [Mdir]),
+    {ok, Peer, Node} = ?CT_PEER(),
     seq_trace:reset_trace(),
     rpc:call(Node, ?MODULE, start_tracer,[]),
     Receiver = spawn_link(Node, ?MODULE, one_time_receiver, [exit]),
@@ -369,81 +399,14 @@ do_distributed_exit(TsType) ->
     Self = self(),
     Result = rpc:call(Node, ?MODULE, stop_tracer, [1]),
     seq_trace:reset_trace(),
-    stop_node(Node),
+    process_flag(trap_exit, false),
+    peer:stop(Peer),
     ok = io:format("~p~n", [Result]),
     [{0, {send, {1, 2}, Receiver, Self,
 		{'EXIT', Receiver, {exit, {before, exit}}}}, Ts}] = Result,
     check_ts(TsType, Ts).
 
-label_capability_mismatch(Config) when is_list(Config) ->
-    Releases = ["20_latest"],
-    Available = [Rel || Rel <- Releases, test_server:is_release_available(Rel)],
-    case Available of
-        [] -> {skipped, "No incompatible releases available"};
-        _ ->
-            lists:foreach(fun do_incompatible_labels/1, Available),
-            lists:foreach(fun do_compatible_labels/1, Available),
-            ok
-    end.
-
-do_incompatible_labels(Rel) ->
-    Cookie = atom_to_list(erlang:get_cookie()),
-    {ok, Node} = test_server:start_node(
-        list_to_atom(atom_to_list(?MODULE)++"_"++Rel), peer,
-        [{args, " -setcookie "++Cookie}, {erl, [{release, Rel}]}]),
-
-    {_,Dir} = code:is_loaded(?MODULE),
-    Mdir = filename:dirname(Dir),
-    true = rpc:call(Node,code,add_patha,[Mdir]),
-    seq_trace:reset_trace(),
-    true = is_pid(rpc:call(Node,?MODULE,start_tracer,[])),
-    Receiver = spawn(Node,?MODULE,one_time_receiver,[]),
-
-    %% This node does not support arbitrary labels, so it must fail with a
-    %% timeout as the token is dropped silently.
-    seq_trace:set_token(label,make_ref()),
-    seq_trace:set_token('receive',true),
-
-    Receiver ! 'receive',
-    %% let the other process receive the message:
-    receive after 10 -> ok end,
-    seq_trace:reset_trace(),
-
-    {error,timeout} = rpc:call(Node,?MODULE,stop_tracer,[1]),
-    stop_node(Node),
-    ok.
-
-do_compatible_labels(Rel) ->
-    Cookie = atom_to_list(erlang:get_cookie()),
-    {ok, Node} = test_server:start_node(
-        list_to_atom(atom_to_list(?MODULE)++"_"++Rel), peer,
-        [{args, " -setcookie "++Cookie}, {erl, [{release, Rel}]}]),
-
-    {_,Dir} = code:is_loaded(?MODULE),
-    Mdir = filename:dirname(Dir),
-    true = rpc:call(Node,code,add_patha,[Mdir]),
-    seq_trace:reset_trace(),
-    true = is_pid(rpc:call(Node,?MODULE,start_tracer,[])),
-    Receiver = spawn(Node,?MODULE,one_time_receiver,[]),
-
-    %% This node does not support arbitrary labels, but small integers should
-    %% still work.
-    Label = 1234,
-    seq_trace:set_token(label,Label),
-    seq_trace:set_token('receive',true),
-
-    Receiver ! 'receive',
-    %% let the other process receive the message:
-    receive after 10 -> ok end,
-    Self = self(),
-    seq_trace:reset_trace(),
-    Result = rpc:call(Node,?MODULE,stop_tracer,[1]),
-    stop_node(Node),
-    ok = io:format("~p~n",[Result]),
-    [{Label,{'receive',_,Self,Receiver,'receive'}, _}] = Result,
-    ok.
-
-call(doc) -> 
+call(doc) ->
     "Tests special forms {is_seq_trace} and {get_seq_token} "
 	"in trace match specs.";
 call(Config) when is_list(Config) ->
@@ -538,18 +501,24 @@ call(Config) when is_list(Config) ->
 
 %% The token should follow spawn, just like it follows messages.
 inherit_on_spawn(Config) when is_list(Config) ->
-    lists:foreach(fun (Test) ->
-                          inherit_on_spawn_test(Test)
-                  end,
-                  [spawn, spawn_link, spawn_monitor,
-                   spawn_opt, spawn_request]),
+    lists:foreach(
+      fun (Test) ->
+              lists:foreach(
+                fun (TraceFlags) ->
+                        inherit_on_spawn_test(Test, TraceFlags)
+                end,
+                combinations(spawn_trace_flags()))
+      end,
+      [spawn, spawn_link, spawn_monitor,
+       spawn_opt, spawn_request]),
     ok.
 
-inherit_on_spawn_test(Spawn) ->
-    io:format("Testing ~p()~n", [Spawn]),
+inherit_on_spawn_test(Spawn, TraceFlags) ->
+    io:format("Testing ~p() with ~p trace flags~n", [Spawn, TraceFlags]),
 
     seq_trace:reset_trace(),
     start_tracer(),
+    start_spawn_tracer(TraceFlags),
 
     Ref = make_ref(),
     seq_trace:set_token(label,Ref),
@@ -580,6 +549,7 @@ inherit_on_spawn_test(Spawn) ->
 
     receive {gurka,Ref} -> ok end,
     seq_trace:reset_trace(),
+    erlang:trace(self(),false,[procs|TraceFlags]),
 
     Sequence = lists:keysort(3, stop_tracer(6)),
     io:format("Sequence: ~p~n", [Sequence]),
@@ -644,8 +614,34 @@ inherit_on_spawn_test(Spawn) ->
        GurkaMsg},
       _} = RGurkaMsg,
 
+
+    Links = not(spawn =:= spawn orelse Spawn =:= spawn_monitor),
+    SoL = lists:member(set_on_link,TraceFlags) orelse
+        lists:member(set_on_first_link,TraceFlags),
+    SoS = lists:member(set_on_spawn,TraceFlags) orelse
+        lists:member(set_on_first_sapwn,TraceFlags),
+
+    NoTraceMessages =
+        if
+            SoS andalso Links ->
+                4;
+            SoS andalso not Links ->
+                2;
+            SoL andalso Links ->
+                4;
+            SoL andalso not Links->
+                1;
+            Links andalso not SoL andalso not SoS ->
+                2;
+            not Links andalso not SoL andalso not SoS ->
+                1
+        end,
+
+    TraceMessages = stop_spawn_tracer(NoTraceMessages),
+
     unlink(Other),
     exit(Other, kill),
+
 
     ok.
 
@@ -659,8 +655,7 @@ inherit_on_dist_spawn(Config) when is_list(Config) ->
 
 inherit_on_dist_spawn_test(Spawn) ->
     io:format("Testing ~p()~n", [Spawn]),
-    Pa = "-pa "++filename:dirname(code:which(?MODULE)),
-    {ok, Node} = start_node(seq_trace_dist_spawn, Pa),
+    {ok, Peer, Node} = ?CT_PEER(),
     %% ensure module is loaded on remote node...
     _ = rpc:call(Node, ?MODULE, module_info, []),
 
@@ -790,13 +785,12 @@ inherit_on_dist_spawn_test(Spawn) ->
 
     unlink(Other),
 
-    stop_node(Node),
+    peer:stop(Peer),
 
     ok.
 
 dist_spawn_error(Config) when is_list(Config) ->
-    Pa = "-pa "++filename:dirname(code:which(?MODULE)),
-    {ok, Node} = start_node(seq_trace_dist_spawn, Pa),
+    {ok, Peer, Node} = ?CT_PEER(),
     %% ensure module is loaded on remote node...
     _ = rpc:call(Node, ?MODULE, module_info, []),
 
@@ -882,7 +876,7 @@ dist_spawn_error(Config) when is_list(Config) ->
       {spawn_reply, ReqId, error, badopt}},
      _} = StSpawnReplyNode,
 
-    stop_node(Node),
+    peer:stop(Peer),
 
     ok.
 
@@ -971,6 +965,24 @@ old_heap_token(Config) when is_list(Config) ->
     {label,NewLabel} = seq_trace:get_token(label),
     ok.
 
+%% Verify changing label on existing token when it resides on mature heap.
+%% Bug caused faulty ref from old to new heap.
+mature_heap_token(Config) when is_list(Config) ->
+
+    seq_trace:set_token(label, 1),
+    erlang:garbage_collect(self(), [{type, minor}]),
+    %% Now token should be on mature heap
+    %% Set a new non-literal label which should reside on new-heap.
+    NewLabel = {self(), "new label"},
+    seq_trace:set_token(label, NewLabel),
+
+    %% If bug, we now have a ref from mature to new heap. If we now GC
+    %% twice the token will refer to deallocated memory.
+    erlang:garbage_collect(self(), [{type, minor}]),
+    erlang:garbage_collect(self(), [{type, minor}]),
+    {label,NewLabel} = seq_trace:get_token(label),
+    ok.
+
 
 match_set_seq_token(doc) ->
     ["Tests that match spec function set_seq_token does not "
@@ -986,7 +998,7 @@ match_set_seq_token(Config) when is_list(Config) ->
     %% All the timeout stuff is here to get decent accuracy of the error
     %% return value, instead of just 'timeout'.
     %%
-    {ok, Sandbox} = start_node(seq_trace_other, []),
+    {ok, Peer, Sandbox} = ?CT_PEER(),
     true = rpc:call(Sandbox, code, add_patha,
 			  [filename:dirname(code:which(?MODULE))]),
     Lbl = 4711,
@@ -1031,7 +1043,7 @@ match_set_seq_token(Config) when is_list(Config) ->
 
     ok = check_match_set_seq_token_log(Lbl, SortedLog),
     %%
-    stop_node(Sandbox),
+    peer:stop(Peer),
     ok.
 
 %% OTP-4222 Match spec 'set_seq_token' corrupts heap
@@ -1137,7 +1149,7 @@ gc_seq_token(Config) when is_list(Config) ->
     %% All the timeout stuff is here to get decent accuracy of the error
     %% return value, instead of just 'timeout'.
     %%
-    {ok, Sandbox} = start_node(seq_trace_other, []),
+    {ok, Peer, Sandbox} = ?CT_PEER(),
     true = rpc:call(Sandbox, code, add_patha,
 			  [filename:dirname(code:which(?MODULE))]),
     Label = 4711,
@@ -1175,7 +1187,7 @@ gc_seq_token(Config) when is_list(Config) ->
 		{error, "Test node hung"}
 	end,
     %%
-    stop_node(Sandbox),
+    peer:stop(Peer),
     ok.
 
 do_gc_seq_token(Label) ->
@@ -1366,7 +1378,6 @@ start_tracer(Node) ->
             unlink(Pid),
             Pid
     end.
-           
 
 set_token_flags([]) ->
     ok;
@@ -1378,6 +1389,51 @@ set_token_flags([no_timestamp|Flags]) ->
 set_token_flags([Flag|Flags]) ->
     seq_trace:set_token(Flag, true),
     set_token_flags(Flags).
+
+start_spawn_tracer(TraceFlags) ->
+
+    %% Disable old trace flags
+    erlang:trace(self(), false, spawn_trace_flags()),
+
+    Me = self(),
+    Ref = make_ref(),
+    Pid = spawn_link(
+            fun () ->
+                    register(spawn_tracer, self()),
+                    Me ! Ref,
+                    (fun F(Data) ->
+                             receive
+                                 {get, N, StopRef, Pid} when N =< length(Data) ->
+                                     Pid ! {lists:reverse(Data), StopRef};
+                                 M when element(1,M) =:= trace ->
+                                     F([M|Data])
+                             end
+                    end)([])
+            end),
+    receive
+        Ref ->
+            erlang:trace(self(),true,[{tracer,Pid}, procs | TraceFlags])
+    end.
+
+stop_spawn_tracer(N) ->
+    Ref = make_ref(),
+    spawn_tracer ! {get, N, Ref, self()},
+    receive
+        {Data, Ref} ->
+            Data
+    end.
+
+spawn_trace_flags() ->
+    [set_on_spawn, set_on_link, set_on_spawn,
+     set_on_first_link, set_on_first_spawn].
+
+combinations(Flags) ->
+    %% Do a bit of sofs magic to create a list of lists with
+    %% all the combinations of all the flags above
+    Set = sofs:from_term(Flags),
+    Product = sofs:product(list_to_tuple(lists:duplicate(length(Flags),Set))),
+    Combinations = [lists:usort(tuple_to_list(T)) || T <- sofs:to_external(Product)],
+    [[] | lists:usort(Combinations)].
 
 check_ts(no_timestamp, Ts) ->
     try
@@ -1416,12 +1472,6 @@ check_ts(strict_monotonic_timestamp, Ts) ->
 	    ct:fail({unexpected_timestamp, Ts})
     end,
     ok.
-
-start_node(Name, Param) ->
-    test_server:start_node(Name, peer, [{args, Param}]).
-
-stop_node(Node) ->
-    test_server:stop_node(Node).
 
 load_tracer(Config) ->
     Path = proplists:get_value(data_dir, Config),

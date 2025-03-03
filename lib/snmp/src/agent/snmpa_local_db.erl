@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1996-2019. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -663,7 +663,7 @@ code_change(_Vsn, State, _Extra) ->
 %%----------------------------------------------------------
 
 handle_backup(D, BackupDir) ->
-    %% First check that we do not wrote to the corrent db-dir...
+    %% First check that we do not wrote to the current db-dir...
     ?vtrace("handle_backup -> entry with"
 	"~n   D:         ~p"
 	"~n   BackupDir: ~p", [D, BackupDir]),
@@ -1031,7 +1031,7 @@ table_get_elements(NameDb, RowIndex, Cols, _FirstOwnIndex) ->
 
 get_elements(_Cols, undefined) -> 
     undefined;
-get_elements([Col | Cols], Row) when is_tuple(Row) and (size(Row) >= Col) ->
+get_elements([Col | Cols], Row) when tuple_size(Row) >= Col ->
     [element(Col, Row) | get_elements(Cols, Row)];
 get_elements([], _Row) -> 
     [];
@@ -1215,7 +1215,7 @@ cast(Msg) ->
 
 %% ----------------------------------------------------------------
 %% DETS wrapper functions
-%% The purpose of these fuctions is basically to hide the shadow 
+%% The purpose of these functions is basically to hide the shadow 
 %% table.
 %% Changes are made both in dets and in the shadow table.
 %% Reads are made from the shadow table.

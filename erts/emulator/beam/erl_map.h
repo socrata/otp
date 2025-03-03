@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2014-2017. All Rights Reserved.
+ * Copyright Ericsson AB 2014-2023. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 #include "sys.h"
 
-/* instrinsic wrappers */
+/* intrinsic wrappers */
 #if ERTS_AT_LEAST_GCC_VSN__(3, 4, 0)
 #define hashmap_clz(x)       ((Uint32) __builtin_clz((unsigned int)(x)))
 #define hashmap_bitcount(x)  ((Uint32) __builtin_popcount((unsigned int) (x)))
@@ -55,14 +55,16 @@ typedef struct flatmap_s {
 
 /* the head-node is a bitmap or array with an untagged size */
 
-
 #define hashmap_size(x)               (((hashmap_head_t*) hashmap_val(x))->size)
-#define hashmap_make_hash(Key)        make_internal_hash(Key, 0)
+#define hashmap_make_hash(Key)        make_map_hash(Key)
 
-#define hashmap_restore_hash(Heap,Lvl,Key) \
-    (((Lvl) < 8) ? hashmap_make_hash(Key) >> (4*(Lvl)) : hashmap_make_hash(CONS(Heap, make_small((Lvl)>>3), (Key))) >> (4*((Lvl) & 7)))
-#define hashmap_shift_hash(Heap,Hx,Lvl,Key) \
-    (((++(Lvl)) & 7) ? (Hx) >> 4 : hashmap_make_hash(CONS(Heap, make_small((Lvl)>>3), Key)))
+#define hashmap_restore_hash(Lvl, Key)                                        \
+    (ASSERT(Lvl < 8),                                                         \
+     hashmap_make_hash(Key) >> (4*(Lvl)))
+
+#define hashmap_shift_hash(Hx, Lvl, Key)                                      \
+    (++(Lvl), ASSERT(Lvl <= HAMT_MAX_LEVEL), /* we allow one level too much */\
+     (Hx) >> 4)
 
 /* erl_term.h stuff */
 #define flatmap_get_values(x)        (((Eterm *)(x)) + sizeof(flatmap_t)/sizeof(Eterm))
@@ -85,12 +87,13 @@ int    erts_maps_take(Process *p, Eterm key, Eterm map, Eterm *res, Eterm *value
 
 Eterm  erts_hashmap_insert(Process *p, Uint32 hx, Eterm key, Eterm value,
 			   Eterm node, int is_update);
-int    erts_hashmap_insert_down(Uint32 hx, Eterm key, Eterm node, Uint *sz,
+int    erts_hashmap_insert_down(Uint32 hx, Eterm key, Eterm value, Eterm node, Uint *sz,
 			        Uint *upsz, struct ErtsEStack_ *sp, int is_update);
 Eterm  erts_hashmap_insert_up(Eterm *hp, Eterm key, Eterm value,
-			      Uint *upsz, struct ErtsEStack_ *sp);
+			      Uint upsz, struct ErtsEStack_ *sp);
 
 int    erts_validate_and_sort_flatmap(flatmap_t* map);
+void   erts_usort_flatmap(flatmap_t* map);
 void   hashmap_iterator_init(struct ErtsWStack_* s, Eterm node, int reverse);
 Eterm* hashmap_iterator_next(struct ErtsWStack_* s);
 Eterm* hashmap_iterator_prev(struct ErtsWStack_* s);
@@ -108,6 +111,8 @@ Eterm  erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
 const Eterm *erts_maps_get(Eterm key, Eterm map);
 
 const Eterm *erts_hashmap_get(Uint32 hx, Eterm key, Eterm map);
+
+Sint erts_map_size(Eterm map);
 
 /* hamt nodes v2.0
  *
@@ -142,7 +147,8 @@ typedef struct hashmap_head_s {
 
 /* erl_map.h stuff */
 
-#define is_hashmap_header_head(x) ((MAP_HEADER_TYPE(x) & (0x2)))
+#define is_hashmap_header_head(x) (MAP_HEADER_TYPE(x) & (0x2))
+#define is_hashmap_header_node(x) (MAP_HEADER_TYPE(x) == 1)
 
 #define MAKE_MAP_HEADER(Type,Arity,Val) \
     (_make_header(((((Uint16)(Val)) << MAP_HEADER_ARITY_SZ) | (Arity)) << MAP_HEADER_TAG_SZ | (Type) , _TAG_HEADER_MAP))
@@ -159,12 +165,21 @@ typedef struct hashmap_head_s {
 #define MAP_HEADER_HAMT_NODE_BITMAP(Bmp) \
     MAKE_MAP_HEADER(MAP_HEADER_TAG_HAMT_NODE_BITMAP,0x0,Bmp)
 
+#define MAP_HEADER_HAMT_COLLISION_NODE(Arity) make_arityval(Arity)
+
 #define MAP_HEADER_FLATMAP_SZ  (sizeof(flatmap_t) / sizeof(Eterm))
 
 #define HAMT_NODE_ARRAY_SZ      (17)
 #define HAMT_HEAD_ARRAY_SZ      (18)
 #define HAMT_NODE_BITMAP_SZ(n)  (1 + n)
 #define HAMT_HEAD_BITMAP_SZ(n)  (2 + n)
+#define HAMT_COLLISION_NODE_SZ(n)     (1 + n)
+/*
+ * Collision nodes are used when all hash bits have been exhausted.
+ * They are normal tuples of arity 2 or larger. The elements of a collision
+ * node tuple contain key-value cons cells like the other nodes,
+ * but they are sorted in map-key order.
+ */
 
 /* 2 bits maps tag + 4 bits subtag + 2 ignore bits */
 #define _HEADER_MAP_SUBTAG_MASK       (0xfc)
@@ -178,11 +193,17 @@ typedef struct hashmap_head_s {
 
 #define hashmap_index(hash)      (((Uint32)hash) & 0xf)
 
+#define HAMT_MAX_LEVEL 8
+
 /* hashmap heap size:
    [one cons cell + one list term in parent node] per key
    [one header + one boxed term in parent node] per inner node
    [one header + one size word] for root node
    Observed average number of nodes per key is about 0.35.
+
+   Amendment: This size estimation does not take collision nodes into account.
+              It should be good enough though, as collision nodes are rare
+              and only make the size smaller compared to unlimited HAMT depth.
 */
 #define HASHMAP_WORDS_PER_KEY 3
 #define HASHMAP_WORDS_PER_NODE 2

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -58,9 +58,9 @@
 -record(state,
 	{
 	  xf,
-	  rep_buf = <<>>,
+	  rep_buf = <<>> :: binary(),
 	  req_id,
-	  req_list = [],  %% {ReqId, Fun}
+	  req_list = [], %% {ReqId, Fun}
 	  inf,   %% list of fileinf,
 	  opts
 	 }).
@@ -75,14 +75,14 @@
 
 -record(bufinf,
 	{
-	  mode,			 % read | write  (=from or to buffer by user)
-	  crypto_state,
+	  mode                  :: read | write, % read | write  (=from or to buffer by user)
+	  crypto_state          :: term() | undefined,
 	  crypto_fun,            % For encode or decode depending on the mode field
-	  size = 0,		 % # bytes "before" the current buffer for the postion call
+	  size = 0              :: non_neg_integer() | undefined, % # bytes "before" the current buffer for the position call
 
-	  chunksize,		 % The size of the chunks to be sent or received
-	  enc_text_buf = <<>>,	 % Encrypted text
-	  plain_text_buf = <<>>	 % Decrypted text
+	  chunksize             :: non_neg_integer() | undefined, % The size of the chunks to be sent or received
+	  enc_text_buf = <<>>   :: binary() | undefined,          % Encrypted text
+	  plain_text_buf = <<>> :: binary() | undefined           % Decrypted text
 	}).
 
 -define(FILEOP_TIMEOUT, infinity).
@@ -111,16 +111,9 @@
 %%%----------------------------------------------------------------
 %%% start_channel/1
 
-start_channel(Cm) when is_pid(Cm) ->
-    start_channel(Cm, []);
+start_channel(Dest) ->
+    start_channel(Dest, []).
  
-start_channel(Socket) when is_port(Socket) ->
-    start_channel(Socket, []);
-
-start_channel(Host) ->
-    start_channel(Host, []).
-
-
 %%%----------------------------------------------------------------
 %%% start_channel/2
 
@@ -128,7 +121,7 @@ start_channel(Host) ->
 %%% function clauses.
 
 -spec start_channel(ssh:open_socket(),
-                    [ssh:client_options() | sftp_option()]
+                    [ssh:client_option() | sftp_option()]
                    )
                    -> {ok,pid(),ssh:connection_ref()} | {error,reason()};
 
@@ -138,27 +131,12 @@ start_channel(Host) ->
                    -> {ok,pid()}  | {ok,pid(),ssh:connection_ref()} | {error,reason()};
 
                    (ssh:host(),
-                    [ssh:client_options() | sftp_option()]
+                    [ssh:client_option() | sftp_option()]
                    )
                    -> {ok,pid(),ssh:connection_ref()} | {error,reason()} .
 
-start_channel(Socket, UserOptions) when is_port(Socket) ->
-    {SshOpts, ChanOpts, SftpOpts} = handle_options(UserOptions),
-    Timeout =   % A mixture of ssh:connect and ssh_sftp:start_channel:
-        proplists:get_value(connect_timeout, SshOpts,
-                            proplists:get_value(timeout, SftpOpts, infinity)),
-    case ssh:connect(Socket, SshOpts, Timeout) of
-	{ok,Cm} ->
-	    case start_channel(Cm, ChanOpts ++ SftpOpts) of
-		{ok, Pid} ->
-		    {ok, Pid, Cm};
-		Error ->
-		    Error
-	    end;
-	Error ->
-	    Error
-    end;
-start_channel(Cm, UserOptions) when is_pid(Cm) ->
+start_channel(Cm, UserOptions0) when is_pid(Cm) ->
+    UserOptions = legacy_timeout(UserOptions0),
     Timeout = proplists:get_value(timeout, UserOptions, infinity),
     {_SshOpts, ChanOpts, SftpOpts} = handle_options(UserOptions),
     WindowSize = proplists:get_value(window_size, ChanOpts, ?XFER_WINDOW_SIZE),
@@ -181,8 +159,29 @@ start_channel(Cm, UserOptions) when is_pid(Cm) ->
 	    Error
     end;
 
-start_channel(Host, UserOptions) ->
-    start_channel(Host, 22, UserOptions).
+start_channel(Dest, UserOptions0) ->
+    UserOptions = legacy_timeout(UserOptions0),
+    {SshOpts, ChanOpts, SftpOpts} = handle_options(UserOptions),
+    case ssh:is_host(Dest, SshOpts) of
+        true ->
+            %% Dest looks like is a Host
+            start_channel(Dest, 22, UserOptions);
+        false ->
+            %% No, it is probably not a Host, must be a socket
+            Socket = Dest,
+            Timeout = proplists:get_value(connect_timeout, SshOpts, infinity),
+            case ssh:connect(Socket, SshOpts, Timeout) of
+                {ok,Cm} ->
+                    case start_channel(Cm, ChanOpts ++ SftpOpts) of
+                        {ok, Pid} ->
+                            {ok, Pid, Cm};
+                        Error ->
+                            Error
+                    end;
+                Error ->
+                    Error
+            end
+    end.
 
 
 %%%----------------------------------------------------------------
@@ -194,15 +193,10 @@ start_channel(Host, UserOptions) ->
                    )
                    -> {ok,pid(),ssh:connection_ref()} | {error,reason()}.
 
-start_channel(Host, Port, UserOptions) ->
+start_channel(Host, Port, UserOptions0) ->
+    UserOptions = legacy_timeout(UserOptions0),
+    Timeout = proplists:get_value(connect_timeout, UserOptions, infinity),
     {SshOpts, _ChanOpts, _SftpOpts} = handle_options(UserOptions),
-    Timeout =   % A mixture of ssh:connect and ssh_sftp:start_channel:
-        case proplists:get_value(connect_timeout, UserOptions) of
-            undefined ->
-                proplists:get_value(timeout, UserOptions, infinity);
-            TO ->
-                TO
-        end,
     case ssh:connect(Host, Port, SshOpts, Timeout) of
 	{ok, Cm} ->
             case start_channel(Cm, UserOptions) of
@@ -235,8 +229,8 @@ stop_channel(Pid) ->
             receive {'DOWN',MonRef,_,_,_} -> ok
             after
                 1000 ->
-                    exit(Pid, kill),
                     erlang:demonitor(MonRef, [flush]),
+                    exit(Pid, kill),
                     ok
             end;
 	false ->
@@ -822,7 +816,7 @@ write_file(Pid, Name, Bin, FileOpTimeout) ->
     case open(Pid, Name, [write, binary], FileOpTimeout) of
 	{ok, Handle} ->
 	    {ok,{_Window,Packet}} = send_window(Pid, FileOpTimeout),
-	    Res = write_file_loop(Pid, Handle, 0, Bin, size(Bin), Packet,
+	    Res = write_file_loop(Pid, Handle, 0, Bin, byte_size(Bin), Packet,
 				  FileOpTimeout),
 	    close(Pid, Handle, FileOpTimeout),
 	    Res;
@@ -1023,7 +1017,7 @@ do_handle_call({pwrite,Async,Handle,At,Data0}, From, State) ->
 	{ok,Offset} ->
 	    Data = to_bin(Data0),
 	    ReqID = State#state.req_id,
-	    Size = size(Data),
+	    Size = byte_size(Data),
 	    ssh_xfer:write(?XF(State),ReqID,Handle,Offset,Data),
 	    State1 = update_size(Handle, Offset+Size, State),
 	    make_reply(ReqID, Async, From, State1);
@@ -1036,7 +1030,7 @@ do_handle_call({write,Async,Handle,Data0}, From, State) ->
 	{ok,Offset} ->
 	    Data = to_bin(Data0),
 	    ReqID = State#state.req_id,
-	    Size = size(Data),
+	    Size = byte_size(Data),
 	    ssh_xfer:write(?XF(State),ReqID,Handle,Offset,Data),
 	    State1 = update_offset(Handle, Offset+Size, State),
 	    make_reply(ReqID, Async, From, State1);
@@ -1229,6 +1223,21 @@ terminate(_Reason, State) ->
 %%====================================================================
 %% Internal functions
 %%====================================================================
+legacy_timeout(UserOptions) ->
+    %% Make both connect_timeout and timeout defined if exactly one of them is defined:
+    case {proplists:get_value(connect_timeout, UserOptions),
+          proplists:get_value(timeout, UserOptions)} of
+        {undefined, undefined} ->
+            UserOptions;
+        {undefined, TO} ->
+            [{connect_timeout,TO} | UserOptions];
+        {TO, undefined} ->
+            [{timeout,TO} | UserOptions];
+        {_, _} ->
+            UserOptions
+    end.
+
+
 handle_options(UserOptions) ->
     handle_options(UserOptions, [], [], []).
 
@@ -1573,7 +1582,7 @@ erase_handle(Handle, State) ->
     State#state{inf = FI}.
 
 %%
-%% Caluclate a integer offset
+%% Calculate a integer offset
 %%
 lseek_position(Handle, Pos, State) ->
     case maps:find(Handle, State#state.inf) of
@@ -1631,7 +1640,7 @@ read_repeat(Pid, Handle, Len, FileOpTimeout) ->
 read_rpt(Pid, Handle, WantedLen, PacketSz, FileOpTimeout, Acc) when WantedLen > 0 ->
     case read(Pid, Handle, min(WantedLen,PacketSz), FileOpTimeout) of
 	{ok, Data}  ->
-	    read_rpt(Pid, Handle, WantedLen-size(Data), PacketSz, FileOpTimeout, <<Acc/binary, Data/binary>>);
+	    read_rpt(Pid, Handle, WantedLen-byte_size(Data), PacketSz, FileOpTimeout, <<Acc/binary, Data/binary>>);
 	eof ->
 	    {ok, Acc};
 	Error ->
@@ -1645,7 +1654,7 @@ write_to_remote_tar(_Pid, _SftpHandle, <<>>, _FileOpTimeout) ->
     ok;
 write_to_remote_tar(Pid, SftpHandle, Bin, FileOpTimeout) ->
     {ok,{_Window,Packet}} = send_window(Pid, FileOpTimeout),
-    write_file_loop(Pid, SftpHandle, 0, Bin, size(Bin), Packet, FileOpTimeout).
+    write_file_loop(Pid, SftpHandle, 0, Bin, byte_size(Bin), Packet, FileOpTimeout).
 
 position_buf(Pid, SftpHandle, BufHandle, Pos, FileOpTimeout) ->
     {ok,#bufinf{mode = Mode,
@@ -1653,7 +1662,7 @@ position_buf(Pid, SftpHandle, BufHandle, Pos, FileOpTimeout) ->
 		size = Size}} = call(Pid, {get_bufinf,BufHandle}, FileOpTimeout),
     case Pos of
 	{cur,0} when Mode==write ->
-	    {ok,Size+size(Buf0)};
+	    {ok,Size+byte_size(Buf0)};
 
 	{cur,0} when Mode==read ->
 	    {ok,Size};
@@ -1698,7 +1707,7 @@ read_buf(Pid, SftpHandle, BufHandle, WantedLen, FileOpTimeout) ->
 do_the_read_buf(_Pid, _SftpHandle, WantedLen, _Packet, _FileOpTimeout,
 		B=#bufinf{plain_text_buf=PlainBuf0,
 			  size = Size})
-    when size(PlainBuf0) >= WantedLen ->
+    when byte_size(PlainBuf0) >= WantedLen ->
     %% We already have the wanted number of bytes decoded and ready!
     <<ResultBin:WantedLen/binary, PlainBuf/binary>> = PlainBuf0,
     {ok,ResultBin,B#bufinf{plain_text_buf=PlainBuf,
@@ -1709,8 +1718,8 @@ do_the_read_buf(Pid, SftpHandle, WantedLen, Packet, FileOpTimeout,
 			   enc_text_buf = EncBuf0,
 			   chunksize = undefined
 			  })
-  when size(EncBuf0) > 0 ->
-    %% We have (at least) one decodable byte waiting for decodeing.
+  when byte_size(EncBuf0) > 0 ->
+    %% We have (at least) one decodable byte waiting for decoding.
     {ok,DecodedBin,B} = apply_crypto(EncBuf0, B0),
     do_the_read_buf(Pid, SftpHandle, WantedLen, Packet, FileOpTimeout,
 		    B#bufinf{plain_text_buf = <<PlainBuf0/binary, DecodedBin/binary>>,
@@ -1722,8 +1731,8 @@ do_the_read_buf(Pid, SftpHandle, WantedLen, Packet, FileOpTimeout,
 			   enc_text_buf = EncBuf0,
 			   chunksize = ChunkSize0
 			  })
-  when size(EncBuf0) >= ChunkSize0 ->
-    %% We have (at least) one chunk of decodable bytes waiting for decodeing.
+  when byte_size(EncBuf0) >= ChunkSize0 ->
+    %% We have (at least) one chunk of decodable bytes waiting for decoding.
     <<ToDecode:ChunkSize0/binary, EncBuf/binary>> = EncBuf0,
     {ok,DecodedBin,B} = apply_crypto(ToDecode, B0),
     do_the_read_buf(Pid, SftpHandle, WantedLen, Packet, FileOpTimeout,
@@ -1759,7 +1768,7 @@ write_buf(Pid, SftpHandle, BufHandle, PlainBin, FileOpTimeout) ->
 do_the_write_buf(Pid, SftpHandle, Packet, FileOpTimeout,
 		 B=#bufinf{enc_text_buf = EncBuf0,
 			   size = Size})
-  when size(EncBuf0) >= Packet ->
+  when byte_size(EncBuf0) >= Packet ->
     <<BinToWrite:Packet/binary, EncBuf/binary>> = EncBuf0,
     case write(Pid, SftpHandle, BinToWrite, FileOpTimeout) of
 	ok ->
@@ -1774,7 +1783,7 @@ do_the_write_buf(Pid, SftpHandle, Packet, FileOpTimeout,
 		 B0=#bufinf{plain_text_buf = PlainBuf0,
 			    enc_text_buf = EncBuf0,
 			    chunksize = undefined})
-  when size(PlainBuf0) > 0 ->
+  when byte_size(PlainBuf0) > 0 ->
      {ok,EncodedBin,B} = apply_crypto(PlainBuf0, B0),
      do_the_write_buf(Pid, SftpHandle, Packet, FileOpTimeout,
 		     B#bufinf{plain_text_buf = <<>>,
@@ -1785,7 +1794,7 @@ do_the_write_buf(Pid, SftpHandle, Packet, FileOpTimeout,
 			    enc_text_buf = EncBuf0,
 			    chunksize = ChunkSize0
 			   })
-  when size(PlainBuf0) >= ChunkSize0 ->
+  when byte_size(PlainBuf0) >= ChunkSize0 ->
     <<ToEncode:ChunkSize0/binary, PlainBuf/binary>> = PlainBuf0,
     {ok,EncodedBin,B} = apply_crypto(ToEncode, B0),
     do_the_write_buf(Pid, SftpHandle, Packet, FileOpTimeout,

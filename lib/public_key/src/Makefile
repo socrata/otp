@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 2008-2016. All Rights Reserved.
+# Copyright Ericsson AB 2008-2023. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,8 +45,11 @@ MODULES = \
 	pubkey_ssh \
 	pubkey_pbe \
 	pubkey_cert \
+	pubkey_policy_tree \
         pubkey_cert_records \
-	pubkey_crl
+	pubkey_crl\
+	pubkey_ocsp \
+	pubkey_os_cacerts
 
 HRL_FILES = $(INCLUDE)/public_key.hrl 
 
@@ -84,7 +87,7 @@ ERL_COMPILE_FLAGS += $(PUB_KEY_ERL_FLAGS) \
 # Targets
 # ----------------------------------------------------
 
-debug opt: $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) $(HRL_FILES)
+$(TYPES): $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) $(HRL_FILES)
 
 $(EBIN)/pubkey_ssh.$(EMULATOR): pubkey_moduli.hrl
 

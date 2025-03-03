@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2006-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,13 +48,15 @@
 	  neg_indent/1,
 	  maps_syntax/1,
 	  format_options/1,
-          quoted_atom_types/1,
+          form_vars/1,
+	  quoted_atom_types/1,
 
 	  otp_6321/1, otp_6911/1, otp_6914/1, otp_8150/1, otp_8238/1,
 	  otp_8473/1, otp_8522/1, otp_8567/1, otp_8664/1, otp_9147/1,
           otp_10302/1, otp_10820/1, otp_11100/1, otp_11861/1, pr_1014/1,
           otp_13662/1, otp_14285/1, otp_15592/1, otp_15751/1, otp_15755/1,
-          otp_16435/1]).
+          otp_16435/1, gh_5093/1,
+          eep49/1, eep58/1]).
 
 %% Internal export.
 -export([ehook/6]).
@@ -78,14 +80,15 @@ groups() ->
       [func, call, recs, try_catch, if_then, receive_after,
        bits, head_tail, cond1, block, case1, ops,
        messages, maps_syntax, quoted_atom_types,
-       format_options
+       format_options, form_vars
     ]},
      {attributes, [], [misc_attrs, import_export, dialyzer_attrs]},
      {tickets, [],
       [otp_6321, otp_6911, otp_6914, otp_8150, otp_8238,
        otp_8473, otp_8522, otp_8567, otp_8664, otp_9147,
        otp_10302, otp_10820, otp_11100, otp_11861, pr_1014, otp_13662,
-       otp_14285, otp_15592, otp_15751, otp_15755, otp_16435]}].
+       otp_14285, otp_15592, otp_15751, otp_15755, otp_16435,
+       gh_5093, eep49, eep58]}].
 
 init_per_suite(Config) ->
     Config.
@@ -373,7 +376,7 @@ try_catch(Config) when is_list(Config) ->
            <<"t() -> case catch foo of bar -> foo end.">>},
           {catch_3,
            <<"t() -> catch begin begin foo, bar, foo:bar(kljsldkfjdls,kljsdl),
-                           (catch bar:foo(foo)) end end.">>}
+                           catch bar:foo(foo) end end.">>}
           ],
     compile(Config, Ts),
     ok = pp_expr(<<"try
@@ -576,6 +579,37 @@ format_options(Config) when is_list(Config) ->
 		[{indent, 2}, {linewidth, 1000}]
 	    )
 	).
+
+form_vars(Config) when is_list(Config) ->
+    %% Check that erl_pp:legalize_vars/1 does its job.  If
+    %% legalize_vars/1 fails to convert variable names starting with a
+    %% lower case letter, the compiler will detect that `X` is an atom
+    %% and report that the `+` operation will fail. If legalize_vars/1
+    %% fails to generate unique variable names and just converts the
+    %% name to uppercase, the variable named `REC0` will be used in an
+    %% unsafe way.
+    String = <<"-module(erl_pp_test).
+                -export([f/1]).
+                -record(r, {a, b}).
+                f(#r{b = B} = C) ->
+                  receive
+	            B ->
+	              X = C#r.a,
+	              REC0 = X + X,
+	              REC0
+                    end.">>,
+    FileName = filename('erl_pp_test.erl', Config),
+    ok = file:write_file(FileName, String),
+    Opts = [binary,deterministic,nowarn_unused_record],
+    {ok, [], Forms} = compile:file(FileName, ['E'|Opts]),
+    Forms1 = lists:map(fun(F={function,_,_,_,_}) ->
+                               erl_pp:legalize_vars(F);
+                          (F) ->
+                               F
+                       end, Forms),
+    ok = file:write_file(FileName, [erl_pp:form(F) || F <- Forms1]),
+    {ok, _, _, []} = compile:file(FileName, [return|Opts]),
+    ok.
 
 misc_attrs(Config) when is_list(Config) ->
     ok = pp_forms(<<"-module(m). ">>),
@@ -972,7 +1006,7 @@ otp_8567(Config) when is_list(Config) ->
           "-record s, {a :: integer()}.\n"
           "-type t() :: {#r{},#s{}}.\n">>,
     ok = file:write_file(FileName, C),
-    {error,[{_,[{3,erl_parse,["syntax error before: ","')'"]}]}],_} =
+    {error,[{_,[{{3,8},erl_parse,["syntax error before: ","')'"]}]}],_} =
         compile:file(FileName, [return]),
 
     F = <<"-module(otp_8567).\n"
@@ -1022,7 +1056,7 @@ otp_8664(Config) when is_list(Config) ->
            "-spec t() -> 9 and 4.\n"
            "t() -> 0.\n">>,
     ok = file:write_file(FileName, C2),
-    {error,[{_,[{3,erl_lint,{type_syntax,integer}}]}],_} =
+    {error,[{_,[{{3,16},erl_lint,{type_syntax,integer}}]}],_} =
         compile:file(FileName, [return]),
 
     ok.
@@ -1085,14 +1119,14 @@ unicode_hook({foo,E}, I, P, H) ->
 %% OTP-10820. Unicode filenames.
 otp_10820(Config) when is_list(Config) ->
     C1 = <<"%% coding: utf-8\n -module(any).">>,
-    ok = do_otp_10820(Config, C1, "+pc latin1"),
-    ok = do_otp_10820(Config, C1, "+pc unicode"),
+    ok = do_otp_10820(Config, C1, ["+pc", "latin1"]),
+    ok = do_otp_10820(Config, C1, ["+pc", "unicode"]),
     C2 = <<"%% coding: latin-1\n -module(any).">>,
-    ok = do_otp_10820(Config, C2, "+pc latin1"),
-    ok = do_otp_10820(Config, C2, "+pc unicode").
+    ok = do_otp_10820(Config, C2, ["+pc", "latin1"]),
+    ok = do_otp_10820(Config, C2, ["+pc", "unicode"]).
 
 do_otp_10820(Config, C, PC) ->
-    {ok,Node} = start_node(erl_pp_helper, "+fnu " ++ PC),
+    {ok,Peer,Node} = ?CT_PEER(["+fnu"] ++ PC),
     L = [915,953,959,973,957,953,954,959,957,964],
     FileName = filename(L++".erl", Config),
     ok = rpc:call(Node, file, write_file, [FileName, C]),
@@ -1100,7 +1134,7 @@ do_otp_10820(Config, C, PC) ->
                             [FileName, [return,'P',{outdir,?privdir}]]),
     PFileName = filename(L++".P", Config),
     {ok, Bin} = rpc:call(Node, file, read_file, [PFileName]),
-    true = test_server:stop_node(Node),
+    peer:stop(Peer),
     true = file_attr_is_string(binary_to_list(Bin)),
     ok.
 
@@ -1164,7 +1198,7 @@ pr_1014(Config) ->
           "-compile export_all.\n"
           "-type m() :: #{..., a := integer()}.\n">>,
     ok = file:write_file(FileName, C),
-    {error,[{_,[{3,erl_parse,["syntax error before: ","'...'"]}]}],_} =
+    {error,[{_,[{{3,16},erl_parse,["syntax error before: ","'...'"]}]}],_} =
         compile:file(FileName, [return]),
 
     ok.
@@ -1304,8 +1338,12 @@ otp_16435(_Config) ->
 
     CheckF("f() ->\n    << \n      (catch <<1:4>>) ||\n"
            "          A <- []\n    >>.\n"),
-    CheckF("f() ->\n    [ \n     (catch foo) ||\n         A <- []\n    ].\n"),
+    CheckF("f() ->\n    [ \n     catch foo ||\n         A <- []\n    ].\n"),
+    CheckF("f() ->\n    1 = catch 1.\n"),
+    CheckF("f() ->\n    catch 1 = catch 1.\n"),
+    CheckF("f() ->\n    A = catch 1 / 0.\n"),
     CheckF("f() when erlang:float(3.0) ->\n    true.\n"),
+    CheckF("f() ->\n    (catch 16)#{}.\n"),
 
     Check = fun(S) -> S = flat_parse_and_pp_expr(S, 0, []) end,
     Check("5 #r4.f1"),
@@ -1328,6 +1366,51 @@ otp_16435(_Config) ->
           "    _:_ ->\n"
           "        c\n"
           "end"),
+
+    ok.
+
+gh_5093(_Config) ->
+  assert_same("f() ->\n    -1.\n"),
+  assert_same("f() ->\n    +1.\n"),
+  assert_same("f() ->\n    +1.1.\n"),
+  assert_same("f() ->\n    +(+1).\n"),
+  assert_same("f(X) ->\n    -X.\n"),
+  assert_same("f(X) ->\n    +X.\n"),
+  assert_same("f(X, Y) ->\n    X + Y.\n"),
+  assert_same("f(X, Y) ->\n    X + +Y.\n"),
+  assert_same("f(X, Y) ->\n    X - Y.\n"),
+  ok.
+
+eep49(_Config) ->
+    assert_same("f() ->\n"
+                "    maybe ok ?= ok end.\n"),
+    assert_same("f() ->\n"
+                "    maybe\n"
+                "        ok ?= ok\n"
+                "    else\n"
+                "        {error, _} ->\n"
+                "            error\n"
+                "    end.\n"),
+    ok.
+
+eep58(_Config) ->
+    assert_same("lc_map(Map) ->\n"
+                "    [ \n"
+                "     {K, V} ||\n"
+                "         K := V <- Map\n"
+                "    ].\n"),
+
+    assert_same("bc_map(Map) ->\n"
+                "    << \n"
+                "      <<K:32,V:32>> ||\n"
+                "          K := V <- Map\n"
+                "    >>.\n"),
+
+    assert_same("mc(Map) ->\n"
+                "    #{ \n"
+                "      K => V + 1 ||\n"
+                "          K := V <- Map\n"
+                "    }.\n"),
 
     ok.
 
@@ -1426,7 +1509,15 @@ parse_forms(Chars) ->
 parse_forms2([], _Cont, _Line, Forms) ->
     lists:reverse(Forms);
 parse_forms2(String, Cont0, Line, Forms) ->
-    case erl_scan:tokens(Cont0, String, Line) of
+    %% FIXME: When the experimental features EEP has been implemented, we should
+    %% dig out all keywords defined in all features.
+    ResWordFun =
+        fun('maybe') -> true;
+           ('else') -> true;
+           (Other) -> erl_scan:reserved_word(Other)
+        end,
+    Options = [{reserved_word_fun,ResWordFun}],
+    case erl_scan:tokens(Cont0, String, Line, Options) of
         {done, {ok, Tokens, EndLine}, Chars} ->
             {ok, Form} = erl_parse:parse_form(Tokens),
             parse_forms2(Chars, [], EndLine, [Form | Forms]);
@@ -1510,7 +1601,9 @@ filename(Name, Config) ->
 fail() ->
     ct:fail(failed).
 
-%% +fnu means a peer node has to be started; slave will not do
-start_node(Name, Xargs) ->
-    PA = filename:dirname(code:which(?MODULE)),
-    test_server:start_node(Name, peer, [{args, "-pa " ++ PA ++ " " ++ Xargs}]).
+assert_same(Expected) when is_list(Expected) ->
+    Actual = binary_to_list(iolist_to_binary(parse_and_pp_forms(Expected, []))),
+    case Expected == Actual of
+      true -> ok;
+      false -> error({Expected, Actual})
+    end.

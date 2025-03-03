@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2004-2019. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -643,21 +643,33 @@ cd_gc(_) ->
     [] = string:next_codepoint(""),
     [] = string:next_codepoint(<<>>),
     [] = string:next_codepoint([<<>>]),
+    [$a|""] = string:next_codepoint("a"),
+    [$a|<<>>] = string:next_codepoint(<<"a">>),
+    [$a|[<<>>,$b]] = string:next_codepoint([<<"a">>,$b]),
     "abcd" = string:next_codepoint("abcd"),
-    [$e,778] = string:next_codepoint([$e,778]),
+    [$e|[778]] = string:next_codepoint([$e,778]),
     [$e|<<204,138>>] = string:next_codepoint(<<$e,778/utf8>>),
-    [778|_] = string:next_codepoint(tl(string:next_codepoint(<<$e,778/utf8>>))),
+    [778|<<>>] = string:next_codepoint(tl(string:next_codepoint(<<$e,778/utf8>>))),
     [0|<<128,1>>] = string:next_codepoint(<<0,128,1>>),
     {error,<<128,1>>} = string:next_codepoint(<<128,1>>),
+    [128021|<<>>] = string:next_codepoint(<<128021/utf8>>), %% Dog
+    [128021|<<8205/utf8>>] = string:next_codepoint(<<128021/utf8,8205/utf8>>), %% Dog + ZWJ
+    [128021|<<8205/utf8,129466/utf8>>] = string:next_codepoint(<<128021/utf8,8205/utf8,129466/utf8>>), %% Dog + ZWJ + Service vest == Service dog
 
     [] = string:next_grapheme(""),
     [] = string:next_grapheme(<<>>),
     [] = string:next_grapheme([<<>>]),
+    [$a|""] = string:next_grapheme("a"),
+    [$a|<<>>] = string:next_grapheme(<<"a">>),
+    [$a|[<<>>,$b]] = string:next_grapheme([<<"a">>,$b]),
     "abcd" = string:next_grapheme("abcd"),
-    [[$e,778]] = string:next_grapheme([$e,778]),
-    [[$e,778]] = string:next_grapheme(<<$e,778/utf8>>),
+    [[$e,778]|""] = string:next_grapheme([$e,778]),
+    [[$e,778]|<<>>] = string:next_grapheme(<<$e,778/utf8>>),
     [0|<<128,1>>] = string:next_grapheme(<<0,128,1>>),
     {error,<<128,1>>} = string:next_grapheme(<<128,1>>),
+    [128021|<<>>] = string:next_grapheme(<<128021/utf8>>), %% Dog
+    [[128021,8205]|<<>>] = string:next_grapheme(<<128021/utf8,8205/utf8>>), %% Dog + ZWJ
+    [[128021,8205,129466]|<<>>] = string:next_grapheme(<<128021/utf8,8205/utf8,129466/utf8>>), %% Dog + ZWJ + Service vest == Service dog
 
     ok.
 
@@ -1439,8 +1451,11 @@ centre(Config) when is_list(Config) ->
     ok.
 
 old_to_integer(Config) when is_list(Config) ->
+    {0,""} = test_to_integer("0"),
+    {0,""} = test_to_integer(lists:duplicate(200, $0)),
     {1,""} = test_to_integer("1"),
     {1,""} = test_to_integer("+1"),
+    {1,""} = test_to_integer("0001"),
     {-1,""} = test_to_integer("-1"),
     {1,"="} = test_to_integer("1="),
     {7,"F"} = test_to_integer("7F"),
@@ -1448,6 +1463,16 @@ old_to_integer(Config) when is_list(Config) ->
     {709,"*2"} = test_to_integer("709*2"),
     {0,"xAB"} = test_to_integer("0xAB"),
     {16,"#FF"} = test_to_integer("16#FF"),
+
+    %% Test a bignum.
+    Big = 12385792987438978973984398348974398593,
+    NegBig = -Big,
+    BigString = integer_to_list(Big),
+    {Big,"tail"} = string:to_integer(BigString ++ "tail"),
+    {Big,"tail"} = string:to_integer("+" ++ BigString ++ "tail"),
+    {NegBig,"tail"} = string:to_integer("-" ++ BigString ++ "tail"),
+
+    %% Test errors.
     {error,no_integer} = test_to_integer(""),
     {error,no_integer} = test_to_integer("!1"),
     {error,no_integer} = test_to_integer("F1"),
@@ -1455,6 +1480,12 @@ old_to_integer(Config) when is_list(Config) ->
     %% {3,[[]]} = test_to_integer([$3,[]]),
     %% {3,[hello]} = test_to_integer([$3,hello]),
     {error,badarg} = test_to_integer([$3,hello]),
+
+    %% Test the internal string:list_to_integer/1 BIF directly.
+    {error,not_a_list} = string:list_to_integer(abc),
+    {error,no_integer} = string:list_to_integer(""),
+    {error,no_integer} = string:list_to_integer("+"),
+
     ok.
 
 test_to_integer(Str) ->

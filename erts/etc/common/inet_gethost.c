@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2018. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,6 +93,12 @@
 #endif
 #include <sys/times.h>
 
+#ifdef __clang_analyzer__
+   /* CodeChecker does not seem to understand inline asm in FD_ZERO */
+#  undef FD_ZERO
+#  define FD_ZERO(FD_SET_PTR) memset(FD_SET_PTR, 0, sizeof(fd_set))
+#endif
+
 #ifndef RETSIGTYPE
 #define RETSIGTYPE void
 #endif
@@ -116,6 +122,17 @@
 #endif
 
 #endif /* !WIN32 */
+
+#if defined(__GNUC__)
+#  define PROTO_NORETURN__ void __attribute__((noreturn))
+#  define IMPL_NORETURN__ void
+#elif defined(__WIN32__) && defined(_MSC_VER)
+#  define PROTO_NORETURN__ __declspec(noreturn) void
+#  define IMPL_NORETURN__ __declspec(noreturn) void
+#else
+#  define PROTO_NORETURN__ void
+#  define IMPL_NORETURN__ void
+#endif
 
 #define PACKET_BYTES 4
 #ifdef WIN32
@@ -298,6 +315,12 @@ static HANDLE debug_console_allocated = INVALID_HANDLE_VALUE;
 #define REALLOC(Old, Size) my_realloc((Old), (Size))
 #define FREE(Ptr) free(Ptr)
 
+#ifdef DEBUG
+#define ASSERT(Cnd) do { if (!(Cnd)) { abort(); } } while(0)
+#else
+#define ASSERT(Cnd)
+#endif
+
 #ifdef WIN32
 #define WAKEUP_WINSOCK() do {			\
     char dummy_buff[100];			\
@@ -309,7 +332,7 @@ static HANDLE debug_console_allocated = INVALID_HANDLE_VALUE;
 static char *format_address(int siz, AddrByte *addr);
 static void debugf(char *format, ...);
 static void warning(char *format, ...);
-static void fatal(char *format, ...);
+static PROTO_NORETURN__ fatal(char *format, ...);
 static void *my_malloc(size_t size);
 static void *my_realloc(void *old, size_t size);
 static int get_int32(AddrByte *buff);
@@ -324,8 +347,9 @@ static size_t build_error_reply(SerialType serial, int errnum,
 				AddrByte **preply,
 				size_t *preply_size);
 #ifdef HAVE_GETADDRINFO
-static size_t build_reply_ai(SerialType serial, int, struct addrinfo *,
-                            AddrByte **preply, size_t *preply_size);
+static size_t build_reply_ai(SerialType serial, int, int,
+                             struct addrinfo *,
+                             AddrByte **preply, size_t *preply_size);
 #endif
 static size_t build_reply(SerialType serial, struct hostent *he,
                          AddrByte **preply, size_t *preply_size);
@@ -747,6 +771,11 @@ static void main_loop(void)
     }
 #endif
 
+    /* Satisfy CodeChecker.  Already done in init_workers() */
+    *wsizes[0] = 0;
+    *wsizes[1] = 0;
+    *wsizes[2] = 0;
+
     for(;;) {
 #ifdef WIN32
 	num_handles = 0;
@@ -949,7 +978,7 @@ static void main_loop(void)
 	    }   
 
 	    if (BEE_GREEDY()) {
-		DEBUGF(4,("Beeing greedy!"));
+		DEBUGF(4,("Being greedy!"));
 		if ((cw = pick_worker_greedy(domainbuff)) != NULL) {
 		    /* Put it in the worker specific que if the 
 		       domainname matches... */
@@ -1017,14 +1046,23 @@ static void main_loop(void)
 
 static void init_workers(int max)
 {
+    size_t alloc_size = sizeof(Worker) * max;
+
     max_workers = max;
     num_busy_workers = 0;
     num_free_workers = 0;
     num_stalled_workers = 0;
 
-    busy_workers = ALLOC(sizeof(Worker) * max_workers);
-    free_workers = ALLOC(sizeof(Worker) * max_workers);
-    stalled_workers = ALLOC(sizeof(Worker) * max_workers);
+    busy_workers = ALLOC(alloc_size);
+    free_workers = ALLOC(alloc_size);
+    stalled_workers = ALLOC(alloc_size);
+
+#ifdef DEBUG
+    memset(busy_workers, 0, alloc_size);
+    memset(free_workers, 0, alloc_size);
+    memset(stalled_workers, 0, alloc_size);;
+#endif
+
 #ifndef WIN32
     init_signals();
 #endif
@@ -1459,7 +1497,7 @@ static int ignore_reply(Worker *pw)
 #endif /* !WIN32 */
 
 /*
- * Domain name "parsing" and worker specific queing
+ * Domain name "parsing" and worker specific queueing
  */
 static void domaincopy(AddrByte *out, AddrByte *in)
 {
@@ -1721,6 +1759,7 @@ static int worker_loop(void)
 		req = REALLOC(req, (req_size = this_size));
 	    }
 	}
+        ASSERT(req != NULL);
 	if (read_exact(0, req, (size_t) this_size) != this_size) {
 	    DEBUGF(1,("Worker got EOF while reading data, exiting."));
 	    exit(0);
@@ -1729,12 +1768,11 @@ static int worker_loop(void)
 	/* Decode the request... */
 	serial = get_serial(req);
 	if (OP_CONTROL == (op = get_op(req))) {
-	    CtlType ctl;
 	    if (serial != INVALID_SERIAL) {
 		DEBUGF(1, ("Worker got invalid serial: %d.", serial));
 		exit(0);
 	    }
-	    switch (ctl = get_ctl(req)) {
+	    switch (get_ctl(req)) {
 	    case SETOPT_DEBUG_LEVEL:
 		debug_level = get_debug_level(req);
 		DEBUGF(debug_level, 
@@ -1821,7 +1859,7 @@ static int worker_loop(void)
 #endif
 #ifdef HAVE_GETADDRINFO
 	    } else if (ai) {
-		data_size = build_reply_ai(serial, 16, ai,
+		data_size = build_reply_ai(serial, AF_INET6, 16, ai,
 					   &reply, &reply_size);
 		freeaddrinfo(ai);
 #endif
@@ -1836,17 +1874,17 @@ static int worker_loop(void)
 #ifdef HAVE_IN6
 	    case PROTO_IPV6: {
 #ifdef HAVE_GETNAMEINFO
-		struct sockaddr_in6 *sin;
-		socklen_t salen = sizeof(*sin);
+		struct sockaddr_in6 *sin6;
+		socklen_t salen = sizeof(*sin6);
 		
-		sin = ALLOC(salen);
+		sin6 = ALLOC(salen);
 #ifndef NO_SA_LEN
-		sin->sin6_len = salen;
+		sin6->sin6_len = salen;
 #endif
-		sin->sin6_family = AF_INET6;
-		sin->sin6_port = 0;
-		memcpy(&sin->sin6_addr, data, 16);
-		sa = (struct sockaddr *)sin;
+		sin6->sin6_family = AF_INET6;
+		sin6->sin6_port = 0;
+		memcpy(&sin6->sin6_addr, data, 16);
+		sa = (struct sockaddr *)sin6;
 		DEBUGF(5,("Starting getnameinfo(,,%s,16,,,)",
 			  format_address(16, data)));
 		error_num = getnameinfo(sa, salen, name, sizeof(name),
@@ -1854,7 +1892,8 @@ static int worker_loop(void)
 		DEBUGF(5,("getnameinfo returned %d", error_num));
 		if (error_num) {
 		    error_num = map_netdb_error_ai(error_num);
-		    sa = NULL;
+                    FREE(sa);
+                    sa = NULL;
 		}
 #elif defined(HAVE_GETIPNODEBYADDR) /*#ifdef HAVE_GETNAMEINFO*/
 		struct in6_addr ia;
@@ -1916,8 +1955,9 @@ static int worker_loop(void)
 		memset(&res, 0, sizeof(res));
 		res.ai_canonname = name;
 		res.ai_addr = sa;
+                res.ai_family = sa->sa_family;
 		res.ai_next = NULL;
-		data_size = build_reply_ai(serial, 16, &res,
+		data_size = build_reply_ai(serial, AF_INET6, 16, &res,
 					   &reply, &reply_size);
 		free(sa);
 #endif
@@ -1956,10 +1996,10 @@ static int worker_loop(void)
     }
     close_mesq(readfrom);
     close_mesq(writeto);
+#endif
     if (reply) {
 	FREE(reply);
     }
-#endif
     return 1;
 }
 
@@ -2120,6 +2160,7 @@ static size_t build_reply(SerialType serial, struct hostent *he,
 			      (*preply_size = need));
 	}
     }
+    ASSERT(*preply != NULL);
     ptr = *preply;
     PUT_PACKET_BYTES(ptr,need - PACKET_BYTES);
     ptr += PACKET_BYTES;
@@ -2144,7 +2185,8 @@ static size_t build_reply(SerialType serial, struct hostent *he,
 }
 
 #if defined(HAVE_GETADDRINFO) || defined(HAVE_GETNAMEINFO)
-static size_t build_reply_ai(SerialType serial, int addrlen,
+static size_t build_reply_ai(SerialType serial,
+                             int family, int addrlen,
 			     struct addrinfo *res0,
 			     AddrByte **preply, size_t *preply_size)
 {
@@ -2161,14 +2203,16 @@ static size_t build_reply_ai(SerialType serial, int addrlen,
 	4 /* Naddr */ + 4 /* Nnames */;
 
     for (res = res0; res != NULL; res = res->ai_next) {
-	if (res->ai_addr) {
-	    num_addresses++;
-	    need += addrlen;
-	}
-	if (res->ai_canonname) {
-	    num_strings++;
-	    need += strlen(res->ai_canonname) + 1;
-	}
+        if ((res->ai_addr) &&
+            (res->ai_addr->sa_family == family)) {
+            num_addresses++;
+            need += addrlen;
+        }
+        if ((res->ai_canonname) &&
+            (res->ai_family == family)) {
+            num_strings++;
+            need += strlen(res->ai_canonname) + 1;
+        }
     }
 
     if (*preply_size < need) {
@@ -2179,7 +2223,7 @@ static size_t build_reply_ai(SerialType serial, int addrlen,
 			      (*preply_size = need));
 	}
     }
-
+    ASSERT(*preply != NULL);
     ptr = *preply;
     PUT_PACKET_BYTES(ptr,need - PACKET_BYTES);
     ptr += PACKET_BYTES;
@@ -2188,28 +2232,34 @@ static size_t build_reply_ai(SerialType serial, int addrlen,
     *ptr++ = (AddrByte) addrlen; /* 4 or 16 */
     put_int32(ptr, num_addresses);
     ptr += 4;
-    for (res = res0; res != NULL && num_addresses; res = res->ai_next) {
-	if (res->ai_addr == NULL)
-	    continue;
-	if (addrlen == 4)
-	    memcpy(ptr, &((struct sockaddr_in *)res->ai_addr)->sin_addr, addrlen);
+    for (res = res0; res != NULL; res = res->ai_next) {
+        if ((res->ai_addr) &&
+            (res->ai_addr->sa_family == family)) {
+            const void *src;
+            switch (family) {
+            case AF_INET:
+                src = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+                break;
 #ifdef AF_INET6
-	else if (addrlen == 16)
-	    memcpy(ptr, &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr, addrlen);
+            case AF_INET6:
+                src = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+                break;
 #endif
-	else
-	    memcpy(ptr, res->ai_addr->sa_data, addrlen);
-	ptr += addrlen;
-	num_addresses--;
+            default:
+                src = res->ai_addr->sa_data;
+            }
+            memcpy(ptr, src, addrlen);
+            ptr += addrlen;
+        }
     }
     put_int32(ptr, num_strings);
     ptr += 4;
-    for (res = res0; res != NULL && num_strings; res = res->ai_next) {
-	if (res->ai_canonname == NULL)
-	    continue;
-	strcpy((char *)ptr, res->ai_canonname);
-	ptr += strlen(res->ai_canonname) + 1;
-	num_strings--;
+    for (res = res0; res != NULL; res = res->ai_next) {
+        if ((res->ai_canonname) &&
+            (res->ai_family == family)) {
+            strcpy((char *)ptr, res->ai_canonname);
+            ptr += strlen(res->ai_canonname) + 1;
+        }
     }
     return need;
 }
@@ -2296,7 +2346,7 @@ static int read_exact(HANDLE fd, void *vbuff, DWORD nbytes, HANDLE ev)
 		}
 	    }
 	} else {
-	    DEBUGF(4,("Read completed syncronously, result %d",ret));
+	    DEBUGF(4,("Read completed synchronously, result %d",ret));
 	}	    
 	if (ret == 0) {
 	    DEBUGF(1, ("End of file detected as zero read from pipe."));
@@ -2332,7 +2382,7 @@ static int write_exact(HANDLE fd, AddrByte *buff, DWORD len, HANDLE ev)
 	stat = WriteFile(fd,buff,x,&res,&ov);
 	if (!stat) {
 	    if ((err = GetLastError()) == ERROR_IO_PENDING) {
-		DEBUGF(4,("Overlapped write, waiting for competion..."));
+		DEBUGF(4,("Overlapped write, waiting for completion..."));
 		WaitForSingleObject(ov.hEvent,INFINITE);
 		stat = GetOverlappedResult(fd,&ov,&res,TRUE);
 		DEBUGF(4,("Overlapped write, completed with status %d,"
@@ -2346,7 +2396,7 @@ static int write_exact(HANDLE fd, AddrByte *buff, DWORD len, HANDLE ev)
 		}
 	    }
 	} else {
-	    DEBUGF(4,("Write completed syncronously, result %d",res));
+	    DEBUGF(4,("Write completed synchronously, result %d",res));
 	}
 	    
 	if (res < x) {
@@ -2561,9 +2611,7 @@ static void debugf(char *format, ...)
 	WriteFile(debug_console_allocated,buff,strlen(buff),&res,NULL);
     }
 #else
-    /* suppress warning with 'if' */
-    if(write(2,buff,strlen(buff)))
-	;
+    (void)! write(2,buff,strlen(buff));
 #endif
     va_end(ap);
 }
@@ -2585,14 +2633,12 @@ static void warning(char *format, ...)
 	WriteFile(GetStdHandle(STD_ERROR_HANDLE),buff,strlen(buff),&res,NULL);
     }
 #else
-    /* suppress warning with 'if' */
-    if(write(2,buff,strlen(buff)))
-	;
+    (void)! write(2,buff,strlen(buff));
 #endif
     va_end(ap);
 }
 
-static void fatal(char *format, ...)
+static IMPL_NORETURN__ fatal(char *format, ...)
 {
     char buff[2048];
     char *ptr;
@@ -2609,9 +2655,7 @@ static void fatal(char *format, ...)
 	WriteFile(GetStdHandle(STD_ERROR_HANDLE),buff,strlen(buff),&res,NULL);
     }
 #else
-    /* suppress warning with 'if' */
-    if(write(2,buff,strlen(buff)))
-	;
+    (void)! write(2,buff,strlen(buff));
 #endif
     va_end(ap);
 #ifndef WIN32

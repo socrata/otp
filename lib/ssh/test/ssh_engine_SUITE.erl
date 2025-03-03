@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,7 +26,20 @@
 -include("ssh_test_lib.hrl").
 
 %% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+         suite/0,
+         all/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2
+        ]).
+
+-export([
+         simple_connect/1
+        ]).
+
 
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
@@ -67,6 +80,8 @@ init_per_suite(Config) ->
                        {skip, "Engine not supported on this OpenSSL version"};
                    {error, bad_engine_id} ->
                        {skip, "Dynamic Engine not supported"};
+                   {error, notexist} ->
+                       {skip, "No Dynamic Engine to test with"};
                    Other ->
                        ct:log("Engine load failed: ~p",[Other]),
                        {fail, "Engine load failed"}

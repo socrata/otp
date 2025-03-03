@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>1997</year><year>2016</year>
+      <year>1997</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -520,10 +520,10 @@
         <list type="ordered">
           <item>It is much more efficient.
           </item>
-          <item>The funcion
+          <item>The function
            <seemfa marker="mnesia#dirty_update_counter/2">dirty_update_counter/2</seemfa>
            is performed as an atomic operation although it is not protected
-           by a transaction. Therfore no table update is lost if two
+           by a transaction. Therefore no table update is lost if two
            processes simultaneously execute the function
           <c>dirty_update_counter/2</c>.
           </item>

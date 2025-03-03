@@ -4,7 +4,7 @@
 <application xmlns:xi="http://www.w3.org/2001/XInclude">
   <header>
     <copyright>
-      <year>1996</year><year>2019</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -66,11 +66,9 @@
   <xi:include href="net_kernel.xml"/>
   <xi:include href="os.xml"/>
   <xi:include href="pg.xml"/>
-  <xi:include href="pg2.xml"/>
   <xi:include href="rpc.xml"/>
   <xi:include href="seq_trace.xml"/>
   <xi:include href="socket.xml"/>
-  <xi:include href="user.xml"/>
   <xi:include href="wrap_log_reader.xml"/>
   <xi:include href="zlib_stub.xml"/>
 </application>

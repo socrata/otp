@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,13 +26,14 @@
 %% it goes.
 %%
 
+-feature(maybe_expr, enable).
 -module(beam_ssa_type).
--export([opt_start/2, opt_continue/4, opt_finish/3]).
+-export([opt_start/2, opt_continue/4, opt_finish/3, opt_ranges/1]).
 
 -include("beam_ssa_opt.hrl").
 -include("beam_types.hrl").
 
--import(lists, [any/2,duplicate/2,foldl/3,member/2,
+-import(lists, [duplicate/2,foldl/3,member/2,
                 keyfind/3,reverse/1,split/2,zip/2]).
 
 %% The maximum number of #b_ret{} terminators a function can have before
@@ -53,42 +54,51 @@
 %% narrow a type down, it could push us over the edge and collapse all entries,
 %% possibly widening the return type and breaking optimizations that were based
 %% on the earlier (narrower) types.
--define(RETURN_LIMIT, 100).
+-define(RETURN_LIMIT, 30).
 
 %% Constants common to all subpasses.
 -record(metadata,
         { func_id :: func_id(),
           limit_return :: boolean(),
           params :: [beam_ssa:b_var()],
-          used_once :: cerl_sets:set(beam_ssa:b_var()) }).
+          used_once :: #{ beam_ssa:b_var() => _ } }).
 
--type type_db() :: #{ beam_ssa:var_name() := type() }.
+-type metadata() :: #metadata{}.
+-type meta_cache() :: #{ func_id() => metadata() }.
+-type type_db() :: #{ beam_ssa:var_name() := ssa_type() }.
+
+%% The types are the same as in 'beam_types.hrl', with the addition of
+%% `(fun(type_db()) -> type())` that defers figuring out the type until it's
+%% actually used. Mainly used to coax more type information out of
+%% `get_tuple_element` where a test on one element (e.g. record tag) may
+%% affect the type of another.
+-type ssa_type() :: fun((type_db()) -> type()) | type().
 
 %%
 
 -spec opt_start(term(), term()) -> term().
 opt_start(StMap, FuncDb0) when FuncDb0 =/= #{} ->
-    {ArgDb, FuncDb} = signatures(StMap, FuncDb0),
+    {ArgDb, MetaCache, FuncDb} = signatures(StMap, FuncDb0),
 
-    opt_start_1(maps:keys(StMap), ArgDb, StMap, FuncDb);
+    opt_start_1(maps:keys(StMap), ArgDb, StMap, FuncDb, MetaCache);
 opt_start(StMap, FuncDb) ->
     %% Module-level analysis is disabled, likely because of a call to
     %% load_nif/2 or similar. opt_continue/4 will assume that all arguments and
     %% return types are 'any'.
     {StMap, FuncDb}.
 
-opt_start_1([Id | Ids], ArgDb, StMap0, FuncDb0) ->
+opt_start_1([Id | Ids], ArgDb, StMap0, FuncDb0, MetaCache) ->
     case ArgDb of
         #{ Id := ArgTypes } ->
             #opt_st{ssa=Linear0,args=Args} = St0 = map_get(Id, StMap0),
 
             Ts = maps:from_list(zip(Args, ArgTypes)),
-            {Linear, FuncDb} = opt_function(Linear0, Args, Id, Ts, FuncDb0),
+            {Linear, FuncDb} = opt_function(Linear0, Args, Id, Ts, FuncDb0, MetaCache),
 
             St = St0#opt_st{ssa=Linear},
             StMap = StMap0#{ Id := St },
 
-            opt_start_1(Ids, ArgDb, StMap, FuncDb);
+            opt_start_1(Ids, ArgDb, StMap, FuncDb, MetaCache);
         #{} ->
             %% Unreachable functions must be removed so that opt_continue/4
             %% won't process them and potentially taint the argument types of
@@ -96,9 +106,9 @@ opt_start_1([Id | Ids], ArgDb, StMap0, FuncDb0) ->
             StMap = maps:remove(Id, StMap0),
             FuncDb = maps:remove(Id, FuncDb0),
 
-            opt_start_1(Ids, ArgDb, StMap, FuncDb)
+            opt_start_1(Ids, ArgDb, StMap, FuncDb, MetaCache)
     end;
-opt_start_1([], _CommittedArgs, StMap, FuncDb) ->
+opt_start_1([], _CommittedArgs, StMap, FuncDb, _MetaCache) ->
     {StMap, FuncDb}.
 
 %%
@@ -124,12 +134,13 @@ opt_start_1([], _CommittedArgs, StMap, FuncDb) ->
 -record(sig_st,
         { wl = wl_new() :: worklist(),
           committed = #{} :: #{ func_id() => [type()] },
-          updates = #{} :: #{ func_id() => [type()] }}).
+          updates = #{} :: #{ func_id() => [type()] },
+          meta_cache = #{} :: meta_cache()}).
 
 signatures(StMap, FuncDb0) ->
     State0 = init_sig_st(StMap, FuncDb0),
     {State, FuncDb} = signatures_1(StMap, FuncDb0, State0),
-    {State#sig_st.committed, FuncDb}.
+    {State#sig_st.committed, State#sig_st.meta_cache, FuncDb}.
 
 signatures_1(StMap, FuncDb0, State0) ->
     case wl_next(State0#sig_st.wl) of
@@ -144,7 +155,17 @@ signatures_1(StMap, FuncDb0, State0) ->
             {State0, FuncDb0}
     end.
 
-sig_function(Id, StMap, State0, FuncDb0) ->
+sig_function(Id, StMap, State, FuncDb) ->
+    try
+        do_sig_function(Id, StMap, State, FuncDb)
+    catch
+        Class:Error:Stack ->
+            #b_local{name=#b_literal{val=Name},arity=Arity} = Id,
+            io:fwrite("Function: ~w/~w\n", [Name,Arity]),
+            erlang:raise(Class, Error, Stack)
+    end.
+
+do_sig_function(Id, StMap, State0, FuncDb0) ->
     case sig_function_1(Id, StMap, State0, FuncDb0) of
         {false, false, State, FuncDb} ->
             %% No added work and the types are identical. Pop ourselves from
@@ -170,7 +191,8 @@ sig_function(Id, StMap, State0, FuncDb0) ->
                   end,
 
             #func_info{in=Cs0} = map_get(Id, FuncDb0),
-            Callers = [C || C <- Cs0, is_map_key(C, State#sig_st.updates)],
+            Updates = State#sig_st.updates,
+            Callers = [C || C <- Cs0, is_map_key(C, Updates)],
             Wl = wl_defer_list(Callers, Wl0),
 
             {State#sig_st{wl=Wl}, FuncDb}
@@ -186,17 +208,17 @@ sig_function_1(Id, StMap, State0, FuncDb) ->
                                               name=#b_literal{val=unknown},
                                               arity=0}]},
 
-    Ds = maps:from_list([{Var, FakeCall#b_set{dst=Var}} ||
-                            #b_var{}=Var <- Args]),
+    Ds = #{Var => FakeCall#b_set{dst=Var} ||
+             #b_var{}=Var <- Args},
 
     Ls = #{ ?EXCEPTION_BLOCK => {incoming, Ts},
             0 => {incoming, Ts} },
 
-    Meta = init_metadata(Id, Linear, Args),
+    {Meta, State2} = sig_init_metadata(Id, Linear, Args, State1),
 
     Wl0 = State1#sig_st.wl,
 
-    {State, SuccTypes} = sig_bs(Linear, Ds, Ls, FuncDb, #{}, [], Meta, State1),
+    {State, SuccTypes} = sig_bs(Linear, Ds, Ls, FuncDb, #{}, [], Meta, State2),
 
     WlChanged = wl_changed(Wl0, State#sig_st.wl),
     #{ Id := #func_info{succ_types=SuccTypes0}=Entry0 } = FuncDb,
@@ -207,6 +229,17 @@ sig_function_1(Id, StMap, State0, FuncDb) ->
         SuccTypes0 =/= SuccTypes ->
             Entry = Entry0#func_info{succ_types=SuccTypes},
             {true, WlChanged, State, FuncDb#{ Id := Entry }}
+    end.
+
+%% Get the metadata for a function. If this function has been analysed
+%% previously, retrieve the previously calculated metadata.
+sig_init_metadata(Id, Linear, Args, #sig_st{meta_cache=MetaCache} = State) ->
+    case MetaCache of
+        #{Id := Meta} ->
+            {Meta, State};
+        #{} ->
+            Meta = init_metadata(Id, Linear, Args),
+            {Meta, State#sig_st{meta_cache=MetaCache#{Id => Meta}}}
     end.
 
 sig_bs([{L, #b_blk{is=Is,last=Last0}} | Bs],
@@ -242,7 +275,7 @@ sig_is([#b_set{op=call,
                dst=Dst}=I0 | Is],
        Ts0, Ds0, Ls, Fdb, Sub, State0) ->
     Args = simplify_args(Args0, Ts0, Sub),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
 
     [_ | CallArgs] = Args,
     {I, State} = sig_local_call(I1, Callee, CallArgs, Ts0, Fdb, State0),
@@ -253,23 +286,20 @@ sig_is([#b_set{op=call,
 sig_is([#b_set{op=call,
                args=[#b_var{} | _]=Args0,
                dst=Dst}=I0 | Is],
-       Ts0, Ds0, Ls, Fdb, Sub, State) ->
+       Ts0, Ds0, Ls, Fdb, Sub, State0) ->
     Args = simplify_args(Args0, Ts0, Sub),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
 
-    [Fun | _] = Args,
-    I = case normalized_type(Fun, Ts0) of
-            #t_fun{type=Type} -> beam_ssa:add_anno(result_type, Type, I1);
-            _ -> I1
-        end,
+    {I, State} = sig_fun_call(I1, Args, Ts0, Ds0, Fdb, Sub, State0),
 
     Ts = update_types(I, Ts0, Ds0),
     Ds = Ds0#{ Dst => I },
     sig_is(Is, Ts, Ds, Ls, Fdb, Sub, State);
-sig_is([#b_set{op=make_fun,args=Args0,dst=Dst}=I0|Is],
-       Ts0, Ds0, Ls, Fdb, Sub0, State0) ->
+sig_is([#b_set{op=MakeFun,args=Args0,dst=Dst}=I0|Is],
+       Ts0, Ds0, Ls, Fdb, Sub0, State0) when MakeFun =:= make_fun;
+                                             MakeFun =:= old_make_fun ->
     Args = simplify_args(Args0, Ts0, Sub0),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
 
     {I, State} = sig_make_fun(I1, Ts0, Fdb, State0),
 
@@ -286,6 +316,33 @@ sig_is([I0 | Is], Ts0, Ds0, Ls, Fdb, Sub0, State) ->
 sig_is([], Ts, Ds, _Ls, _Fdb, Sub, State) ->
     {Ts, Ds, Sub, State}.
 
+sig_fun_call(I0, Args, Ts, Ds, Fdb, Sub, State0) ->
+    [Fun | CallArgs0] = Args,
+    FunType = normalized_type(Fun, Ts),
+    Arity = length(CallArgs0),
+
+    case {FunType, Ds} of
+        {_, #{ Fun := #b_set{op=make_fun,
+                             args=[#b_local{arity=TotalArity}=Callee | Env]} }}
+          when TotalArity =:= Arity + length(Env) ->
+            %% When a fun is used and defined in the same function, we can make
+            %% a direct call since the environment is still available.
+            CallArgs = CallArgs0 ++ simplify_args(Env, Ts, Sub),
+            I = I0#b_set{args=[Callee | CallArgs]},
+            sig_local_call(I, Callee, CallArgs, Ts, Fdb, State0);
+        {#t_fun{arity=Arity,target={Name,Arity}}, _} ->
+            %% When a fun lacks free variables, we can make a direct call even
+            %% when we don't know where it was defined.
+            Callee = #b_local{name=#b_literal{val=Name},
+                              arity=Arity},
+            I = I0#b_set{args=[Callee | CallArgs0]},
+            sig_local_call(I, Callee, CallArgs0, Ts, Fdb, State0);
+        {#t_fun{type=Type}, _} when Type =/= any ->
+            {beam_ssa:add_anno(result_type, Type, I0), State0};
+        _ ->
+            {I0, State0}
+    end.
+
 sig_local_call(I0, Callee, Args, Ts, Fdb, State) ->
     ArgTypes = argument_types(Args, Ts),
     I = sig_local_return(I0, Callee, ArgTypes, Fdb),
@@ -294,12 +351,13 @@ sig_local_call(I0, Callee, Args, Ts, Fdb, State) ->
 %% While it's impossible to tell which arguments a fun will be called with
 %% (someone could steal it through tracing and call it), we do know its free
 %% variables and can update their types as if this were a local call.
-sig_make_fun(#b_set{op=make_fun,
+sig_make_fun(#b_set{op=MakeFun,
                     args=[#b_local{}=Callee | FreeVars]}=I0,
-             Ts, Fdb, State) ->
+             Ts, Fdb, State) when MakeFun =:= make_fun;
+                                  MakeFun =:= old_make_fun ->
     ArgCount = Callee#b_local.arity - length(FreeVars),
 
-    FVTypes = [raw_type(FreeVar, Ts) || FreeVar <- FreeVars],
+    FVTypes = [concrete_type(FreeVar, Ts) || FreeVar <- FreeVars],
     ArgTypes = duplicate(ArgCount, any) ++ FVTypes,
 
     I = sig_local_return(I0, Callee, ArgTypes, Fdb),
@@ -321,11 +379,7 @@ init_sig_st(StMap, FuncDb) ->
              wl=wl_defer_list(Roots, wl_new()) }.
 
 init_sig_roots(FuncDb) ->
-    maps:fold(fun(Id, #func_info{exported=true}, Acc) ->
-                      [Id | Acc];
-                 (_, _, Acc) ->
-                      Acc
-              end, [], FuncDb).
+    [Id || Id := #func_info{exported=true} <- FuncDb].
 
 init_sig_args([Root | Roots], StMap, Acc) ->
     #opt_st{args=Args0} = map_get(Root, StMap),
@@ -381,14 +435,14 @@ opt_continue(Linear0, Args, Anno, FuncDb) when FuncDb =/= #{} ->
         #{ Id := #func_info{exported=true} } ->
             %% We can't infer the parameter types of exported functions, but
             %% running the pass again could still help other functions.
-            Ts = maps:from_list([{V,any} || #b_var{}=V <- Args]),
+            Ts = #{V => any || #b_var{}=V <- Args},
             opt_function(Linear0, Args, Id, Ts, FuncDb)
     end;
 opt_continue(Linear0, Args, Anno, _FuncDb) ->
     %% Module-level optimization is disabled, pass an empty function database
     %% so we only perform local optimizations.
     Id = get_func_id(Anno),
-    Ts = maps:from_list([{V,any} || #b_var{}=V <- Args]),
+    Ts = #{V => any || #b_var{}=V <- Args},
     {Linear, _} = opt_function(Linear0, Args, Id, Ts, #{}),
     {Linear, #{}}.
 
@@ -400,32 +454,52 @@ join_arg_types([], [], Ts) ->
 
 %%
 %% Optimizes a function based on the type information inferred by signatures/2
-%% and earlier runs of opt_function/5.
+%% and earlier runs of opt_function/5,6.
 %%
 %% This is pretty straightforward as it only walks through each function once,
 %% and because it only makes types narrower it's safe to optimize the functions
 %% in any order or not at all.
 %%
 
--spec opt_function(Linear, Args, Id, Ts, FuncDb) -> Result when
+opt_function(Linear, Args, Id, Ts, FuncDb) ->
+    MetaCache = #{},
+    opt_function(Linear, Args, Id, Ts, FuncDb, MetaCache).
+
+-spec opt_function(Linear, Args, Id, Ts, FuncDb, MetaCache) -> Result when
       Linear :: [{non_neg_integer(), beam_ssa:b_blk()}],
       Args :: [beam_ssa:b_var()],
       Id :: func_id(),
       Ts :: type_db(),
       FuncDb :: func_info_db(),
-      Result :: {Linear, FuncDb}.
-opt_function(Linear0, Args, Id, Ts, FuncDb0) ->
+      Result :: {Linear, FuncDb},
+      MetaCache :: meta_cache().
+opt_function(Linear, Args, Id, Ts, FuncDb, MetaCache) ->
+    try
+        do_opt_function(Linear, Args, Id, Ts, FuncDb, MetaCache)
+    catch
+        Class:Error:Stack ->
+            #b_local{name=#b_literal{val=Name},arity=Arity} = Id,
+            io:fwrite("Function: ~w/~w\n", [Name,Arity]),
+            erlang:raise(Class, Error, Stack)
+    end.
+
+do_opt_function(Linear0, Args, Id, Ts, FuncDb0, MetaCache) ->
     FakeCall = #b_set{op=call,args=[#b_remote{mod=#b_literal{val=unknown},
                                               name=#b_literal{val=unknown},
                                               arity=0}]},
 
-    Ds = maps:from_list([{Var, FakeCall#b_set{dst=Var}} ||
-                            #b_var{}=Var <- Args]),
+    Ds = #{Var => FakeCall#b_set{dst=Var} ||
+             #b_var{}=Var <- Args},
 
     Ls = #{ ?EXCEPTION_BLOCK => {incoming, Ts},
             0 => {incoming, Ts} },
 
-    Meta = init_metadata(Id, Linear0, Args),
+    Meta = case MetaCache of
+               #{Id := Meta0} ->
+                   Meta0;
+               #{} ->
+                   init_metadata(Id, Linear0, Args)
+           end,
 
     {Linear, FuncDb, SuccTypes} =
         opt_bs(Linear0, Ds, Ls, FuncDb0, #{}, [], Meta, []),
@@ -450,13 +524,15 @@ opt_bs([{L, #b_blk{is=Is0,last=Last0}=Blk0} | Bs],
             {incoming, Ts0} = Incoming,         %Assertion.
 
             {Is, Ts, Ds, Fdb, Sub} =
-            opt_is(Is0, Ts0, Ds0, Ls0, Fdb0, Sub0, Meta, []),
+                opt_is(Is0, Ts0, Ds0, Ls0, Fdb0, Sub0, Meta, []),
 
             Last1 = simplify_terminator(Last0, Ts, Ds, Sub),
             SuccTypes = update_success_types(Last1, Ts, Ds, Meta, SuccTypes0),
 
             UsedOnce = Meta#metadata.used_once,
-            {Last, Ls1} = update_successors(Last1, Ts, Ds, Ls0, UsedOnce),
+            {Last2, Ls1} = update_successors(Last1, Ts, Ds, Ls0, UsedOnce),
+
+            Last = opt_anno_types(Last2, Ts),
 
             Ls = Ls1#{ L := {outgoing, Ts} },           %Assertion.
 
@@ -474,7 +550,7 @@ opt_is([#b_set{op=call,
                dst=Dst}=I0 | Is],
        Ts0, Ds0, Ls, Fdb0, Sub, Meta, Acc) ->
     Args = simplify_args(Args0, Ts0, Sub),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
 
     [_ | CallArgs] = Args,
     {I, Fdb} = opt_local_call(I1, Callee, CallArgs, Dst, Ts0, Fdb0, Meta),
@@ -485,25 +561,21 @@ opt_is([#b_set{op=call,
 opt_is([#b_set{op=call,
                args=[#b_var{} | _]=Args0,
                dst=Dst}=I0 | Is],
-       Ts0, Ds0, Ls, Fdb, Sub, Meta, Acc) ->
+       Ts0, Ds0, Ls, Fdb0, Sub, Meta, Acc) ->
     Args = simplify_args(Args0, Ts0, Sub),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
 
-    [Fun | _] = Args,
-    I = case normalized_type(Fun, Ts0) of
-            #t_fun{type=Type} when Type =/= any ->
-                beam_ssa:add_anno(result_type, Type, I1);
-            _ ->
-                I1
-        end,
+    I1 = opt_anno_types(I0#b_set{args=Args}, Ts0),
+
+    {I, Fdb} = opt_fun_call(I1, Args, Ts0, Ds0, Fdb0, Sub, Meta),
 
     Ts = update_types(I, Ts0, Ds0),
     Ds = Ds0#{ Dst => I },
     opt_is(Is, Ts, Ds, Ls, Fdb, Sub, Meta, [I | Acc]);
-opt_is([#b_set{op=make_fun,args=Args0,dst=Dst}=I0|Is],
-       Ts0, Ds0, Ls, Fdb0, Sub0, Meta, Acc) ->
+opt_is([#b_set{op=MakeFun,args=Args0,dst=Dst}=I0|Is],
+       Ts0, Ds0, Ls, Fdb0, Sub0, Meta, Acc) when MakeFun =:= make_fun;
+                                                 MakeFun =:= old_make_fun ->
     Args = simplify_args(Args0, Ts0, Sub0),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
 
     {I, Fdb} = opt_make_fun(I1, Ts0, Fdb0, Meta),
 
@@ -512,13 +584,104 @@ opt_is([#b_set{op=make_fun,args=Args0,dst=Dst}=I0|Is],
     opt_is(Is, Ts, Ds, Ls, Fdb, Sub0, Meta, [I|Acc]);
 opt_is([I0 | Is], Ts0, Ds0, Ls, Fdb, Sub0, Meta, Acc) ->
     case simplify(I0, Ts0, Ds0, Ls, Sub0) of
-        {#b_set{}=I, Ts, Ds} ->
+        {#b_set{}=I1, Ts, Ds} ->
+            I = opt_anno_types(I1, Ts),
             opt_is(Is, Ts, Ds, Ls, Fdb, Sub0, Meta, [I | Acc]);
         Sub when is_map(Sub) ->
             opt_is(Is, Ts0, Ds0, Ls, Fdb, Sub, Meta, Acc)
     end;
 opt_is([], Ts, Ds, _Ls, Fdb, Sub, _Meta, Acc) ->
     {reverse(Acc), Ts, Ds, Fdb, Sub}.
+
+opt_anno_types(#b_set{op=Op,args=Args}=I, Ts) ->
+    case benefits_from_type_anno(Op, Args) of
+        true -> opt_anno_types_1(I, Args, Ts, 0, #{});
+        false -> I
+    end;
+opt_anno_types(#b_switch{anno=Anno0,arg=Arg}=I, Ts) ->
+    case concrete_type(Arg, Ts) of
+        any ->
+            I;
+        Type ->
+            Anno = Anno0#{arg_types => #{0 => Type}},
+            I#b_switch{anno=Anno}
+    end;
+opt_anno_types(I, _Ts) ->
+    I.
+
+opt_anno_types_1(I, [#b_var{}=Var | Args], Ts, Index, Acc0) ->
+    case concrete_type(Var, Ts) of
+        any ->
+            opt_anno_types_1(I, Args, Ts, Index + 1, Acc0);
+        Type ->
+            %% Note that we annotate arguments by their index instead of their
+            %% variable name, as they may be renamed by `beam_ssa_pre_codegen`.
+            Acc = Acc0#{ Index => Type },
+            opt_anno_types_1(I, Args, Ts, Index + 1, Acc)
+    end;
+opt_anno_types_1(I, [_Arg | Args], Ts, Index, Acc) ->
+    opt_anno_types_1(I, Args, Ts, Index + 1, Acc);
+opt_anno_types_1(#b_set{anno=Anno0}=I, [], _Ts, _Index, Acc) ->
+    case Anno0 of
+        #{ arg_types := Acc } ->
+            I;
+        #{ arg_types := _ } when Acc =:= #{} ->
+            %% One or more arguments have been simplified to literal values.
+            Anno = maps:remove(arg_types, Anno0),
+            I#b_set{anno=Anno};
+        #{} ->
+            Anno = Anno0#{ arg_types => Acc },
+            I#b_set{anno=Anno}
+    end.
+
+%% Only add type annotations when we know we'll make good use of them.
+benefits_from_type_anno({bif,_Op}, _Args) ->
+    true;
+benefits_from_type_anno(bs_create_bin, _Args) ->
+    true;
+benefits_from_type_anno(bs_match, _Args) ->
+    true;
+benefits_from_type_anno(is_tagged_tuple, _Args) ->
+    true;
+benefits_from_type_anno(call, [#b_var{} | _]) ->
+    true;
+benefits_from_type_anno({float,convert}, _Args) ->
+    %% Note: The {float,convert} instruction does not exist when
+    %% the main type optimizer pass is run. It is created and
+    %% annotated by ssa_opt_float1 in beam_ssa_opt, and can also
+    %% be annotated by opt_ranges/1.
+    true;
+benefits_from_type_anno(get_map_element, _Args) ->
+    true;
+benefits_from_type_anno(has_map_field, _Args) ->
+    true;
+benefits_from_type_anno(_Op, _Args) ->
+    false.
+
+opt_fun_call(#b_set{dst=Dst}=I0, [Fun | CallArgs0], Ts, Ds, Fdb, Sub, Meta) ->
+    FunType = normalized_type(Fun, Ts),
+    Arity = length(CallArgs0),
+    case {FunType, Ds} of
+        {_, #{ Fun := #b_set{op=make_fun,
+                             args=[#b_local{arity=TotalArity}=Callee | Env]} }}
+          when TotalArity =:= Arity + length(Env) ->
+            %% When a fun is used and defined in the same function, we can make
+            %% a direct call since the environment is still available.
+            CallArgs = CallArgs0 ++ simplify_args(Env, Ts, Sub),
+            I = I0#b_set{args=[Callee | CallArgs]},
+            opt_local_call(I, Callee, CallArgs, Dst, Ts, Fdb, Meta);
+        {#t_fun{arity=Arity,target={Name,Arity}}, _} ->
+            %% When a fun lacks free variables, we can make a direct call even
+            %% when we don't know where it was defined.
+            Callee = #b_local{name=#b_literal{val=Name},
+                              arity=Arity},
+            I = I0#b_set{args=[Callee | CallArgs0]},
+            opt_local_call(I, Callee, CallArgs0, Dst, Ts, Fdb, Meta);
+        {#t_fun{type=Type}, _} when Type =/= any ->
+            {beam_ssa:add_anno(result_type, Type, I0), Fdb};
+        _ ->
+            {I0, Fdb}
+    end.
 
 opt_local_call(I0, Callee, Args, Dst, Ts, Fdb, Meta) ->
     ArgTypes = argument_types(Args, Ts),
@@ -541,12 +704,13 @@ opt_local_call(I0, Callee, Args, Dst, Ts, Fdb, Meta) ->
     end.
 
 %% See sig_make_fun/4
-opt_make_fun(#b_set{op=make_fun,
+opt_make_fun(#b_set{op=MakeFun,
                     dst=Dst,
                     args=[#b_local{}=Callee | FreeVars]}=I0,
-             Ts, Fdb, Meta) ->
+             Ts, Fdb, Meta) when MakeFun =:= make_fun;
+                                 MakeFun =:= old_make_fun ->
     ArgCount = Callee#b_local.arity - length(FreeVars),
-    FVTypes = [raw_type(FreeVar, Ts) || FreeVar <- FreeVars],
+    FVTypes = [concrete_type(FreeVar, Ts) || FreeVar <- FreeVars],
     ArgTypes = duplicate(ArgCount, any) ++ FVTypes,
 
     I = opt_local_return(I0, Callee, ArgTypes, Fdb),
@@ -611,6 +775,165 @@ opt_finish_1([], [], Acc) ->
     Acc.
 
 %%%
+%%% This sub pass is run once after the main type sub pass
+%%% to annotate more instructions with integer ranges.
+%%%
+%%% The main type sub pass annotates certain instructions with
+%%% their types to help the JIT generate better code.
+%%%
+%%% Example:
+%%%
+%%%   foo(N0) ->
+%%%       N1 = N0 band 3,
+%%%       N = N1 + 1,        % N1 is in 0..3
+%%%       element(N,
+%%%            {zero,one,two,three}).
+%%%
+%%% The main type pass is able to figure out the range for `N1` but
+%%% not for `N`. The reason is that the type pass iterates until it
+%%% reaches a fixpoint. To guarantee that it will converge, ranges for
+%%% results must only be calculated for operations that retain or
+%%% shrink the ranges of their arguments.
+%%%
+%%% Therefore, to ensure convergence, the main type pass can only
+%%% safely calculate ranges for results of operations such as `and`,
+%%% `bsr`, and `rem`, but not for operations such as `+`, '-', '*',
+%%% and `bsl`.
+%%%
+%%% This sub pass will start from the types found in the annotations
+%%% and propagate them forward through arithmetic instructions within
+%%% the same function.
+%%%
+%%% For the example, this sub pass adds a new annotation for `N`:
+%%%
+%%%   foo(N0) ->
+%%%       N1 = N0 band 3,
+%%%       N = N1 + 1,        % N1 is in 0..3
+%%%       element(N,         % N is in 1..4
+%%%           {zero,one,two,three}).
+%%%
+%%% With a known range and known tuple size, the JIT is able to remove
+%%% all range checks for the `element/2` instruction.
+%%%
+
+-spec opt_ranges(Blocks0) -> Blocks when
+      Blocks0 :: beam_ssa:block_map(),
+      Blocks :: beam_ssa:block_map().
+
+opt_ranges(Blocks) ->
+    RPO = beam_ssa:rpo(Blocks),
+    Tss = #{0 => #{}, ?EXCEPTION_BLOCK => #{}},
+    ranges(RPO, Tss, Blocks).
+
+ranges([L|Ls], Tss0, Blocks0) ->
+    #b_blk{is=Is0} = Blk0 = map_get(L, Blocks0),
+    Ts0 = map_get(L, Tss0),
+    {Is,Ts} = ranges_is(Is0, Ts0, []),
+    Blk = Blk0#b_blk{is=Is},
+    Blocks = Blocks0#{L := Blk},
+    Tss = ranges_successors(beam_ssa:successors(Blk), Ts, Tss0),
+    ranges(Ls, Tss, Blocks);
+ranges([], _Tss, Blocks) -> Blocks.
+
+ranges_is([#b_set{op=Op,args=Args}=I0|Is], Ts0, Acc) ->
+    case benefits_from_type_anno(Op, Args) of
+        false ->
+            ranges_is(Is, Ts0, [I0|Acc]);
+        true ->
+            I = update_anno_types(I0, Ts0),
+            Ts = ranges_propagate_types(I, Ts0),
+            ranges_is(Is, Ts, [I|Acc])
+    end;
+ranges_is([], Ts, Acc) ->
+    {reverse(Acc),Ts}.
+
+ranges_successors([?EXCEPTION_BLOCK|Ls], Ts, Tss) ->
+    ranges_successors(Ls, Ts, Tss);
+ranges_successors([L|Ls], Ts0, Tss0) ->
+    case Tss0 of
+        #{L := Ts1} ->
+            Ts = join_types(Ts0, Ts1),
+            Tss = Tss0#{L := Ts},
+            ranges_successors(Ls, Ts0, Tss);
+        #{} ->
+            Tss = Tss0#{L => Ts0},
+            ranges_successors(Ls, Ts0, Tss)
+    end;
+ranges_successors([], _, Tss) -> Tss.
+
+ranges_propagate_types(#b_set{anno=Anno,op={bif,_}=Op,args=Args,dst=Dst}, Ts) ->
+    case Anno of
+        #{arg_types := ArgTypes0} ->
+            ArgTypes = ranges_get_arg_types(Args, 0, ArgTypes0),
+            case beam_call_types:arith_type(Op, ArgTypes) of
+                any -> Ts;
+                T -> Ts#{Dst => T}
+            end;
+        #{} ->
+            Ts
+    end;
+ranges_propagate_types(_, Ts) -> Ts.
+
+ranges_get_arg_types([#b_var{}|As], Index, ArgTypes) ->
+    case ArgTypes of
+        #{Index := Type} ->
+            [Type|ranges_get_arg_types(As, Index + 1, ArgTypes)];
+        #{} ->
+            [any|ranges_get_arg_types(As, Index + 1, ArgTypes)]
+    end;
+ranges_get_arg_types([#b_literal{val=Value}|As], Index, ArgTypes) ->
+    Type = beam_types:make_type_from_value(Value),
+    [Type|ranges_get_arg_types(As, Index + 1, ArgTypes)];
+ranges_get_arg_types([], _, _) -> [].
+
+update_anno_types(#b_set{anno=Anno,args=Args}=I, Ts) ->
+    ArgTypes1 = case Anno of
+                    #{arg_types := ArgTypes0} -> ArgTypes0;
+                    #{} -> #{}
+                end,
+    ArgTypes = update_anno_types_1(Args, Ts, 0, ArgTypes1),
+    case Anno of
+        #{arg_types := ArgTypes} ->
+            I;
+        #{} when map_size(ArgTypes) =/= 0 ->
+            I#b_set{anno=Anno#{arg_types => ArgTypes}};
+        #{} ->
+            I
+    end.
+
+update_anno_types_1([#b_var{}=V|As], Ts, Index, ArgTypes) ->
+    T0 = case ArgTypes of
+             #{Index := T00} -> T00;
+             #{} -> any
+         end,
+    T1 = case Ts of
+             #{V := T11} -> T11;
+             #{} -> any
+         end,
+    case beam_types:meet(T0, T1) of
+        any ->
+            update_anno_types_1(As, Ts, Index + 1, ArgTypes);
+        none ->
+            %% This instruction will never be reached. This happens when
+            %% compiling code such as the following:
+            %%
+            %%   f(X) when is_integer(X), 0 =< X, X < 64 ->
+            %%        (X = bnot X) + 1.
+            %%
+            %% The main type optimization sub pass will not find out
+            %% that `(X = bnot X)` will never succeed and that the `+`
+            %% operator is never executed, but this sub pass will.
+            %% This happens very rarely; therefore, don't bother removing
+            %% the unreachable instruction.
+            update_anno_types_1(As, Ts, Index + 1, ArgTypes);
+        T ->
+            update_anno_types_1(As, Ts, Index + 1, ArgTypes#{Index => T})
+    end;
+update_anno_types_1([_|As], Ts, Index, ArgTypes) ->
+    update_anno_types_1(As, Ts, Index + 1, ArgTypes);
+update_anno_types_1([], _, _, ArgTypes) -> ArgTypes.
+
+%%%
 %%% Optimization helpers
 %%%
 
@@ -625,19 +948,34 @@ simplify_terminator(#b_switch{arg=Arg0,fail=Fail,list=List0}=Sw0,
     List = [{Val,Lbl} || {Val,Lbl} <- List0, Lbl =/= Fail],
     case beam_ssa:normalize(Sw0#b_switch{arg=Arg,list=List}) of
         #b_switch{}=Sw ->
-            case beam_types:is_boolean_type(raw_type(Arg, Ts)) of
+            case beam_types:is_boolean_type(concrete_type(Arg, Ts)) of
                 true -> simplify_switch_bool(Sw, Ts, Ds, Sub);
                 false -> Sw
             end;
         #b_br{}=Br ->
             simplify_terminator(Br, Ts, Ds, Sub)
     end;
-simplify_terminator(#b_ret{arg=Arg}=Ret, Ts, Ds, Sub) ->
+simplify_terminator(#b_ret{arg=Arg,anno=Anno0}=Ret0, Ts, Ds, Sub) ->
     %% Reducing the result of a call to a literal (fairly common for 'ok')
     %% breaks tail call optimization.
-    case Ds of
-        #{ Arg := #b_set{op=call}} -> Ret;
-        #{} -> Ret#b_ret{arg=simplify_arg(Arg, Ts, Sub)}
+    Ret = case Ds of
+              #{ Arg := #b_set{op=call}} -> Ret0;
+              #{} -> Ret0#b_ret{arg=simplify_arg(Arg, Ts, Sub)}
+          end,
+    %% Annotate the terminator with the type it returns, skip the
+    %% annotation if nothing is yet known about the variable. The
+    %% annotation is used by the alias analysis pass.
+    Type = case {Arg, Ts} of
+               {#b_literal{},_} -> concrete_type(Arg, Ts);
+               {_,#{Arg:=_}} -> concrete_type(Arg, Ts);
+               _ -> any
+           end,
+    case Type of
+        any ->
+            Ret;
+        _ ->
+            Anno = Anno0#{ result_type => Type },
+            Ret#b_ret{anno=Anno}
     end.
 
 %%
@@ -663,12 +1001,12 @@ simplify(#b_set{op=phi,dst=Dst,args=Args0}=I0, Ts0, Ds0, Ls, Sub) ->
             Ds = Ds0#{ Dst => I },
             {I, Ts, Ds}
     end;
-simplify(#b_set{op={succeeded,Kind},args=[Arg],dst=Dst}=I0,
+simplify(#b_set{op={succeeded,Kind},args=[Arg],dst=Dst}=I,
          Ts0, Ds0, _Ls, Sub) ->
-    Type = case will_succeed(I0, Ts0, Ds0, Sub) of
+    Type = case will_succeed(I, Ts0, Ds0, Sub) of
                yes -> beam_types:make_atom(true);
                no -> beam_types:make_atom(false);
-               maybe -> beam_types:make_boolean()
+               'maybe' -> beam_types:make_boolean()
            end,
     case Type of
         #t_atom{elements=[true]} ->
@@ -686,14 +1024,13 @@ simplify(#b_set{op={succeeded,Kind},args=[Arg],dst=Dst}=I0,
             %% Note that we never simplify args; this instruction is specific
             %% to the operation being checked, and simplifying could break that
             %% connection.
-            I = beam_ssa:normalize(I0),
             Ts = Ts0#{ Dst => Type },
             Ds = Ds0#{ Dst => I },
             {I, Ts, Ds}
     end;
 simplify(#b_set{op=bs_match,dst=Dst,args=Args0}=I0, Ts0, Ds0, _Ls, Sub) ->
     Args = simplify_args(Args0, Ts0, Sub),
-    I1 = beam_ssa:normalize(I0#b_set{args=Args}),
+    I1 = I0#b_set{args=Args},
     I2 = case {Args0,Args} of
              {[_,_,_,#b_var{},_],[Type,Val,Flags,#b_literal{val=all},Unit]} ->
                  %% The size `all` is used for the size of the final binary
@@ -705,17 +1042,29 @@ simplify(#b_set{op=bs_match,dst=Dst,args=Args0}=I0, Ts0, Ds0, _Ls, Sub) ->
          end,
     %% We KNOW that simplify/2 will return a #b_set{} record when called with
     %% a bs_match instruction.
-    #b_set{} = I3 = simplify(I2, Ts0),
-    I = beam_ssa:normalize(I3),
+    #b_set{} = I = simplify(I2, Ts0),
     Ts = update_types(I, Ts0, Ds0),
+    Ds = Ds0#{ Dst => I },
+    {I, Ts, Ds};
+simplify(#b_set{op=bs_create_bin=Op,dst=Dst,args=Args0,anno=Anno}=I0,
+         Ts0, Ds0, _Ls, Sub) ->
+    Args = simplify_args(Args0, Ts0, Sub),
+    I1 = I0#b_set{args=Args},
+    #t_bitstring{size_unit=Unit} = T = type(Op, Args, Anno, Ts0, Ds0),
+    I2 = case T of
+             #t_bitstring{appendable=true} ->
+                 beam_ssa:add_anno(result_type, T, I1);
+             _ -> I1
+         end,
+    I = beam_ssa:add_anno(unit, Unit, I2),
+    Ts = Ts0#{ Dst => T },
     Ds = Ds0#{ Dst => I },
     {I, Ts, Ds};
 simplify(#b_set{dst=Dst,args=Args0}=I0, Ts0, Ds0, _Ls, Sub) ->
     Args = simplify_args(Args0, Ts0, Sub),
     I1 = beam_ssa:normalize(I0#b_set{args=Args}),
-    case simplify(I1, Ts0) of
-        #b_set{}=I2 ->
-            I = beam_ssa:normalize(I2),
+    case simplify(I1, Ts0, Ds0) of
+        #b_set{}=I ->
             Ts = update_types(I, Ts0, Ds0),
             Ds = Ds0#{ Dst => I },
             {I, Ts, Ds};
@@ -725,54 +1074,67 @@ simplify(#b_set{dst=Dst,args=Args0}=I0, Ts0, Ds0, _Ls, Sub) ->
             Sub#{ Dst => Var }
     end.
 
-simplify(#b_set{op={bif,'and'},args=Args}=I, Ts) ->
+simplify(#b_set{op={bif,'band'},args=Args}=I, Ts, Ds) ->
+    case normalized_types(Args, Ts) of
+        [#t_integer{elements=R},#t_integer{elements={M,M}}] ->
+            case beam_bounds:is_masking_redundant(R, M) of
+                true ->
+                    %% M is mask that will have no effect.
+                    hd(Args);
+                false ->
+                    eval_bif(I, Ts, Ds)
+            end;
+        [_,_] ->
+            eval_bif(I, Ts, Ds)
+    end;
+simplify(#b_set{op={bif,'and'},args=Args}=I, Ts, Ds) ->
     case is_safe_bool_op(Args, Ts) of
         true ->
             case Args of
                 [_,#b_literal{val=false}=Res] -> Res;
                 [Res,#b_literal{val=true}] -> Res;
-                _ -> eval_bif(I, Ts)
+                _ -> eval_bif(I, Ts, Ds)
             end;
         false ->
             I
     end;
-simplify(#b_set{op={bif,'or'},args=Args}=I, Ts) ->
+simplify(#b_set{op={bif,'or'},args=Args}=I, Ts, Ds) ->
     case is_safe_bool_op(Args, Ts) of
         true ->
             case Args of
                 [Res,#b_literal{val=false}] -> Res;
                 [_,#b_literal{val=true}=Res] -> Res;
-                _ -> eval_bif(I, Ts)
+                _ -> eval_bif(I, Ts, Ds)
             end;
         false ->
             I
     end;
-simplify(#b_set{op={bif,element},args=[#b_literal{val=Index},Tuple]}=I0, Ts) ->
+simplify(#b_set{op={bif,element},args=[#b_literal{val=Index},Tuple]}=I0, Ts, Ds) ->
     case normalized_type(Tuple, Ts) of
         #t_tuple{size=Size} when is_integer(Index),
                                  1 =< Index,
                                  Index =< Size ->
             I = I0#b_set{op=get_tuple_element,
                          args=[Tuple,#b_literal{val=Index-1}]},
-            simplify(I, Ts);
+            simplify(I, Ts, Ds);
         _ ->
-            eval_bif(I0, Ts)
+            eval_bif(I0, Ts, Ds)
     end;
-simplify(#b_set{op={bif,hd},args=[List]}=I, Ts) ->
+simplify(#b_set{op={bif,hd},args=[List]}=I, Ts, Ds) ->
     case normalized_type(List, Ts) of
         #t_cons{} ->
             I#b_set{op=get_hd};
         _ ->
-            eval_bif(I, Ts)
+            eval_bif(I, Ts, Ds)
     end;
-simplify(#b_set{op={bif,tl},args=[List]}=I, Ts) ->
+simplify(#b_set{op={bif,tl},args=[List]}=I, Ts, Ds) ->
     case normalized_type(List, Ts) of
         #t_cons{} ->
             I#b_set{op=get_tl};
         _ ->
-            eval_bif(I, Ts)
+            eval_bif(I, Ts, Ds)
     end;
-simplify(#b_set{op={bif,size},args=[Term]}=I, Ts) ->
+simplify(#b_set{op={bif,size},args=[Term]}=I, Ts, Ds) ->
     case normalized_type(Term, Ts) of
         #t_tuple{} ->
             simplify(I#b_set{op={bif,tuple_size}}, Ts);
@@ -780,63 +1142,59 @@ simplify(#b_set{op={bif,size},args=[Term]}=I, Ts) ->
             %% If the bitstring is a binary (the size in bits is
             %% evenly divisibly by 8), byte_size/1 gives
             %% the same result as size/1.
-            simplify(I#b_set{op={bif,byte_size}}, Ts);
+            simplify(I#b_set{op={bif,byte_size}}, Ts, Ds);
         _ ->
-            eval_bif(I, Ts)
+            eval_bif(I, Ts, Ds)
     end;
-simplify(#b_set{op={bif,tuple_size},args=[Term]}=I, Ts) ->
+simplify(#b_set{op={bif,tuple_size},args=[Term]}=I, Ts, _Ds) ->
     case normalized_type(Term, Ts) of
         #t_tuple{size=Size,exact=true} ->
             #b_literal{val=Size};
         _ ->
             I
     end;
-simplify(#b_set{op={bif,is_function},args=[Fun,#b_literal{val=Arity}]}=I, Ts)
-  when is_integer(Arity), Arity >= 0 ->
-    case normalized_type(Fun, Ts) of
-        #t_fun{arity=any} ->
-            I;
-        #t_fun{arity=Arity} ->
-            #b_literal{val=true};
-        any ->
-            I;
-        _ ->
-            #b_literal{val=false}
-    end;
-simplify(#b_set{op={bif,is_map_key},args=[Key,Map]}=I, Ts) ->
+simplify(#b_set{op={bif,is_map_key},args=[Key,Map]}=I, Ts, _Ds) ->
     case normalized_type(Map, Ts) of
         #t_map{} ->
             I#b_set{op=has_map_field,args=[Map,Key]};
         _ ->
             I
     end;
-simplify(#b_set{op={bif,Op0},args=Args}=I, Ts) when Op0 =:= '==';
-                                                    Op0 =:= '/=' ->
-    Types = normalized_types(Args, Ts),
-    EqEq0 = case {beam_types:meet(Types),beam_types:join(Types)} of
-                {none,any} -> true;
-                {#t_integer{},#t_integer{}} -> true;
-                {#t_float{},#t_float{}} -> true;
-                {#t_bitstring{},_} -> true;
-                {#t_atom{},_} -> true;
-                {_,_} -> false
-            end,
-    EqEq = EqEq0 orelse any_non_numeric_argument(Args, Ts),
+simplify(#b_set{op={bif,Op0},args=[A,B]}=I, Ts, Ds) when Op0 =:= '==';
+                                                         Op0 =:= '/=' ->
+    EqEq = case {number_type(A, Ts),number_type(B, Ts)} of
+               {none,_} ->
+                   %% The LHS does not contain any numbers. A strict
+                   %% test is always safe.
+                   true;
+               {_,none} ->
+                   %% The RHS does not contain any numbers. A strict
+                   %% test is always safe.
+                   true;
+               {#t_integer{},#t_integer{}} ->
+                   %% Both side contain integers but no floats.
+                   true;
+               {#t_float{},#t_float{}} ->
+                   %% Both side contain floats but no integers.
+                   true;
+               {_,_} ->
+                   false
+           end,
     case EqEq of
         true ->
             Op = case Op0 of
                      '==' -> '=:=';
                      '/=' -> '=/='
                  end,
-            simplify(I#b_set{op={bif,Op}}, Ts);
+            simplify(I#b_set{op={bif,Op}}, Ts, Ds);
         false ->
-            eval_bif(I, Ts)
+            eval_bif(I, Ts, Ds)
     end;
-simplify(#b_set{op={bif,'=:='},args=[Same,Same]}, _Ts) ->
+simplify(#b_set{op={bif,'=:='},args=[Same,Same]}, _Ts, _Ds) ->
     #b_literal{val=true};
-simplify(#b_set{op={bif,'=:='},args=[LHS,RHS]}=I, Ts) ->
-    LType = raw_type(LHS, Ts),
-    RType = raw_type(RHS, Ts),
+simplify(#b_set{op={bif,'=:='},args=[LHS,RHS]}=I, Ts, Ds) ->
+    LType = concrete_type(LHS, Ts),
+    RType = concrete_type(RHS, Ts),
     case beam_types:meet(LType, RType) of
         none ->
             #b_literal{val=false};
@@ -856,22 +1214,44 @@ simplify(#b_set{op={bif,'=:='},args=[LHS,RHS]}=I, Ts) ->
                     %% comparison operator (such as >=) that can be
                     %% translated to test instruction, this
                     %% optimization will eliminate one instruction.
-                    simplify(I#b_set{op={bif,'not'},args=[LHS]}, Ts);
+                    simplify(I#b_set{op={bif,'not'},args=[LHS]}, Ts, Ds);
                 {_,_} ->
-                    eval_bif(I, Ts)
+                    eval_bif(I, Ts, Ds)
             end
     end;
-simplify(#b_set{op={bif,Op},args=Args}=I, Ts) ->
+simplify(#b_set{op={bif,is_list},args=[Src]}=I0, Ts, Ds) ->
+    case concrete_type(Src, Ts) of
+        #t_union{list=#t_cons{}} ->
+            I = I0#b_set{op=is_nonempty_list,args=[Src]},
+            %% We might need to convert back to is_list/1 if it turns
+            %% out that this instruction is followed by a #b_ret{}
+            %% terminator.
+            beam_ssa:add_anno(was_bif_is_list, true, I);
+        #t_union{list=nil} ->
+            I0#b_set{op={bif,'=:='},args=[Src,#b_literal{val=[]}]};
+        _ ->
+            eval_bif(I0, Ts, Ds)
+    end;
+simplify(#b_set{op={bif,Op},args=[Term]}=I, Ts, _Ds)
+  when Op =:= trunc; Op =:= round; Op =:= ceil; Op =:= floor ->
+    case normalized_type(Term, Ts) of
+        #t_integer{} -> Term;
+        _ -> I
+    end;
+simplify(#b_set{op={bif,Op},args=Args}=I, Ts, Ds) ->
     Types = normalized_types(Args, Ts),
     case is_float_op(Op, Types) of
         false ->
-            eval_bif(I, Ts);
+            eval_bif(I, Ts, Ds);
         true ->
             AnnoArgs = [anno_float_arg(A) || A <- Types],
-            eval_bif(beam_ssa:add_anno(float_op, AnnoArgs, I), Ts)
+            eval_bif(beam_ssa:add_anno(float_op, AnnoArgs, I), Ts, Ds)
     end;
+simplify(I, Ts, _Ds) ->
+    simplify(I, Ts).
+
 simplify(#b_set{op=bs_extract,args=[Ctx]}=I, Ts) ->
-    case raw_type(Ctx, Ts) of
+    case concrete_type(Ctx, Ts) of
         #t_bitstring{} ->
             %% This is a bs_match that has been rewritten as a bs_get_tail;
             %% just return the input as-is.
@@ -885,7 +1265,7 @@ simplify(#b_set{op=bs_match,
                       #b_literal{val=OpUnit}]}=I, Ts) ->
     %% <<..., Foo/binary>> can be rewritten as <<..., Foo/bits>> if we know the
     %% unit is correct.
-    #t_bs_context{tail_unit=CtxUnit} = raw_type(Ctx, Ts),
+    #t_bs_context{tail_unit=CtxUnit} = concrete_type(Ctx, Ts),
     if
         CtxUnit rem OpUnit =:= 0 ->
             I#b_set{op=bs_get_tail,args=[Ctx]};
@@ -893,7 +1273,7 @@ simplify(#b_set{op=bs_match,
             I
     end;
 simplify(#b_set{op=bs_start_match,args=[#b_literal{val=new}, Src]}=I, Ts) ->
-    case raw_type(Src, Ts) of
+    case concrete_type(Src, Ts) of
         #t_bs_context{} ->
             I#b_set{op=bs_start_match,args=[#b_literal{val=resume}, Src]};
         _ ->
@@ -920,7 +1300,51 @@ simplify(#b_set{op=is_nonempty_list,args=[Src]}=I, Ts) ->
     end;
 simplify(#b_set{op=is_tagged_tuple,
                 args=[Src,#b_literal{val=Size},#b_literal{}=Tag]}=I, Ts) ->
-    simplify_is_record(I, normalized_type(Src, Ts), Size, Tag, Ts);
+    case concrete_type(Src, Ts) of
+        #t_union{tuple_set=TupleSet}=U ->
+            %% A union of different types, one of them (probably)
+            %% a tuple. Dig out the tuple type from the union and
+            %% find out whether it will match.
+            TupleOnlyType = #t_union{tuple_set=TupleSet},
+            TT = beam_types:normalize(TupleOnlyType),
+            case simplify_is_record(I, TT, Size, Tag, Ts) of
+                #b_literal{val=true} ->
+                    %% The tuple part of the union will always match.
+                    %% A simple is_tuple/1 test will be sufficient to
+                    %% distinguish the tuple from the other types in
+                    %% the union.
+                    I#b_set{op={bif,is_tuple},args=[Src]};
+                #b_literal{val=false}=False ->
+                    %% Src is never a tuple.
+                    False;
+                _ ->
+                    %% More than one type of tuple can match. Find out
+                    %% whether the possible tuples can be
+                    %% distinguished by size.
+                    TupleArityType = #t_tuple{size=Size,exact=true},
+                    TTT = beam_types:meet(TupleArityType, TupleOnlyType),
+                    case simplify_is_record(I, TTT, Size, Tag, Ts) of
+                        #b_literal{val=true} ->
+                            %% The possible tuple types have different sizes.
+                            %% Example: {ok, _} | {error, _, _}.
+                            case beam_types:normalize(U) of
+                                #t_tuple{} ->
+                                    %% Src is known to be a tuple, so it will
+                                    %% be sufficient to test the arity.
+                                    beam_ssa:add_anno(constraints, arity, I);
+                                any ->
+                                    %% Src might not be a tuple. Must
+                                    %% test for a tuple with a given
+                                    %% arity.
+                                    beam_ssa:add_anno(constraints, tuple_arity, I)
+                            end;
+                        _ ->
+                            I
+                    end
+            end;
+        SimpleType ->
+            simplify_is_record(I, SimpleType, Size, Tag, Ts)
+    end;
 simplify(#b_set{op=put_list,args=[#b_literal{val=H},
                                   #b_literal{val=T}]}, _Ts) ->
     #b_literal{val=[H|T]};
@@ -929,18 +1353,11 @@ simplify(#b_set{op=put_tuple,args=Args}=I, _Ts) ->
         none -> I;
         List -> #b_literal{val=list_to_tuple(List)}
     end;
-simplify(#b_set{op=wait_timeout,args=[#b_literal{val=0}]}, _Ts) ->
-    #b_literal{val=true};
-simplify(#b_set{op=call,args=[#b_remote{}=Rem|Args]}=I, _Ts) ->
+simplify(#b_set{op=call,args=[#b_remote{}=Rem|Args]}=I, Ts) ->
     case Rem of
         #b_remote{mod=#b_literal{val=Mod},
                   name=#b_literal{val=Name}} ->
-            case erl_bifs:is_pure(Mod, Name, length(Args)) of
-                true ->
-                    simplify_remote_call(Mod, Name, Args, I);
-                false ->
-                    I
-            end;
+            simplify_remote_call(Mod, Name, Args, Ts, I);
         #b_remote{} ->
             I
     end;
@@ -954,7 +1371,41 @@ simplify(#b_set{op=call,args=[#b_literal{val=Fun}|Args]}=I, _Ts)
                     name=#b_literal{val=F},
                     arity=A},
     I#b_set{args=[Rem|Args]};
-simplify(I, _Ts) -> I.
+simplify(#b_set{op=peek_message,args=[#b_literal{val=Val}]}=I, _Ts) ->
+    case Val of
+        none ->
+            I;
+        _ ->
+            %% A potential receive marker has been substituted with a literal,
+            %% which means it can't actually be a marker on this path. Replace
+            %% it with a normal receive.
+            I#b_set{args=[#b_literal{val=none}]}
+    end;
+simplify(#b_set{op=recv_marker_clear,args=[#b_literal{}]}, _Ts) ->
+    %% Not a receive marker: see the 'peek_message' case.
+    #b_literal{val=none};
+simplify(#b_set{op=update_tuple,args=[Src | Updates]}=I, Ts) ->
+    case {normalized_type(Src, Ts), update_tuple_highest_index(Updates, -1)} of
+        {#t_tuple{exact=true,size=Size}, Highest} when Highest =< Size,
+                                                       Size < 512 ->
+            Args = [#b_literal{val=reuse},
+                    #b_literal{val=Size},
+                    Src | Updates],
+            simplify(I#b_set{op=update_record,args=Args}, Ts);
+        {_, _} ->
+            I
+    end;
+simplify(#b_set{op=update_record,args=[Hint0, Size, Src | Updates0]}=I, Ts) ->
+    case simplify_update_record(Src, Hint0, Updates0, Ts) of
+        {changed, _, []} ->
+            Src;
+        {changed, Hint, [_|_]=Updates} ->
+            I#b_set{op=update_record,args=[Hint, Size, Src | Updates]};
+        unchanged ->
+            I
+    end;
+simplify(I, _Ts) ->
+    I.
 
 will_succeed(#b_set{args=[Src]}, Ts, Ds, Sub) ->
     case {Ds, Ts} of
@@ -962,7 +1413,10 @@ will_succeed(#b_set{args=[Src]}, Ts, Ds, Sub) ->
             %% Checked operation never returns.
             no;
         {#{ Src := I }, #{}} ->
-            will_succeed_1(I, Src, Ts, Sub);
+            %% There can't be any substitution because the instruction
+            %% is still there.
+            false = is_map_key(Src, Sub),        %Assertion.
+            will_succeed_1(I, Src, Ts);
         {#{}, #{}} ->
             %% The checked instruction has been removed and substituted, so we
             %% can assume it always succeeds.
@@ -970,10 +1424,10 @@ will_succeed(#b_set{args=[Src]}, Ts, Ds, Sub) ->
             yes
     end.
 
-will_succeed_1(#b_set{op=bs_get_tail}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=bs_get_tail}, _Src, _Ts) ->
     yes;
-will_succeed_1(#b_set{op=bs_start_match,args=[_, Arg]}, _Src, Ts, _Sub) ->
-    ArgType = raw_type(Arg, Ts),
+will_succeed_1(#b_set{op=bs_start_match,args=[_, Arg]}, _Src, Ts) ->
+    ArgType = concrete_type(Arg, Ts),
     case beam_types:is_bs_matchable_type(ArgType) of
         true ->
             %% In the future we may be able to remove this instruction
@@ -984,94 +1438,112 @@ will_succeed_1(#b_set{op=bs_start_match,args=[_, Arg]}, _Src, Ts, _Sub) ->
             %% Is it at all possible to match?
             case beam_types:meet(ArgType, #t_bs_matchable{}) of
                 none -> no;
-                _ -> maybe
+                _ -> 'maybe'
             end
     end;
 
-will_succeed_1(#b_set{op={bif,Bif},args=BifArgs}, _Src, Ts, _Sub) ->
-    ArgTypes = normalized_types(BifArgs, Ts),
+will_succeed_1(#b_set{op={bif,Bif},args=BifArgs}, _Src, Ts) ->
+    ArgTypes = concrete_types(BifArgs, Ts),
     beam_call_types:will_succeed(erlang, Bif, ArgTypes);
 will_succeed_1(#b_set{op=call,
                       args=[#b_remote{mod=#b_literal{val=Mod},
-                            name=#b_literal{val=Func}} |
+                                      name=#b_literal{val=Func}} |
                             CallArgs]},
-               _Src, Ts, _Sub) ->
-            ArgTypes = normalized_types(CallArgs, Ts),
-            beam_call_types:will_succeed(Mod, Func, ArgTypes);
+               _Src, Ts) ->
+    ArgTypes = concrete_types(CallArgs, Ts),
+    beam_call_types:will_succeed(Mod, Func, ArgTypes);
 
-will_succeed_1(#b_set{op=get_hd}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=get_hd}, _Src, _Ts) ->
     yes;
-will_succeed_1(#b_set{op=get_tl}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=get_tl}, _Src, _Ts) ->
     yes;
-will_succeed_1(#b_set{op=has_map_field}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=has_map_field}, _Src, _Ts) ->
     yes;
-will_succeed_1(#b_set{op=get_tuple_element}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=get_tuple_element}, _Src, _Ts) ->
     yes;
-will_succeed_1(#b_set{op=put_tuple}, _Src, _Ts, _Sub) ->
+will_succeed_1(#b_set{op=update_tuple,args=[Tuple | Updates]}, _Src, Ts) ->
+    TupleType = concrete_type(Tuple, Ts),
+    HighestIndex = update_tuple_highest_index(Updates, -1),
+    Args = [beam_types:make_integer(HighestIndex), TupleType, any],
+    beam_call_types:will_succeed(erlang, setelement, Args);
+will_succeed_1(#b_set{op=update_record}, _Src, _Ts) ->
     yes;
 
-%% Remove the success branch from binary operations with invalid
-%% sizes. That will remove subsequent bs_put and bs_match instructions,
-%% which are probably not loadable.
-will_succeed_1(#b_set{op=bs_add,args=[_,#b_literal{val=Size},_]},
-               _Src, _Ts, _Sub) ->
-    if
-        is_integer(Size), Size >= 0 ->
-            maybe;
-        true ->
-            no
-    end;
-will_succeed_1(#b_set{op=bs_init,
-                      args=[#b_literal{val=new},#b_literal{val=Size},_Unit]},
-               _Src, _Ts, _Sub) ->
-    if
-        is_integer(Size), Size >= 0 ->
-            maybe;
-        true ->
-            no
-    end;
-will_succeed_1(#b_set{op=bs_init,
-                      args=[#b_literal{},_,#b_literal{val=Size},_Unit]},
-               _Src, _Ts, _Sub) ->
-    if
-        is_integer(Size), Size >= 0 ->
-            maybe;
-        true ->
-            no
-    end;
+will_succeed_1(#b_set{op=bs_create_bin}, _Src, _Ts) ->
+    %% Intentionally don't try to determine whether construction will
+    %% fail. Construction is unlikely to fail, and if it fails, the
+    %% instruction in the runtime system will generate an exception with
+    %% better information of what went wrong.
+    'maybe';
 will_succeed_1(#b_set{op=bs_match,
                       args=[#b_literal{val=Type},_,_,#b_literal{val=Size},_]},
-               _Src, _Ts, _Sub) ->
+               _Src, _Ts) ->
     if
         is_integer(Size), Size >= 0 ->
-            maybe;
+            'maybe';
         Type =:= binary, Size =:= all ->
             %% `all` is a legal size for binary segments at the end of
             %% a binary pattern.
-            maybe;
+            'maybe';
         true ->
             %% Invalid size. Matching will fail.
             no
     end;
 
 %% These operations may fail even though we know their return value on success.
-will_succeed_1(#b_set{op=call}, _Src, _Ts, _Sub) ->
-    maybe;
-will_succeed_1(#b_set{op=get_map_element}, _Src, _Ts, _Sub) ->
-    maybe;
+will_succeed_1(#b_set{op=call}, _Src, _Ts) ->
+    'maybe';
+will_succeed_1(#b_set{op=get_map_element}, _Src, _Ts) ->
+    'maybe';
+will_succeed_1(#b_set{op=wait_timeout}, _Src, _Ts) ->
+    %% It is essential to keep the {succeeded,body} instruction to
+    %% ensure that the failure edge, which potentially leads to a
+    %% landingpad, is preserved. If the failure edge is removed, a Y
+    %% register holding a `try` tag could be reused prematurely.
+    'maybe';
 
-will_succeed_1(#b_set{op=wait}, _Src, _Ts, _Sub) ->
-    no;
+will_succeed_1(#b_set{}, _Src, _Ts) ->
+    'maybe'.
 
-will_succeed_1(#b_set{}, Src, Ts, Sub) ->
-    case simplify_arg(Src, Ts, Sub) of
-        #b_var{}=Src ->
-            %% No substitution; might fail at runtime.
-            maybe;
-        _ ->
-            %% Substituted with literal or other variable; always succeeds.
-            yes
+simplify_update_record(Src, Hint0, Updates, Ts) ->
+    case sur_1(Updates, concrete_type(Src, Ts), Ts, Hint0, []) of
+        {Hint0, []} ->
+            unchanged;
+        {Hint, Skipped} ->
+            {changed, Hint, sur_skip(Updates, Skipped)}
     end.
+
+sur_1([Index, Arg | Updates], RecordType, Ts, Hint, Skipped) ->
+    FieldType = concrete_type(Arg, Ts),
+    IndexType = concrete_type(Index, Ts),
+    Singleton = beam_types:is_singleton_type(FieldType),
+    case beam_call_types:types(erlang, element, [IndexType, RecordType]) of
+        {FieldType, _, _} when Singleton ->
+            %% We can skip setting fields when we KNOW that they already have
+            %% the value we're trying to set.
+            sur_1(Updates, RecordType, Ts, Hint, Skipped ++ [Index]);
+        {ElementType, _, _} ->
+            case beam_types:meet(FieldType, ElementType) of
+                none ->
+                    %% The element at the index can never have the same value
+                    %% as the value we're trying to set. Tell the instruction
+                    %% not to bother checking whether it's possible to reuse
+                    %% the source.
+                    sur_1(Updates, RecordType, Ts,
+                          #b_literal{val=copy}, Skipped);
+                _ ->
+                    sur_1(Updates, RecordType, Ts, Hint, Skipped)
+            end
+    end;
+sur_1([], _RecordType, _Ts, Hint, Skipped) ->
+    {Hint, Skipped}.
+
+sur_skip([Index, _Arg | Updates], [Index | Skipped]) ->
+    sur_skip(Updates, Skipped);
+sur_skip([Index, Arg | Updates], Skipped) ->
+    [Index, Arg | sur_skip(Updates, Skipped)];
+sur_skip([], []) ->
+    [].
 
 simplify_is_record(I, #t_tuple{exact=Exact,
                                size=Size,
@@ -1083,9 +1555,9 @@ simplify_is_record(I, #t_tuple{exact=Exact,
                    {ok, _} -> no;
                    error ->
                        %% Is it at all possible for the tag to match?
-                       case beam_types:meet(raw_type(RecTag, Ts), TagType) of
+                       case beam_types:meet(concrete_type(RecTag, Ts), TagType) of
                            none -> no;
-                           _ -> maybe
+                           _ -> 'maybe'
                        end
                end,
     if
@@ -1113,7 +1585,7 @@ simplify_switch_bool(#b_switch{arg=B,fail=Fail,list=List0}, Ts, Ds, Sub) ->
 simplify_not(#b_br{bool=#b_var{}=V,succ=Succ,fail=Fail}=Br0, Ts, Ds, Sub) ->
     case Ds of
         #{V:=#b_set{op={bif,'not'},args=[Bool]}} ->
-            case beam_types:is_boolean_type(raw_type(Bool, Ts)) of
+            case beam_types:is_boolean_type(concrete_type(Bool, Ts)) of
                 true ->
                     Br = Br0#b_br{bool=Bool,succ=Fail,fail=Succ},
                     simplify_terminator(Br, Ts, Ds, Sub);
@@ -1132,7 +1604,7 @@ simplify_phi_args([{Arg0, From} | Rest], Ls, Sub, Type0, Args) ->
             {outgoing, Ts} = Outgoing,          %Assertion.
 
             Arg = simplify_arg(Arg0, Ts, Sub),
-            Type = beam_types:join(raw_type(Arg, Ts), Type0),
+            Type = beam_types:join(concrete_type(Arg, Ts), Type0),
             Phi = {Arg, From},
 
             simplify_phi_args(Rest, Ls, Sub, Type, [Phi | Args]);
@@ -1154,21 +1626,23 @@ phi_all_same_1([], _Arg) ->
 phi_all_same_1(_Phis, _Arg) ->
     false.
 
-%% Simplify a remote call to a pure BIF.
-simplify_remote_call(erlang, '++', [#b_literal{val=[]},Tl], _I) ->
+simplify_remote_call(erlang, throw, [Term], Ts, I) ->
+    %% Annotate `throw` instructions with the type of their thrown term,
+    %% helping `beam_ssa_throw` optimize non-local returns.
+    Type = normalized_type(Term, Ts),
+    beam_ssa:add_anno(thrown_type, Type, I);
+simplify_remote_call(erlang, '++', [#b_literal{val=[]},Tl], _Ts, _I) ->
     Tl;
-simplify_remote_call(erlang, setelement,
-                     [#b_literal{val=Pos},
-                      #b_literal{val=Tuple},
-                      #b_var{}=Value], I)
-  when is_integer(Pos), 1 =< Pos, Pos =< tuple_size(Tuple) ->
-    %% Position is a literal integer and the shape of the
-    %% tuple is known.
-    Els0 = [#b_literal{val=El} || El <- tuple_to_list(Tuple)],
-    {Bef,[_|Aft]} = split(Pos - 1, Els0),
-    Els = Bef ++ [Value|Aft],
-    I#b_set{op=put_tuple,args=Els};
-simplify_remote_call(Mod, Name, Args0, I) ->
+simplify_remote_call(Mod, Name, Args, _Ts, I) ->
+    case erl_bifs:is_pure(Mod, Name, length(Args)) of
+        true ->
+            simplify_pure_call(Mod, Name, Args, I);
+        false ->
+            I
+    end.
+
+%% Simplify a remote call to a pure BIF.
+simplify_pure_call(Mod, Name, Args0, I) ->
     case make_literal_list(Args0) of
         none ->
             I;
@@ -1192,50 +1666,58 @@ simplify_remote_call(Mod, Name, Args0, I) ->
             end
     end.
 
-any_non_numeric_argument([#b_literal{val=Lit}|_], _Ts) ->
-    is_non_numeric(Lit);
-any_non_numeric_argument([#b_var{}=V|T], Ts) ->
-    is_non_numeric_type(raw_type(V, Ts)) orelse any_non_numeric_argument(T, Ts);
-any_non_numeric_argument([], _Ts) -> false.
+number_type(V, Ts) ->
+    number_type_1(concrete_type(V, Ts)).
 
-is_non_numeric([H|T]) ->
-    is_non_numeric(H) andalso is_non_numeric(T);
-is_non_numeric(Tuple) when is_tuple(Tuple) ->
-    is_non_numeric_tuple(Tuple, tuple_size(Tuple));
-is_non_numeric(Map) when is_map(Map) ->
-    %% Starting from OTP 18, map keys are compared using `=:=`.
-    %% Therefore, we only need to check that the values in the map are
-    %% non-numeric. (Support for compiling BEAM files for OTP releases
-    %% older than OTP 18 has been dropped.)
-    is_non_numeric(maps:values(Map));
-is_non_numeric(Num) when is_number(Num) ->
-    false;
-is_non_numeric(_) -> true.
+number_type_1(any) ->
+    #t_number{};
+number_type_1(Type) ->
+    N = beam_types:meet(Type, #t_number{}),
 
-is_non_numeric_tuple(Tuple, El) when El >= 1 ->
-    is_non_numeric(element(El, Tuple)) andalso
-        is_non_numeric_tuple(Tuple, El-1);
-is_non_numeric_tuple(_Tuple, 0) -> true.
+    List = case beam_types:meet(Type, #t_list{}) of
+               #t_cons{type=Head,terminator=Tail} ->
+                   beam_types:join(number_type_1(Head), number_type_1(Tail));
+               #t_list{type=Head,terminator=Tail} ->
+                   beam_types:join(number_type_1(Head), number_type_1(Tail));
+               nil ->
+                   none;
+               none ->
+                   none
+           end,
 
-is_non_numeric_type(#t_atom{}) -> true;
-is_non_numeric_type(#t_bitstring{}) -> true;
-is_non_numeric_type(#t_cons{type=Type,terminator=Terminator}) ->
-    is_non_numeric_type(Type) andalso is_non_numeric_type(Terminator);
-is_non_numeric_type(#t_list{type=Type,terminator=Terminator}) ->
-    is_non_numeric_type(Type) andalso is_non_numeric_type(Terminator);
-is_non_numeric_type(#t_map{super_value=Value}) ->
-    is_non_numeric_type(Value);
-is_non_numeric_type(nil) -> true;
-is_non_numeric_type(#t_tuple{size=Size,exact=true,elements=Types})
-  when map_size(Types) =:= Size ->
-    is_non_numeric_tuple_type(Size, Types);
-is_non_numeric_type(_) -> false.
+    Tup = case beam_types:meet(Type, #t_tuple{}) of
+              #t_tuple{size=Size,exact=true,elements=ElemTypes}
+                when map_size(ElemTypes) =:= Size ->
+                  beam_types:join([number_type_1(ET) ||
+                                      ET <- maps:values(ElemTypes)] ++ [none]);
+              #t_tuple{} ->
+                  #t_number{};
+              #t_union{} ->
+                  #t_number{};
+              none ->
+                  none
+          end,
 
-is_non_numeric_tuple_type(0, _Types) ->
-    true;
-is_non_numeric_tuple_type(Pos, Types) ->
-    is_non_numeric_type(map_get(Pos, Types)) andalso
-        is_non_numeric_tuple_type(Pos - 1, Types).
+    Map = case beam_types:meet(Type, #t_map{}) of
+              #t_map{super_value=MapValue} ->
+                  %% Starting from OTP 18, map keys are compared using
+                  %% `=:=`.  Therefore, we only need to use the values
+                  %% in the map.
+                  MapValue;
+              none ->
+                  none
+          end,
+
+    Fun = case beam_types:meet(Type, #t_fun{}) of
+              #t_fun{} ->
+                  %% The environment could contain a number. We don't
+                  %% keep track of the environment in #t_fun{}.
+                  #t_number{};
+              none ->
+                  none
+          end,
+
+    beam_types:join([N,List,Tup,Map,Fun]).
 
 make_literal_list(Args) ->
     make_literal_list(Args, []).
@@ -1248,12 +1730,12 @@ make_literal_list([], Acc) ->
     reverse(Acc).
 
 is_safe_bool_op([LHS, RHS], Ts) ->
-    LType = raw_type(LHS, Ts),
-    RType = raw_type(RHS, Ts),
+    LType = concrete_type(LHS, Ts),
+    RType = concrete_type(RHS, Ts),
     beam_types:is_boolean_type(LType) andalso
         beam_types:is_boolean_type(RType).
 
-eval_bif(#b_set{op={bif,Bif},args=Args}=I, Ts) ->
+eval_bif(#b_set{op={bif,Bif},args=Args}=I, Ts, Ds) ->
     Arity = length(Args),
     case erl_bifs:is_pure(erlang, Bif, Arity) of
         false ->
@@ -1261,7 +1743,7 @@ eval_bif(#b_set{op={bif,Bif},args=Args}=I, Ts) ->
         true ->
             case make_literal_list(Args) of
                 none ->
-                    eval_type_test_bif(I, Bif, raw_types(Args, Ts));
+                    eval_bif_1(I, Bif, Ts, Ds);
                 LitArgs ->
                     try apply(erlang, Bif, LitArgs) of
                         Val -> #b_literal{val=Val}
@@ -1272,83 +1754,52 @@ eval_bif(#b_set{op={bif,Bif},args=Args}=I, Ts) ->
             end
     end.
 
-eval_type_test_bif(I, is_atom, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_atom{});
-eval_type_test_bif(I, is_binary, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_bs_matchable{tail_unit=8});
-eval_type_test_bif(I, is_bitstring, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_bs_matchable{});
-eval_type_test_bif(I, is_boolean, [Type]) ->
-    case beam_types:is_boolean_type(Type) of
-        true ->
-            #b_literal{val=true};
-        false ->
-            case beam_types:meet(Type, #t_atom{}) of
-                #t_atom{elements=[_|_]=Es} ->
-                    case any(fun is_boolean/1, Es) of
-                        true -> I;
-                        false -> #b_literal{val=false}
-                    end;
-                #t_atom{} ->
-                    I;
-                none ->
-                    #b_literal{val=false}
-            end
-    end;
-eval_type_test_bif(I, is_float, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_float{});
-eval_type_test_bif(I, is_function, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_fun{});
-eval_type_test_bif(I, is_integer, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_integer{});
-eval_type_test_bif(I, is_list, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_list{});
-eval_type_test_bif(I, is_map, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_map{});
-eval_type_test_bif(I, is_number, [Type]) ->
-    eval_type_test_bif_1(I, Type, number);
-eval_type_test_bif(I, is_tuple, [Type]) ->
-    eval_type_test_bif_1(I, Type, #t_tuple{});
-eval_type_test_bif(I, Op, Types) ->
-    case Types of
-        [#t_integer{},#t_integer{elements={0,0}}]
-          when Op =:= '+'; Op =:= '-'; Op =:= 'bor'; Op =:= 'bxor' ->
+eval_bif_1(#b_set{args=Args}=I, Op, Ts, Ds) ->
+    case concrete_types(Args, Ts) of
+        [#t_integer{},#t_integer{elements={0,0}}] when Op =:= 'bor'; Op =:= 'bxor' ->
             #b_set{args=[Result,_]} = I,
             Result;
         [#t_integer{},#t_integer{elements={0,0}}] when Op =:= '*'; Op =:= 'band' ->
             #b_literal{val=0};
-        [#t_integer{},#t_integer{elements={1,1}}] when Op =:= '*'; Op =:= 'div' ->
-            #b_set{args=[Result,_]} = I,
-            Result;
-        [#t_integer{elements={LMin,LMax}},#t_integer{elements={RMin,RMax}}] ->
-            case is_inequality_op(Op) of
+        [T,#t_integer{elements={0,0}}] when Op =:= '+'; Op =:= '-' ->
+            case beam_types:is_numerical_type(T) of
                 true ->
-                    case {erlang:Op(LMin, RMin),erlang:Op(LMax, RMin),
-                          erlang:Op(LMin, RMax),erlang:Op(LMax, RMax)} of
-                        {Bool,Bool,Bool,Bool} ->
-                            #b_literal{val=Bool};
-                        _ ->
-                            I
-                    end;
+                    #b_set{args=[Result,_]} = I,
+                    Result;
                 false ->
                     I
             end;
+        [T,#t_integer{elements={1,1}}] when Op =:= '*'; Op =:= 'div' ->
+            case beam_types:is_numerical_type(T) of
+                true ->
+                    #b_set{args=[Result,_]} = I,
+                    Result;
+                false ->
+                    I
+            end;
+        [#t_integer{},#t_integer{}] ->
+            reassociate(I, Ts, Ds);
         _ ->
             I
     end.
 
-is_inequality_op('<') -> true;
-is_inequality_op('=<') -> true;
-is_inequality_op('>') -> true;
-is_inequality_op('>=') -> true;
-is_inequality_op(_) -> false.
-
-eval_type_test_bif_1(I, ArgType, Required) ->
-    case beam_types:meet(ArgType, Required) of
-        ArgType -> #b_literal{val=true};
-        none -> #b_literal{val=false};
-        _ -> I
-    end.
+reassociate(#b_set{op={bif,OpB},args=[#b_var{}=V0,#b_literal{val=B0}]}=I, _Ts, Ds)
+  when OpB =:= '+'; OpB =:= '-' ->
+    case map_get(V0, Ds) of
+        #b_set{op={bif,OpA},args=[#b_var{}=V,#b_literal{val=A0}]}
+          when OpA =:= '+'; OpA =:= '-' ->
+            A = erlang:OpA(A0),
+            B = erlang:OpB(B0),
+            case A + B of
+                Combined when Combined < 0 ->
+                    I#b_set{op={bif,'-'},args=[V,#b_literal{val=-Combined}]};
+                Combined when Combined >= 0 ->
+                    I#b_set{op={bif,'+'},args=[V,#b_literal{val=Combined}]}
+            end;
+        #b_set{} ->
+            I
+    end;
+reassociate(I, _Ts, _Ds) -> I.
 
 simplify_args(Args, Ts, Sub) ->
     [simplify_arg(Arg, Ts, Sub) || Arg <- Args].
@@ -1358,7 +1809,7 @@ simplify_arg(#b_var{}=Arg0, Ts, Sub) ->
         #b_literal{}=LitArg ->
             LitArg;
         #b_var{}=Arg ->
-            case beam_types:get_singleton_value(raw_type(Arg, Ts)) of
+            case beam_types:get_singleton_value(concrete_type(Arg, Ts)) of
                 {ok, Val} -> #b_literal{val=Val};
                 error -> Arg
             end
@@ -1486,14 +1937,18 @@ ust_limited_1([{SuccArgs, SuccRet}], CallArgs, CallRet) ->
     NewType = beam_types:join(SuccRet, CallRet),
     [{NewTypes, NewType}].
 
-%% Adds a new success type, collapsing it with entries that have the same
-%% return type to keep the list short.
+%% Adds a new success type. Note that we no longer try to keep the list short
+%% by combining entries with the same return type, as that can make effective
+%% return types less specific as analysis goes on, which may cause endless
+%% loops or render previous optimizations unsafe.
+%%
+%% See beam_type_SUITE:success_type_oscillation/1 for more details.
 ust_unlimited(SuccTypes, _CallArgs, none) ->
     %% 'none' is implied since functions can always fail.
     SuccTypes;
-ust_unlimited([{SuccArgs, Same} | SuccTypes], CallArgs, Same) ->
-    NewArgs = parallel_join(SuccArgs, CallArgs),
-    [{NewArgs, Same} | SuccTypes];
+ust_unlimited([{SameArgs, SameType} | _]=SuccTypes, SameArgs, SameType) ->
+    %% Already covered, return as-is.
+    SuccTypes;
 ust_unlimited([SuccType | SuccTypes], CallArgs, CallRet) ->
     [SuccType | ust_unlimited(SuccTypes, CallArgs, CallRet)];
 ust_unlimited([], CallArgs, CallRet) ->
@@ -1504,7 +1959,7 @@ update_successors(#b_br{bool=#b_literal{val=true},succ=Succ}=Last,
     {Last, update_successor(Succ, Ts, Ls)};
 update_successors(#b_br{bool=#b_var{}=Bool,succ=Succ,fail=Fail}=Last0,
                   Ts, Ds, Ls0, UsedOnce) ->
-    IsTempVar = cerl_sets:is_element(Bool, UsedOnce),
+    IsTempVar = is_map_key(Bool, UsedOnce),
     case infer_types_br(Bool, Ts, IsTempVar, Ds) of
         {#{}=SuccTs, #{}=FailTs} ->
             Ls1 = update_successor(Succ, SuccTs, Ls0),
@@ -1519,10 +1974,11 @@ update_successors(#b_br{bool=#b_var{}=Bool,succ=Succ,fail=Fail}=Last0,
     end;
 update_successors(#b_switch{arg=#b_var{}=V,fail=Fail0,list=List0}=Last0,
                   Ts, Ds, Ls0, UsedOnce) ->
-    IsTempVar = cerl_sets:is_element(V, UsedOnce),
+    IsTempVar = is_map_key(V, UsedOnce),
 
     {List1, FailTs, Ls1} =
-        update_switch(List0, V, raw_type(V, Ts), Ts, Ds, Ls0, IsTempVar, []),
+        update_switch(List0, V, concrete_type(V, Ts),
+                      Ts, Ds, Ls0, IsTempVar, []),
 
     case FailTs of
         none ->
@@ -1551,7 +2007,7 @@ update_successors(#b_ret{}=Last, _Ts, _Ds, Ls, _UsedOnce) ->
 
 update_switch([{Val, Lbl}=Sw | List],
               V, FailType0, Ts, Ds, Ls0, IsTempVar, Acc) ->
-    FailType = beam_types:subtract(FailType0, raw_type(Val, Ts)),
+    FailType = beam_types:subtract(FailType0, concrete_type(Val, Ts)),
     case infer_types_switch(V, Val, Ts, IsTempVar, Ds) of
         none ->
             update_switch(List, V, FailType, Ts, Ds, Ls0, IsTempVar, Acc);
@@ -1570,11 +2026,19 @@ update_switch([], V, FailType, Ts, Ds, Ls, IsTempVar, Acc) ->
                      %% we can infer types as if we matched it directly.
                      Lit = #b_literal{val=Value},
                      infer_types_switch(V, Lit, Ts, IsTempVar, Ds);
-                 error when IsTempVar ->
-                     ts_remove_var(V, Ts);
                  error ->
-                     Ts#{ V := FailType }
+                     %% There's more than one possible value, try a weaker
+                     %% variant of the inference for case labels.
+                     #{ V := Def } = Ds,
+                     PosTypes = [{V, FailType} | infer_eq_type(Def, FailType)],
+
+                     case meet_types(PosTypes, Ts) of
+                         none -> none;
+                         FailTs0 when IsTempVar -> ts_remove_var(V, FailTs0);
+                         FailTs0 -> FailTs0
+                     end
              end,
+
     {reverse(Acc), FailTs, Ls}.
 
 update_successor(?EXCEPTION_BLOCK, _Ts, Ls) ->
@@ -1597,19 +2061,43 @@ update_successor(S, Ts0, Ls) ->
 
 update_types(#b_set{op=Op,dst=Dst,anno=Anno,args=Args}, Ts, Ds) ->
     T = type(Op, Args, Anno, Ts, Ds),
-    Ts#{Dst=>T}.
+    Ts#{ Dst => T }.
 
 type({bif,Bif}, Args, _Anno, Ts, _Ds) ->
-    ArgTypes = normalized_types(Args, Ts),
-    {RetType, _, _} = beam_call_types:types(erlang, Bif, ArgTypes),
-    RetType;
-type(bs_init, _Args, _Anno, _Ts, _Ds) ->
-    #t_bitstring{};
-type(bs_extract, [Ctx], _Anno, _Ts, Ds) ->
-    #b_set{op=bs_match,args=Args} = map_get(Ctx, Ds),
-    bs_match_type(Args);
+    ArgTypes = concrete_types(Args, Ts),
+    case beam_call_types:types(erlang, Bif, ArgTypes) of
+        {any, _, _} ->
+            case {Bif, Args} of
+                {element, [_,#b_literal{val=Tuple}]}
+                  when tuple_size(Tuple) > 0 ->
+                    join_tuple_elements(Tuple);
+                {_, _} ->
+                    any
+            end;
+        {RetType, _, _} ->
+            RetType
+    end;
+type(bs_create_bin, Args, _Anno, Ts, _Ds) ->
+    SizeUnit = bs_size_unit(Args, Ts),
+    Appendable = case Args of
+                     [#b_literal{val=private_append}|_] ->
+                         true;
+                     [#b_literal{val=append},_,Var|_] ->
+                         case argument_type(Var, Ts) of
+                             #t_bitstring{appendable=A} -> A;
+                             #t_union{other=#t_bitstring{appendable=A}} -> A;
+                             _ -> false
+                         end;
+                     _ ->
+                         false
+                 end,
+    #t_bitstring{size_unit=SizeUnit,appendable=Appendable};
+type(bs_extract, [Ctx], _Anno, Ts, Ds) ->
+    #b_set{op=bs_match,
+           args=[#b_literal{val=Type}, _OrigCtx | Args]} = map_get(Ctx, Ds),
+    bs_match_type(Type, Args, Ts);
 type(bs_start_match, [_, Src], _Anno, Ts, _Ds) ->
-    case beam_types:meet(#t_bs_matchable{}, raw_type(Src, Ts)) of
+    case beam_types:meet(#t_bs_matchable{}, concrete_type(Src, Ts)) of
         none ->
             none;
         T ->
@@ -1622,40 +2110,56 @@ type(bs_match, [#b_literal{val=binary}, Ctx, _Flags,
 
     %% This is an explicit tail unit test which does not advance the match
     %% position.
-    CtxType = raw_type(Ctx, Ts),
+    CtxType = concrete_type(Ctx, Ts),
     OpType = #t_bs_context{tail_unit=OpUnit},
 
     beam_types:meet(CtxType, OpType);
-type(bs_match, Args, _Anno, Ts, _Ds) ->
-    [_, Ctx | _] = Args,
+type(bs_match, Args0, _Anno, Ts, _Ds) ->
+    [#b_literal{val=Type}, Ctx | Args] = Args0, %Assertion.
+    case bs_match_type(Type, Args, Ts) of
+        none ->
+            none;
+        _ ->
+            %% Matches advance the current position without testing the tail
+            %% unit. We try to retain unit information by taking the GCD of our
+            %% current unit and the increments we know the match will advance
+            %% by.
+            #t_bs_context{tail_unit=CtxUnit} = concrete_type(Ctx, Ts),
+            OpUnit = bs_match_stride(Type, Args, Ts),
 
-    %% Matches advance the current position without testing the tail unit. We
-    %% try to retain unit information by taking the GCD of our current unit and
-    %% the increments we know the match will advance by.
-    #t_bs_context{tail_unit=CtxUnit} = raw_type(Ctx, Ts),
-    OpUnit = bs_match_stride(Args, Ts),
-
-    #t_bs_context{tail_unit=gcd(OpUnit, CtxUnit)};
+            #t_bs_context{tail_unit=gcd(OpUnit, CtxUnit)}
+    end;
 type(bs_get_tail, [Ctx], _Anno, Ts, _Ds) ->
-    #t_bs_context{tail_unit=Unit} = raw_type(Ctx, Ts),
+    #t_bs_context{tail_unit=Unit} = concrete_type(Ctx, Ts),
     #t_bitstring{size_unit=Unit};
 type(call, [#b_remote{mod=#b_literal{val=Mod},
-                      name=#b_literal{val=Name}}|Args], _Anno, Ts, _Ds) ->
-    ArgTypes = normalized_types(Args, Ts),
+                      name=#b_literal{val=Name}}|Args], _Anno, Ts, _Ds)
+  when is_atom(Mod), is_atom(Name) ->
+    ArgTypes = concrete_types(Args, Ts),
     {RetType, _, _} = beam_call_types:types(Mod, Name, ArgTypes),
     RetType;
-type(call, [#b_remote{} | _Args], _Anno, _Ts, _Ds) ->
-    %% Remote call with variable Module and/or Function.
-    any;
+type(call, [#b_remote{mod=Mod,name=Name} | _Args], _Anno, Ts, _Ds) ->
+    %% Remote call with variable Module and/or Function, we can't say much
+    %% about it other than that it will crash when either of the two is not an
+    %% atom.
+    ModType = beam_types:meet(concrete_type(Mod, Ts), #t_atom{}),
+    NameType = beam_types:meet(concrete_type(Name, Ts), #t_atom{}),
+    case {ModType, NameType} of
+        {none, _} -> none;
+        {_, none} -> none;
+        {_, _} -> any
+    end;
 type(call, [#b_local{} | _Args], Anno, _Ts, _Ds) ->
     case Anno of
         #{ result_type := Type } -> Type;
         #{} -> any
     end;
-type(call, [#b_var{} | _Args], Anno, _Ts, _Ds) ->
-    case Anno of
-        #{ result_type := Type } -> Type;
-        #{} -> any
+type(call, [#b_var{}=Fun | Args], Anno, Ts, _Ds) ->
+    FunType = concrete_type(Fun, Ts),
+    case {beam_types:meet(FunType, #t_fun{arity=length(Args)}), Anno} of
+        {#t_fun{}, #{ result_type := Type }} -> Type;
+        {#t_fun{}, #{}} -> any;
+        {none, #{}} -> none
     end;
 type(call, [#b_literal{val=Fun} | Args], _Anno, _Ts, _Ds) ->
     case is_function(Fun, length(Args)) of
@@ -1667,6 +2171,18 @@ type(call, [#b_literal{val=Fun} | Args], _Anno, _Ts, _Ds) ->
             %% arguments is wrong.
             none
     end;
+type(extract, [V, #b_literal{val=Idx}], _Anno, _Ts, Ds) ->
+    case map_get(V, Ds) of
+        #b_set{op=landingpad} when Idx =:= 0 ->
+            %% Class
+            #t_atom{elements=[error,exit,throw]};
+        #b_set{op=landingpad} when Idx =:= 1 ->
+            %% Reason
+            any;
+        #b_set{op=landingpad} when Idx =:= 2 ->
+            %% Stack trace
+            any
+    end;
 type(get_hd, [Src], _Anno, Ts, _Ds) ->
     SrcType = #t_cons{} = normalized_type(Src, Ts), %Assertion.
     {RetType, _, _} = beam_call_types:types(erlang, hd, [SrcType]),
@@ -1675,70 +2191,176 @@ type(get_tl, [Src], _Anno, Ts, _Ds) ->
     SrcType = #t_cons{} = normalized_type(Src, Ts), %Assertion.
     {RetType, _, _} = beam_call_types:types(erlang, tl, [SrcType]),
     RetType;
-type(get_map_element, [_, _]=Args0, _Anno, Ts, _Ds) ->
-    [#t_map{}=Map, Key] = normalized_types(Args0, Ts), %Assertion.
+type(get_map_element, [Map0, Key0], _Anno, Ts, _Ds) ->
+    Map = concrete_type(Map0, Ts),
+    Key = concrete_type(Key0, Ts),
+    %% Note the reversed argument order!
     {RetType, _, _} = beam_call_types:types(erlang, map_get, [Key, Map]),
     RetType;
-type(get_tuple_element, [Tuple, Offset], _Anno, Ts, _Ds) ->
-    #t_tuple{size=Size,elements=Es} = normalized_type(Tuple, Ts),
+type(get_tuple_element, [Tuple, Offset], _Anno, _Ts, _Ds) ->
     #b_literal{val=N} = Offset,
-    true = Size > N, %Assertion.
-    beam_types:get_tuple_element(N + 1, Es);
-type(has_map_field, [_, _]=Args0, _Anno, Ts, _Ds) ->
-    [#t_map{}=Map, Key] = normalized_types(Args0, Ts), %Assertion.
+    Index = N + 1,
+    %% Defer our type until our first use (concrete_type/2), as our type may
+    %% depend on another value extracted from the same container.
+    fun(Ts) ->
+            #t_tuple{size=Size,elements=Es} = normalized_type(Tuple, Ts),
+            true = Index =< Size,               %Assertion.
+            beam_types:get_tuple_element(Index, Es)
+    end;
+type(has_map_field, [Map0, Key0], _Anno, Ts, _Ds) ->
+    Map = concrete_type(Map0, Ts),
+    Key = concrete_type(Key0, Ts),
+    %% Note the reversed argument order!
     {RetType, _, _} = beam_call_types:types(erlang, is_map_key, [Key, Map]),
+    true = none =/= RetType,                    %Assertion.
     RetType;
 type(is_nonempty_list, [_], _Anno, _Ts, _Ds) ->
     beam_types:make_boolean();
 type(is_tagged_tuple, [_,#b_literal{},#b_literal{}], _Anno, _Ts, _Ds) ->
     beam_types:make_boolean();
-type(make_fun, [#b_local{arity=TotalArity} | Env], Anno, _Ts, _Ds) ->
+type(MakeFun, Args, Anno, _Ts, _Ds) when MakeFun =:= make_fun;
+                                         MakeFun =:= old_make_fun ->
     RetType = case Anno of
                   #{ result_type := Type } -> Type;
                   #{} -> any
               end,
-    #t_fun{arity=TotalArity - length(Env), type=RetType};
+    [#b_local{name=#b_literal{val=Name},arity=TotalArity} | Env] = Args,
+    Arity = TotalArity - length(Env),
+    #t_fun{arity=Arity,target={Name,TotalArity},type=RetType};
+type(match_fail, _, _Anno, _Ts, _Ds) ->
+    none;
 type(put_map, [_Kind, Map | Ss], _Anno, Ts, _Ds) ->
     put_map_type(Map, Ss, Ts);
 type(put_list, [Head, Tail], _Anno, Ts, _Ds) ->
-    HeadType = raw_type(Head, Ts),
-    TailType = raw_type(Tail, Ts),
+    HeadType = concrete_type(Head, Ts),
+    TailType = concrete_type(Tail, Ts),
     beam_types:make_cons(HeadType, TailType);
 type(put_tuple, Args, _Anno, Ts, _Ds) ->
     {Es, _} = foldl(fun(Arg, {Es0, Index}) ->
-                            Type = raw_type(Arg, Ts),
+                            Type = concrete_type(Arg, Ts),
                             Es = beam_types:set_tuple_element(Index, Type, Es0),
                             {Es, Index + 1}
                     end, {#{}, 1}, Args),
     #t_tuple{exact=true,size=length(Args),elements=Es};
+type(raw_raise, [Class, _, _], _Anno, Ts, _Ds) ->
+    ClassType = concrete_type(Class, Ts),
+    case beam_types:meet(ClassType, #t_atom{elements=[error,exit,throw]}) of
+        ClassType ->
+            %% Unlike erlang:raise/3, the stack argument is always correct as
+            %% it's generated by the emulator, so we KNOW that it will raise an
+            %% exception when the class is correct.
+            none;
+        _ ->
+            beam_types:make_atom(badarg)
+    end;
 type(resume, [_, _], _Anno, _Ts, _Ds) ->
     none;
-type(_, _, _, _, _) -> any.
+type(update_record, [_Hint, _Size, Src | Updates], _Anno, Ts, _Ds) ->
+    update_tuple_type(Updates, Src, Ts);
+type(update_tuple, [Src | Updates], _Anno, Ts, _Ds) ->
+    update_tuple_type(Updates, Src, Ts);
+type(wait_timeout, [#b_literal{val=infinity}], _Anno, _Ts, _Ds) ->
+    %% Waits forever, never reaching the 'after' block.
+    beam_types:make_atom(false);
+type(bs_init_writable, [_Size], _, _, _) ->
+    beam_types:make_type_from_value(<<>>);
+type(_, _, _, _, _) ->
+    any.
+
+update_tuple_type([_|_]=Updates0, Src, Ts) ->
+    Updates = update_tuple_type_1(Updates0, Ts),
+    beam_types:update_tuple(concrete_type(Src, Ts), Updates).
+
+update_tuple_type_1([#b_literal{val=Index}, Value | Updates], Ts) ->
+    [{Index, concrete_type(Value, Ts)} | update_tuple_type_1(Updates, Ts)];
+update_tuple_type_1([], _Ts) ->
+    [].
+
+update_tuple_highest_index([#b_literal{val=Index}, _Value | Updates], Acc) ->
+    update_tuple_highest_index(Updates, max(Index, Acc));
+update_tuple_highest_index([], Acc) ->
+    true = Acc >= 1,                            %Assertion.
+    Acc.
+
+join_tuple_elements(Tuple) ->
+    join_tuple_elements(tuple_size(Tuple), Tuple, none).
+
+join_tuple_elements(0, _Tuple, Type) ->
+    Type;
+join_tuple_elements(I, Tuple, Type0) ->
+    Type1 = beam_types:make_type_from_value(element(I, Tuple)),
+    Type = beam_types:join(Type0, Type1),
+    join_tuple_elements(I - 1, Tuple, Type).
 
 put_map_type(Map, Ss, Ts) ->
-    pmt_1(Ss, Ts, normalized_type(Map, Ts)).
+    pmt_1(Ss, Ts, concrete_type(Map, Ts)).
 
 pmt_1([Key0, Value0 | Ss], Ts, Acc0) ->
-    Key = normalized_type(Key0, Ts),
-    Value = normalized_type(Value0, Ts),
+    Key = concrete_type(Key0, Ts),
+    Value = concrete_type(Value0, Ts),
     {Acc, _, _} = beam_call_types:types(maps, put, [Key, Value, Acc0]),
     pmt_1(Ss, Ts, Acc);
 pmt_1([], _Ts, Acc) ->
     Acc.
 
+bs_size_unit(Args, Ts) ->
+    bs_size_unit(Args, Ts, 0, 256).
+
+bs_size_unit([#b_literal{val=Type},#b_literal{val=[U1|_]},Value,SizeTerm|Args],
+             Ts, FixedSize, Unit) ->
+    case {Type,Value,SizeTerm} of
+        {_,#b_literal{val=Bs},#b_literal{val=all}} when is_bitstring(Bs) ->
+            %% Add element of known size.
+            Size = bit_size(Bs) + FixedSize,
+            bs_size_unit(Args, Ts, Size, Unit);
+        {_,_,#b_literal{val=all}} ->
+            case concrete_type(Value, Ts) of
+                #t_bitstring{size_unit=U2} ->
+                    %% Adding a bitstring.
+                    %% TODO: Can U1 be anything but 1?
+                    U = max(U1, U2),
+                    bs_size_unit(Args, Ts, FixedSize, gcd(U, Unit));
+                _ ->
+                    %% Adding something which isn't a bitstring
+                    bs_size_unit(Args, Ts, FixedSize, gcd(U1, Unit))
+            end;
+        {utf8,_,_} ->
+            %% Add at least 8 bits, maybe more.
+            bs_size_unit(Args, Ts, 8 + FixedSize, gcd(8, Unit));
+        {utf16,_,_} ->
+            %% Add at least 16 bits, maybe more.
+            bs_size_unit(Args, Ts, 16 + FixedSize, gcd(16, Unit));
+        {utf32,_,_} ->
+            %% Compared to utf8 and utf16 this is a fixed size.
+            bs_size_unit(Args, Ts, 32 + FixedSize, Unit);
+        {_,_,_} ->
+            case concrete_type(SizeTerm, Ts) of
+                #t_integer{elements={Size1, Size1}}
+                  when is_integer(Size1), is_integer(U1), Size1 >= 0 ->
+                    EffectiveSize = Size1 * U1,
+                    %% Adding a fixed size element
+                    bs_size_unit(Args, Ts, EffectiveSize + FixedSize, Unit);
+                _ when is_integer(U1) ->
+                    %% Add element with known unit.
+                    bs_size_unit(Args, Ts, FixedSize, gcd(U1, Unit));
+                _ ->
+                    %% Add element without known size or unit.
+                    bs_size_unit(Args, Ts, FixedSize, gcd(1, Unit))
+            end
+    end;
+bs_size_unit([], _Ts, FixedSize, Unit) ->
+    gcd(FixedSize, Unit).
+
 %% We seldom know how far a match operation may advance, but we can often tell
 %% which increment it will advance by.
-bs_match_stride([#b_literal{val=Type} | Args], Ts) ->
-    bs_match_stride(Type, Args, Ts).
-
-bs_match_stride(_, [_,_,Size,#b_literal{val=Unit}], Ts) ->
-    case raw_type(Size, Ts) of
+bs_match_stride(_, [_,Size,#b_literal{val=Unit}], Ts) ->
+    case concrete_type(Size, Ts) of
         #t_integer{elements={Sz, Sz}} when is_integer(Sz) ->
             Sz * Unit;
         _ ->
             Unit
     end;
-bs_match_stride(string, [_,#b_literal{val=String}], _) ->
+bs_match_stride(string, [#b_literal{val=String}], _) ->
     bit_size(String);
 bs_match_stride(utf8, _, _) ->
     8;
@@ -1751,47 +2373,58 @@ bs_match_stride(_, _, _) ->
 
 -define(UNICODE_MAX, (16#10FFFF)).
 
-bs_match_type([#b_literal{val=Type}|Args]) ->
-    bs_match_type(Type, Args).
-
-bs_match_type(binary, Args) ->
-    [_,_,_,#b_literal{val=U}] = Args,
+bs_match_type(binary, Args, _Ts) ->
+    [_,_,#b_literal{val=U}] = Args,
     #t_bitstring{size_unit=U};
-bs_match_type(float, _) ->
+bs_match_type(float, _Args, _Ts) ->
     #t_float{};
-bs_match_type(integer, Args) ->
-    case Args of
-        [_,
-         #b_literal{val=Flags},
-         #b_literal{val=Size},
-         #b_literal{val=Unit}] when Size * Unit < 64 ->
-            NumBits = Size * Unit,
-            case member(unsigned, Flags) of
-                true ->
-                    beam_types:make_integer(0, (1 bsl NumBits)-1);
-                false ->
-                    %% Signed integer. Don't bother.
-                    #t_integer{}
+bs_match_type(integer, Args, Ts) ->
+    [#b_literal{val=Flags},Size,#b_literal{val=Unit}] = Args,
+    case beam_types:meet(concrete_type(Size, Ts), #t_integer{}) of
+        #t_integer{elements=Bounds} ->
+            case beam_bounds:bounds('*', Bounds, {Unit, Unit}) of
+                {_, MaxBits} when is_integer(MaxBits),
+                                  MaxBits >= 1,
+                                  MaxBits =< 64 ->
+                    case member(unsigned, Flags) of
+                        true ->
+                            Max = (1 bsl MaxBits) - 1,
+                            beam_types:make_integer(0, Max);
+                        false ->
+                            Max = (1 bsl (MaxBits - 1)) - 1,
+                            Min = -(Max + 1),
+                            beam_types:make_integer(Min, Max)
+                    end;
+                {_, 0} ->
+                    beam_types:make_integer(0);
+                _ ->
+                    case member(unsigned, Flags) of
+                        true -> #t_integer{elements={0,'+inf'}};
+                        false -> #t_integer{}
+                    end
             end;
-        [_|_] ->
-            #t_integer{}
+        none ->
+            none
     end;
-bs_match_type(skip, _) ->
-    any;
-bs_match_type(string, _) ->
-    any;
-bs_match_type(utf8, _) ->
+
+bs_match_type(utf8, _Args, _Ts) ->
     beam_types:make_integer(0, ?UNICODE_MAX);
-bs_match_type(utf16, _) ->
+bs_match_type(utf16, _Args, _Ts) ->
     beam_types:make_integer(0, ?UNICODE_MAX);
-bs_match_type(utf32, _) ->
-    beam_types:make_integer(0, ?UNICODE_MAX).
+bs_match_type(utf32, _Args, _Ts) ->
+    beam_types:make_integer(0, ?UNICODE_MAX);
+bs_match_type(string, _Args, _Ts) ->
+    %% Cannot actually be extracted, but we'll return 'any' to signal that the
+    %% associated `bs_match` may succeed.
+    any.
 
 normalized_types(Values, Ts) ->
     [normalized_type(Val, Ts) || Val <- Values].
 
+-spec normalized_type(beam_ssa:value(), type_db()) -> normal_type().
+
 normalized_type(V, Ts) ->
-    beam_types:normalize(raw_type(V, Ts)).
+    beam_types:normalize(concrete_type(V, Ts)).
 
 argument_types(Values, Ts) ->
     [argument_type(Val, Ts) || Val <- Values].
@@ -1799,17 +2432,21 @@ argument_types(Values, Ts) ->
 -spec argument_type(beam_ssa:value(), type_db()) -> type().
 
 argument_type(V, Ts) ->
-    beam_types:limit_depth(raw_type(V, Ts)).
+    beam_types:limit_depth(concrete_type(V, Ts)).
 
-raw_types(Values, Ts) ->
-    [raw_type(Val, Ts) || Val <- Values].
+concrete_types(Values, Ts) ->
+    [concrete_type(Val, Ts) || Val <- Values].
 
--spec raw_type(beam_ssa:value(), type_db()) -> type().
+-spec concrete_type(beam_ssa:value(), type_db()) -> type().
 
-raw_type(#b_literal{val=Value}, _Ts) ->
+concrete_type(#b_literal{val=Value}, _Ts) ->
     beam_types:make_type_from_value(Value);
-raw_type(V, Ts) ->
-    map_get(V, Ts).
+concrete_type(#b_var{}=Var, Ts) ->
+    #{ Var := Type } = Ts,
+    case is_function(Type) of
+        true -> Type(Ts);
+        false -> Type
+    end.
 
 %% infer_types(Var, Types, #d{}) -> {SuccTypes,FailTypes}
 %%  Looking at the expression that defines the variable Var, infer
@@ -1833,12 +2470,7 @@ raw_type(V, Ts) ->
 %%  subtraction for L will be added to FailTypes.
 
 infer_types_br(#b_var{}=V, Ts, IsTempVar, Ds) ->
-    #{V:=#b_set{op=Op,args=Args}} = Ds,
-
-    {PosTypes, NegTypes} = infer_type(Op, Args, Ts, Ds),
-
-    SuccTs0 = meet_types(PosTypes, Ts),
-    FailTs0 = subtract_types(NegTypes, Ts),
+    {SuccTs0, FailTs0} = infer_types_br_1(V, Ts, Ds),
 
     case IsTempVar of
         true ->
@@ -1855,6 +2487,176 @@ infer_types_br(#b_var{}=V, Ts, IsTempVar, Ds) ->
             {SuccTs, FailTs}
     end.
 
+infer_types_br_1(V, Ts, Ds) ->
+    #{V:=#b_set{op=Op0,args=Args}} = Ds,
+
+    case inv_relop(Op0) of
+        none ->
+            %% Not a relational operator.
+            {PosTypes, NegTypes} = infer_type(Op0, Args, Ts, Ds),
+            SuccTs = meet_types(PosTypes, Ts),
+            FailTs = subtract_types(NegTypes, Ts),
+            {SuccTs, FailTs};
+        InvOp ->
+            %% This is a relational operator.
+            {bif,Op} = Op0,
+
+            %% Infer the types for both sides of operator succeeding.
+            Types = concrete_types(Args, Ts),
+            {TruePos, TrueNeg} = infer_relop(Op, Args, Types, Ds),
+            TrueTypes = maybe
+                           TrueTypes0 = #{} ?= meet_types(TruePos, Ts),
+                           subtract_types(TrueNeg, TrueTypes0)
+                        else
+                            none -> none
+                        end,
+
+            %% Infer the types for both sides of operator failing.
+            {FalsePos, FalseNeg} = infer_relop(InvOp, Args, Types, Ds),
+            FalseTypes = maybe
+                            FalseTypes0 = #{} ?= meet_types(FalsePos, Ts),
+                            subtract_types(FalseNeg, FalseTypes0)
+                         else
+                             none -> none
+                         end,
+
+            {TrueTypes, FalseTypes}
+    end.
+
+infer_relop('=:=', [LHS,RHS],
+            [#t_bitstring{appendable=LHSApp}=LType0,
+             #t_bitstring{appendable=RHSApp}=RType0], Ds)
+  when LHSApp ; RHSApp ->
+    %% Bit strings are special in that nothing about their
+    %% appendable-status can be deduced from a comparison. The only
+    %% information gained is the size_unit. The appendable status is
+    %% unchanged by the comparison.
+    %%
+    %% In order to avoid narrowing the types with regard to
+    %% appendable-status, deduce the types for the case when neither
+    %% LHS or RHS are appendable, then restore the appendable-status.
+    {[{LHS,LType},{RHS,RType} | EqTypes], []} =
+        infer_relop('=:=', [LHS,RHS],
+                    [LType0#t_bitstring{appendable=false},
+                     RType0#t_bitstring{appendable=false}], Ds),
+    {[{LHS,LType#t_bitstring{appendable=LHSApp}},
+      {RHS,RType#t_bitstring{appendable=RHSApp}} | EqTypes], []};
+infer_relop('=:=', [LHS,RHS], [LType,RType], Ds) ->
+    EqTypes = infer_eq_type(map_get(LHS, Ds), RType),
+
+    %% As an example, assume that L1 is known to be 'list', and L2 is
+    %% known to be 'cons'. Then if 'L1 =:= L2' evaluates to 'true', it
+    %% can be inferred that L1 is 'cons' (the meet of 'cons' and
+    %% 'list').
+    Type = beam_types:meet(LType, RType),
+    {[{LHS,Type},{RHS,Type}] ++ EqTypes, []};
+infer_relop('=/=', [LHS,RHS], [LType,RType], Ds) ->
+    NeTypes = infer_ne_type(map_get(LHS, Ds), RType),
+
+    %% We must be careful with types inferred from '=/='.
+    %%
+    %% For example, if we have L =/= [a], we must not subtract 'cons'
+    %% from the type of L. In general, subtraction is only safe if
+    %% the type being subtracted is singled-valued, for example if it
+    %% is [] or the the atom 'true'.
+    %%
+    %% Note that we subtract the left-hand type from the right-hand
+    %% value and vice versa. We must not subtract the meet of the two
+    %% as it may be too specific. See beam_type_SUITE:type_subtraction/1
+    %% for details.
+    {[{V,beam_types:subtract(ThisType, OtherType)} ||
+         {V, ThisType, OtherType} <- [{RHS, RType, LType}, {LHS, LType, RType}],
+         beam_types:is_singleton_type(OtherType)], NeTypes};
+infer_relop(Op, Args, Types, _Ds) ->
+    {infer_relop(Op, Args, Types), []}.
+
+infer_relop(Op, [Arg1,Arg2], Types0) ->
+    case infer_relop(Op, Types0) of
+        any ->
+            %% Both operands lacked ranges.
+            [];
+        {NewType1,NewType2} ->
+            [{Arg1,NewType1},{Arg2,NewType2}]
+    end.
+
+infer_relop(Op, [#t_integer{elements=R1},
+                 #t_integer{elements=R2}]) ->
+    case beam_bounds:infer_relop_types(Op, R1, R2) of
+        {NewR1,NewR2} ->
+            {#t_integer{elements=NewR1},
+             #t_integer{elements=NewR2}};
+        none ->
+            {none, none};
+        any ->
+            any
+    end;
+infer_relop(Op0, [Type1,Type2]) ->
+    Op = case Op0 of
+             '<' -> '=<';
+             '>' -> '>=';
+             _ -> Op0
+         end,
+    case {infer_get_range(Type1),infer_get_range(Type2)} of
+        {unknown,unknown} ->
+            any;
+        {unknown,_}=R ->
+            infer_relop_any(Op, R);
+        {_,unknown}=R ->
+            infer_relop_any(Op, R);
+        {R1,R2} ->
+            %% Both operands are numeric types.
+            case beam_bounds:infer_relop_types(Op, R1, R2) of
+                {NewR1,NewR2} ->
+                    {#t_number{elements=NewR1},
+                     #t_number{elements=NewR2}};
+                none ->
+                    {none, none};
+                any ->
+                    any
+            end
+    end.
+
+infer_relop_any('=<', {unknown,any}) ->
+    %% Since numbers are smaller than any other terms, the LHS must be
+    %% a number if operator '=<' evaluates to true.
+    {#t_number{}, any};
+infer_relop_any('=<', {unknown,{_,Max}}) ->
+    {make_number({'-inf',Max}), any};
+infer_relop_any('>=', {any,unknown}) ->
+    {any, #t_number{}};
+infer_relop_any('>=', {{_,Max},unknown}) ->
+    {any, make_number({'-inf',Max})};
+infer_relop_any('>=', {unknown,{Min,_}}) when is_integer(Min) ->
+    %% LHS can be any term, including number, but we can figure out
+    %% the minimal possible number.
+    N = #t_number{elements={'-inf',Min}},
+    {beam_types:subtract(any, N), any};
+infer_relop_any('=<', {{Min,_},unknown}) when is_integer(Min) ->
+    N = #t_number{elements={'-inf',Min}},
+    {any, beam_types:subtract(any, N)};
+infer_relop_any(_Op, _R) ->
+    any.
+
+make_number({'-inf','+inf'}) ->
+    #t_number{};
+make_number({_,_}=R) ->
+    #t_number{elements=R}.
+
+inv_relop({bif,Op}) -> inv_relop_1(Op);
+inv_relop(_) -> none.
+
+inv_relop_1('<') -> '>=';
+inv_relop_1('=<') -> '>';
+inv_relop_1('>=') -> '<';
+inv_relop_1('>') ->  '=<';
+inv_relop_1('=:=') -> '=/=';
+inv_relop_1('=/=') -> '=:=';
+inv_relop_1(_) -> none.
+
+infer_get_range(#t_integer{elements=R}) -> R;
+infer_get_range(#t_number{elements=R}) -> R;
+infer_get_range(_) -> unknown.
+
 infer_br_value(_V, _Bool, none) ->
     none;
 infer_br_value(V, Bool, NewTs) ->
@@ -1868,8 +2670,15 @@ infer_br_value(V, Bool, NewTs) ->
     end.
 
 infer_types_switch(V, Lit, Ts0, IsTempVar, Ds) ->
-    {PosTypes, _} = infer_type({bif,'=:='}, [V, Lit], Ts0, Ds),
-    Ts = meet_types(PosTypes, Ts0),
+    Args = [V,Lit],
+    Types = concrete_types(Args, Ts0),
+    {PosTypes, NegTypes} = infer_relop('=:=', Args, Types, Ds),
+    Ts = maybe
+            Ts1 = #{} ?= meet_types(PosTypes, Ts0),
+            subtract_types(NegTypes, Ts1)
+         else
+            none -> none
+         end,
     case IsTempVar of
         true -> ts_remove_var(V, Ts);
         false -> Ts
@@ -1887,88 +2696,89 @@ infer_type({succeeded,_}, [#b_var{}=Src], Ts, Ds) ->
 %% not branching on 'succeeded'.
 infer_type(is_tagged_tuple, [#b_var{}=Src,#b_literal{val=Size},
                              #b_literal{}=Tag], _Ts, _Ds) ->
-    Es = beam_types:set_tuple_element(1, raw_type(Tag, #{}), #{}),
+    Es = beam_types:set_tuple_element(1, concrete_type(Tag, #{}), #{}),
     T = {Src,#t_tuple{exact=true,size=Size,elements=Es}},
     {[T], [T]};
 infer_type(is_nonempty_list, [#b_var{}=Src], _Ts, _Ds) ->
     T = {Src,#t_cons{}},
     {[T], [T]};
-infer_type({bif,is_atom}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_atom}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_atom{}},
     {[T], [T]};
-infer_type({bif,is_binary}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_binary}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_bitstring{size_unit=8}},
     {[T], [T]};
-infer_type({bif,is_bitstring}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_bitstring}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_bitstring{}},
     {[T], [T]};
-infer_type({bif,is_boolean}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_boolean}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, beam_types:make_boolean()},
     {[T], [T]};
-infer_type({bif,is_float}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_float}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_float{}},
     {[T], [T]};
-infer_type({bif,is_integer}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_function}, [#b_var{}=Arg], _Ts, _Ds) ->
+    T = {Arg, #t_fun{}},
+    {[T], [T]};
+infer_type({bif,is_function}, [#b_var{}=Arg, Arity], _Ts, _Ds) ->
+    case Arity of
+        #b_literal{val=V} when is_integer(V), V >= 0, V =< ?MAX_FUNC_ARGS ->
+            T = {Arg, #t_fun{arity=V}},
+            {[T], [T]};
+        _ ->
+            %% We cannot subtract the function type when the arity is unknown:
+            %% `Arg` may still be a function if the arity is outside the
+            %% allowed range.
+            T = {Arg, #t_fun{}},
+            {[T], []}
+    end;
+infer_type({bif,is_integer}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_integer{}},
     {[T], [T]};
-infer_type({bif,is_list}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_list}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_list{}},
     {[T], [T]};
-infer_type({bif,is_map}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_map}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_map{}},
     {[T], [T]};
-infer_type({bif,is_number}, [Arg], _Ts, _Ds) ->
-    T = {Arg, number},
+infer_type({bif,is_number}, [#b_var{}=Arg], _Ts, _Ds) ->
+    T = {Arg, #t_number{}},
     {[T], [T]};
-infer_type({bif,is_tuple}, [Arg], _Ts, _Ds) ->
+infer_type({bif,is_pid}, [#b_var{}=Arg], _Ts, _Ds) ->
+    T = {Arg, pid},
+    {[T], [T]};
+infer_type({bif,is_port}, [#b_var{}=Arg], _Ts, _Ds) ->
+    T = {Arg, port},
+    {[T], [T]};
+infer_type({bif,is_reference}, [#b_var{}=Arg], _Ts, _Ds) ->
+    T = {Arg, reference},
+    {[T], [T]};
+infer_type({bif,is_tuple}, [#b_var{}=Arg], _Ts, _Ds) ->
     T = {Arg, #t_tuple{}},
     {[T], [T]};
-infer_type({bif,'=:='}, [#b_var{}=LHS,#b_var{}=RHS], Ts, _Ds) ->
-    %% As an example, assume that L1 is known to be 'list', and L2 is
-    %% known to be 'cons'. Then if 'L1 =:= L2' evaluates to 'true', it can
-    %% be inferred that L1 is 'cons' (the meet of 'cons' and 'list').
-    LType = raw_type(LHS, Ts),
-    RType = raw_type(RHS, Ts),
-    Type = beam_types:meet(LType, RType),
-
-    PosTypes = [{V,Type} || {V, OrigType} <- [{LHS, LType}, {RHS, RType}],
-                            OrigType =/= Type],
-
-    %% We must be careful with types inferred from '=:='.
+infer_type({bif,'and'}, [#b_var{}=LHS,#b_var{}=RHS], Ts, Ds) ->
+    %% When this BIF yields true, we know that both `LHS` and `RHS` are 'true'
+    %% and should infer accordingly, lest we break later optimizations that
+    %% rewrite this BIF to plain control flow.
     %%
-    %% If we have seen L =:= [a], we know that L is 'cons' if the
-    %% comparison succeeds. However, if the comparison fails, L could
-    %% still be 'cons'. Therefore, we must not subtract 'cons' from the
-    %% previous type of L.
-    %%
-    %% However, it is safe to subtract a type inferred from '=:=' if
-    %% it is single-valued, e.g. if it is [] or the atom 'true'.
-    NegTypes = case beam_types:is_singleton_type(Type) of
-                   true -> PosTypes;
-                   false -> []
-               end,
+    %% Note that we can't do anything for the 'false' case as either (or both)
+    %% of the arguments could be false, so we must ignore the negations.
+    #{ LHS := #b_set{op=LHSOp,args=LHSArgs},
+       RHS := #b_set{op=RHSOp,args=RHSArgs} } = Ds,
 
-    {PosTypes, NegTypes};
-infer_type({bif,'=:='}, [#b_var{}=Src,#b_literal{}=Lit], Ts, Ds) ->
-    Def = maps:get(Src, Ds),
-    LitType = raw_type(Lit, Ts),
-    PosTypes = [{Src, LitType} | infer_eq_lit(Def, LitType)],
+    {LHSPos, _} = infer_and_type(LHSOp, LHSArgs, Ts, Ds),
+    {RHSPos, _} = infer_and_type(RHSOp, RHSArgs, Ts, Ds),
 
-    %% Subtraction is only safe if LitType is single-valued.
-    NegTypes = case beam_types:is_singleton_type(LitType) of
-                    true -> PosTypes;
-                    false -> []
-               end,
-
-    {PosTypes, NegTypes};
+    True = beam_types:make_atom(true),
+    {[{LHS, True}, {RHS, True}] ++ LHSPos ++ RHSPos, []};
 infer_type(_Op, _Args, _Ts, _Ds) ->
     {[], []}.
 
 infer_success_type({bif,Op}, Args, Ts, _Ds) ->
-    ArgTypes = normalized_types(Args, Ts),
+    ArgTypes = concrete_types(Args, Ts),
 
     {_, PosTypes0, CanSubtract} = beam_call_types:types(erlang, Op, ArgTypes),
-    PosTypes = [T || {#b_var{},_}=T <- zip(Args, PosTypes0)],
+    PosTypes = zip(Args, PosTypes0),
 
     case CanSubtract of
         true -> {PosTypes, PosTypes};
@@ -1992,22 +2802,51 @@ infer_success_type(bs_match, [#b_literal{val=binary},
 infer_success_type(_Op, _Args, _Ts, _Ds) ->
     {[], []}.
 
-infer_eq_lit(#b_set{op={bif,tuple_size},args=[#b_var{}=Tuple]},
-             #t_integer{elements={Size,Size}}) ->
+infer_eq_type(#b_set{op={bif,tuple_size},args=[#b_var{}=Tuple]},
+              #t_integer{elements={Size,Size}}) ->
     [{Tuple,#t_tuple{exact=true,size=Size}}];
-infer_eq_lit(#b_set{op=get_tuple_element,
-                    args=[#b_var{}=Tuple,#b_literal{val=N}]},
-             LitType) ->
+infer_eq_type(#b_set{op=get_tuple_element,
+                     args=[#b_var{}=Tuple,#b_literal{val=N}]},
+              ElementType) ->
     Index = N + 1,
-    case beam_types:set_tuple_element(Index, LitType, #{}) of
+    case beam_types:set_tuple_element(Index, ElementType, #{}) of
         #{ Index := _ }=Es ->
             [{Tuple,#t_tuple{size=Index,elements=Es}}];
         #{} ->
             %% Index was above the element limit; subtraction is not safe.
             []
     end;
-infer_eq_lit(_, _) ->
+infer_eq_type(_, _) ->
     [].
+
+infer_ne_type(#b_set{op={bif,tuple_size},args=[#b_var{}=Tuple]},
+              #t_integer{elements={Size,Size}}) ->
+    [{Tuple,#t_tuple{exact=true,size=Size}}];
+infer_ne_type(#b_set{op=get_tuple_element,
+                     args=[#b_var{}=Tuple,#b_literal{val=N}]},
+              ElementType) ->
+    Index = N + 1,
+    case {beam_types:is_singleton_type(ElementType),
+          beam_types:set_tuple_element(Index, ElementType, #{})} of
+        {true, #{ Index := _ }=Es} ->
+            [{Tuple,#t_tuple{size=Index,elements=Es}}];
+        {_, #{}} ->
+            %% Subtraction is not safe: either we had a non-singleton element
+            %% type (see inference for `=/=`), or the element index was out of
+            %% range.
+            []
+    end;
+infer_ne_type(_, _) ->
+    [].
+
+infer_and_type(Op, Args, Ts, Ds) ->
+    case inv_relop(Op) of
+        none ->
+            infer_type(Op, Args, Ts, Ds);
+        _InvOp ->
+            {bif,RelOp} = Op,
+            infer_relop(RelOp, Args, concrete_types(Args, Ts), Ds)
+    end.
 
 join_types(Ts, Ts) ->
     Ts;
@@ -2024,7 +2863,16 @@ join_types_1([V | Vs], Bigger, Smaller) ->
     case {Bigger, Smaller} of
         {#{ V := Same }, #{ V := Same }} ->
             join_types_1(Vs, Bigger, Smaller);
-        {#{ V := LHS }, #{ V := RHS }} ->
+        {#{ V := LHS0 }, #{ V := RHS0 }} ->
+            %% Inlined concrete_type/2 for performance.
+            LHS = case is_function(LHS0) of
+                      true -> LHS0(Bigger);
+                      false -> LHS0
+                  end,
+            RHS = case is_function(RHS0) of
+                      true -> RHS0(Smaller);
+                      false -> RHS0
+                  end,
             T = beam_types:join(LHS, RHS),
             join_types_1(Vs, Bigger, Smaller#{ V := T });
         {#{}, #{ V := _ }} ->
@@ -2033,23 +2881,37 @@ join_types_1([V | Vs], Bigger, Smaller) ->
 join_types_1([], _Bigger, Smaller) ->
     Smaller.
 
-meet_types([{V,T0}|Vs], Ts) ->
-    #{V:=T1} = Ts,
+meet_types([{#b_literal{}=Lit, T0} | Vs], Ts) ->
+    T1 = concrete_type(Lit, Ts),
+    case beam_types:meet(T0, T1) of
+        none -> none;
+        _ -> meet_types(Vs, Ts)
+    end;
+meet_types([{#b_var{}=V, T0} | Vs], Ts) ->
+    T1 = concrete_type(V, Ts),
     case beam_types:meet(T0, T1) of
         none -> none;
         T1 -> meet_types(Vs, Ts);
-        T -> meet_types(Vs, Ts#{V:=T})
+        T -> meet_types(Vs, Ts#{ V := T })
     end;
-meet_types([], Ts) -> Ts.
+meet_types([], Ts) ->
+    Ts.
 
-subtract_types([{V,T0}|Vs], Ts) ->
-    #{V:=T1} = Ts,
+subtract_types([{#b_literal{}=Lit, T0} | Vs], Ts) ->
+    T1 = concrete_type(Lit, Ts),
+    case beam_types:subtract(T0, T1) of
+        none -> none;
+        _ -> subtract_types(Vs, Ts)
+    end;
+subtract_types([{#b_var{}=V, T0}|Vs], Ts) ->
+    T1 = concrete_type(V, Ts),
     case beam_types:subtract(T1, T0) of
         none -> none;
         T1 -> subtract_types(Vs, Ts);
-        T -> subtract_types(Vs, Ts#{V:=T})
+        T -> subtract_types(Vs, Ts#{V := T})
     end;
-subtract_types([], Ts) -> Ts.
+subtract_types([], Ts) ->
+    Ts.
 
 parallel_join([A | As], [B | Bs]) ->
     [beam_types:join(A, B) | parallel_join(As, Bs)];
@@ -2067,9 +2929,8 @@ gcd(A, B) ->
 %%%
 
 init_metadata(FuncId, Linear, Params) ->
-    {RetCounter, Map0} = init_metadata_1(reverse(Linear), 0, #{}),
-    Map = maps:without(Params, Map0),
-    UsedOnce = cerl_sets:from_list(maps:keys(Map)),
+    {RetCounter, UsedOnce0} = init_metadata_1(reverse(Linear), 0, #{}),
+    UsedOnce = maps:without(Params, UsedOnce0),
 
     #metadata{ func_id = FuncId,
                limit_return = (RetCounter >= ?RETURN_LIMIT),
@@ -2084,11 +2945,11 @@ init_metadata_1([{L,#b_blk{is=Is,last=Last}} | Bs], RetCounter0, Uses0) ->
                      _ -> RetCounter0
                  end,
 
-    %% Calculate the set of variables that are only used once in the terminator
-    %% of the block that defines them. That will allow us to discard type
-    %% information discard type information for variables that will never be
-    %% referenced by the successor blocks, potentially improving compilation
-    %% times.
+    %% Calculate the set of variables that are only used once in the
+    %% terminator of the block that defines them. That will allow us
+    %% to discard type information for variables that will never be
+    %% referenced by the successor blocks, potentially improving
+    %% compilation times.
 
     Uses1 = used_once_last_uses(beam_ssa:used(Last), L, Uses0),
     Uses = used_once_2(reverse(Is), L, Uses1),
@@ -2099,7 +2960,7 @@ init_metadata_1([], RetCounter, Uses) ->
 used_once_2([#b_set{dst=Dst}=I|Is], L, Uses0) ->
     Uses = used_once_uses(beam_ssa:used(I), L, Uses0),
     case Uses of
-        #{Dst:=[L]} ->
+        #{Dst:=L} ->
             used_once_2(Is, L, Uses);
         #{} ->
             %% Used more than once or used once in
@@ -2121,15 +2982,15 @@ used_once_uses([], _, Uses) -> Uses.
 
 used_once_last_uses([V|Vs], L, Uses) ->
     case Uses of
-        #{V:=[_]} ->
-            %% Second time this variable is used.
-            used_once_last_uses(Vs, L, Uses#{V:=more_than_once});
         #{V:=more_than_once} ->
             %% Used at least twice before.
             used_once_last_uses(Vs, L, Uses);
+        #{V:=_} ->
+            %% Second time this variable is used.
+            used_once_last_uses(Vs, L, Uses#{V:=more_than_once});
         #{} ->
             %% First time this variable is used.
-            used_once_last_uses(Vs, L, Uses#{V=>[L]})
+            used_once_last_uses(Vs, L, Uses#{V=>L})
     end;
 used_once_last_uses([], _, Uses) -> Uses.
 
@@ -2175,7 +3036,7 @@ wl_changed(#worklist{counter=Same}, #worklist{counter=Same}) -> false;
 wl_changed(#worklist{}, #worklist{}) -> true.
 
 %% Adds the given elements to the back of the worklist, skipping the elements
-%% that are already present. This lets us append elements arbitrarly after the
+%% that are already present. This lets us append elements arbitrarily after the
 %% current front without changing the work order.
 wl_defer_list(Elements, #worklist{counter=Counter,elements=Es,indexes=Is}) ->
     wl_defer_list_1(Elements, Counter, Es, Is).

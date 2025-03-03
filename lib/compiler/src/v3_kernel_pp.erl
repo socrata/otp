@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2018. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -56,6 +56,8 @@ format(Node, Ctxt) ->
 	[] ->
 	    format_1(Node, Ctxt);
 	[L,{file,_}] when is_integer(L) ->
+	    format_1(Node, Ctxt);
+	[{L,C},{file,_}] when is_integer(L), is_integer(C) ->
 	    format_1(Node, Ctxt);
 	List ->
 	    format_anno(List, Ctxt, fun (Ctxt1) ->
@@ -137,7 +139,7 @@ format_1(#k_bin_end{}, _Ctxt) -> "#<>#";
 format_1(#k_literal{val=A}, _Ctxt) when is_atom(A) ->
     core_atom(A);
 format_1(#k_literal{val=Term}, _Ctxt) ->
-    io_lib:format("~p", [Term]);
+    io_lib:format("~kp", [Term]);
 format_1(#k_local{name=N,arity=A}, Ctxt) ->
     "local " ++ format_fa_pair({N,A}, Ctxt);
 format_1(#k_remote{mod=M,name=N,arity=A}, _Ctxt) ->
@@ -171,10 +173,11 @@ format_1(#k_alt{first=O,then=T}, Ctxt) ->
      format(O, Ctxt1),
      nl_indent(Ctxt1),
      format(T, Ctxt1)];
-format_1(#k_letrec_goto{label=Label,first=First,then=Then,ret=Rs}, Ctxt) ->
+format_1(#k_letrec_goto{label=Label,vars=Vs,first=First,then=Then,ret=Rs}, Ctxt) ->
     Ctxt1 = ctxt_bump_indent(Ctxt, Ctxt#ctxt.item_indent),
     ["letrec_goto ",
      atom_to_list(Label),
+     format_args(Vs, Ctxt),
      nl_indent(Ctxt1),
      format(Then, Ctxt1),
      nl_indent(Ctxt1),
@@ -183,8 +186,8 @@ format_1(#k_letrec_goto{label=Label,first=First,then=Then,ret=Rs}, Ctxt) ->
      "end",
      format_ret(Rs, Ctxt1)
     ];
-format_1(#k_goto{label=Label}, _Ctxt) ->
-    ["goto ",atom_to_list(Label)];
+format_1(#k_goto{label=Label,args=As}, Ctxt) ->
+    ["goto ",atom_to_list(Label),format_args(As, Ctxt)];
 format_1(#k_select{var=V,types=Cs}, Ctxt) ->
     Ctxt1 = ctxt_bump_indent(Ctxt, 2),
     ["select ",
@@ -353,6 +356,8 @@ format_1(#ifun{vars=Vs,body=B}, Ctxt) ->
      nl_indent(Ctxt1)
      | format(B, Ctxt1)
     ];
+format_1(#k_opaque{val=V}, _Ctxt) ->
+    ["** Opaque: ", io_lib:write(V), " **\n"];
 format_1(Type, _Ctxt) ->
     ["** Unsupported type: ",
      io_lib:write(Type)

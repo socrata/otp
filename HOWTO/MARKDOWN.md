@@ -183,7 +183,7 @@ places. Appropriate attributes to the `X` tag will also be generated.
     contain information from a \%CopyrightBegin\%, \%CopyrightEnd\% block
     if such exist (see below).
 
-*   A level `X` heading where `1 < X <= 6` will cause the the following
+*   A level `X` heading where `1 < X <= 6` will cause the following
     to be generated:
 
         <section>
@@ -202,14 +202,14 @@ places. Appropriate attributes to the `X` tag will also be generated.
     This way it is relatively easy to make sure that all marker ids of a
     document are unique, but there is of course no guarantee that they are.
 
-    The upside of these auto generated markers is that we wont have to clutter
+    The upside of these auto generated markers is that we won't have to clutter
     the document with XML or something else while being able to refer into
     the document. The downside is that if you change a level 2 heading you
     change a lot of marker ids which may break links into a document from
     other documents. That is, *be careful* when changing headings in an
     existing document.
 
-*   A level `X` heading where `6 < X` will cause the the following
+*   A level `X` heading where `6 < X` will cause the following
     to be generated:
 
         <marker id="..."/>
@@ -247,7 +247,7 @@ Copyright and License
 
 %CopyrightBegin%
 
-Copyright Ericsson AB 2010-2013. All Rights Reserved.
+Copyright Ericsson AB 2010-2023. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

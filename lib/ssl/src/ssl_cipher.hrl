@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 %%
 %%----------------------------------------------------------------------
-%% Purpose: Record and constant defenitions for the SSL ciphers and
+%% Purpose: Record and constant definitions for the SSL ciphers and
 %% the SSL-cipher protocol see RFC 4346, RFC 3268
 %%----------------------------------------------------------------------
 
@@ -34,7 +34,8 @@
          pre_shared_key,
          ticket_age_add,
          lifetime,
-         timestamp
+         timestamp,
+         certificate
         }).
 
 %%% SSL cipher protocol  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -259,6 +260,18 @@
 
 %%      TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA   = { 0xC0, 0x0A }
 -define(TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, <<?BYTE(16#C0), ?BYTE(16#0A)>>).
+
+%%      TLS_ECDHE_ECDSA_WITH_AES_128_CCM       = {0xC0,0xAC}
+-define(TLS_ECDHE_ECDSA_WITH_AES_128_CCM, <<?BYTE(16#C0), ?BYTE(16#AC)>>).
+
+%%      TLS_ECDHE_ECDSA_WITH_AES_256_CCM       = {0xC0,0xAD}
+-define(TLS_ECDHE_ECDSA_WITH_AES_256_CCM, <<?BYTE(16#C0), ?BYTE(16#AD)>>).
+
+%%      TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8     = {0xC0,0xAE}
+-define(TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8, <<?BYTE(16#C0), ?BYTE(16#AE)>>).
+
+%%      TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8     = {0xC0,0xAF}
+-define(TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8, <<?BYTE(16#C0), ?BYTE(16#AF)>>).
 
 %% ECDH_RSA
 

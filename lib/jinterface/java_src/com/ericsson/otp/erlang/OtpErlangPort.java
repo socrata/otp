@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2016. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2021. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,12 +27,12 @@ public class OtpErlangPort extends OtpErlangObject {
     private static final long serialVersionUID = 4037115468007644704L;
 
     private final String node;
-    private final int id;
+    private final long id;
     private final int creation;
 
     /*
      * Create a unique Erlang port belonging to the local node. Since it isn't
-     * meaninful to do so, this constructor is private...
+     * meaningful to do so, this constructor is private...
      *
      * @param self the local node.
      *
@@ -77,10 +77,10 @@ public class OtpErlangPort extends OtpErlangObject {
      *            an arbitrary number. Only the low order 28 bits will be used.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be used.
+	 *  		  node incarnation number. Avoid values 0 to 3.
      */
-    public OtpErlangPort(final String node, final int id, final int creation) {
-        this(OtpExternal.portTag, node, id, creation);
+    public OtpErlangPort(final String node, final long id, final int creation) {
+		this(OtpExternal.newPortTag, node, id, creation);
     }
 
     /**
@@ -100,7 +100,7 @@ public class OtpErlangPort extends OtpErlangObject {
      * @param creation
      *            another arbitrary number.
      */
-    public OtpErlangPort(final int tag, final String node, final int id,
+    public OtpErlangPort(final int tag, final String node, final long id,
 			 final int creation) {
 	this.node = node;
 	if (tag == OtpExternal.portTag) {
@@ -122,7 +122,7 @@ public class OtpErlangPort extends OtpErlangObject {
      *
      * @return the id number from the port.
      */
-    public int id() {
+    public long id() {
         return id;
     }
 
@@ -191,7 +191,8 @@ public class OtpErlangPort extends OtpErlangObject {
     protected int doHashCode() {
         final OtpErlangObject.Hash hash = new OtpErlangObject.Hash(6);
         hash.combine(creation);
-        hash.combine(id, node.hashCode());
+        hash.combine(id);
+        hash.combine(node.hashCode());
         return hash.valueOf();
     }
 }

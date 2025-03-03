@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1999-2020. All Rights Reserved.
+# Copyright Ericsson AB 1999-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ RELSYSDIR = $(RELEASE_PATH)/lib/ssl-$(VSN)
 # ----------------------------------------------------
 
 BEHAVIOUR_MODULES= \
+	ssl_trace \
 	ssl_crl_cache_api \
 	ssl_session_cache_api
 
@@ -47,9 +48,12 @@ MODULES= \
 	dtls_connection \
 	dtls_connection_sup \
 	dtls_handshake \
+	dtls_gen_connection \
 	dtls_listener_sup \
 	dtls_packet_demux \
 	dtls_record \
+	dtls_server_sup\
+	dtls_server_session_cache_sup\
 	dtls_sup \
 	dtls_socket \
 	dtls_v1 \
@@ -62,8 +66,8 @@ MODULES= \
 	ssl_certificate \
 	ssl_cipher \
 	ssl_cipher_format \
+	ssl_client_session_cache_db \
 	ssl_config \
-	ssl_connection \
 	ssl_connection_sup \
 	ssl_crl \
 	ssl_crl_cache \
@@ -72,6 +76,7 @@ MODULES= \
 	ssl_dist_admin_sup \
 	ssl_dist_connection_sup \
 	ssl_dist_sup \
+        ssl_gen_statem \
 	ssl_handshake \
 	ssl_listen_tracker_sup \
 	ssl_logger \
@@ -79,19 +84,29 @@ MODULES= \
 	ssl_pem_cache \
 	ssl_pkix_db \
 	ssl_record \
+	ssl_server_session_cache \
+	ssl_server_session_cache_db \
+	ssl_server_session_cache_sup \
+	ssl_upgrade_server_session_cache_sup \
 	ssl_session \
-	ssl_session_cache \
 	ssl_srp_primes \
 	ssl_sup \
 	tls_bloom_filter \
+	tls_dtls_connection \
 	tls_connection \
 	tls_connection_sup \
-	tls_connection_1_3 \
+	tls_server_connection_1_3 \
+	tls_client_connection_1_3 \
+	tls_gen_connection_1_3 \
+        tls_gen_connection \
 	tls_handshake \
 	tls_handshake_1_3 \
 	tls_record \
 	tls_record_1_3 \
 	tls_client_ticket_store \
+	tls_dist_sup \
+	tls_dist_server_sup \
+	tls_dyn_connection_sup\
 	tls_sender \
 	tls_server_session_ticket\
 	tls_server_session_ticket_sup\
@@ -151,22 +166,26 @@ endif
 # ----------------------------------------------------
 # FLAGS
 # ----------------------------------------------------
-EXTRA_ERLC_FLAGS = +warn_unused_vars
+EXTRA_ERLC_FLAGS = +warn_unused_vars -Werror
 ERL_COMPILE_FLAGS += -I$(ERL_TOP)/lib/kernel/src \
 	-pz $(EBIN) \
 	-pz $(ERL_TOP)/lib/public_key/ebin \
-	$(EXTRA_ERLC_FLAGS) -DVSN=\"$(VSN)\"
+	$(EXTRA_ERLC_FLAGS) -DVSN=\"$(VSN)\" 
 
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
+
+$(TYPES): $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) $(DEP_FILE)
+
+deps: $(DEP_FILE)
 
 $(TARGET_FILES): $(BEHAVIOUR_TARGET_FILES)
 
 $(DEP_FILE): $(ERL_FILES)
 	@echo SED $(TARGET) $(ERL_TOP_NATIVE)
 	$(gen_verbose)erlc -M $(ERL_FILES) \
-	| sed "s@[a-zA-Z]\?$(ERL_TOP_NATIVE)@../../..@g" \
+	| perl -pe "s@ [a-zA-Z]?$(ERL_TOP_NATIVE)/(?:bootstrap/)?lib/([^/]+)@ ../../\1@g" 2> /dev/null \
 	| sed "s/\.$(EMULATOR)/\.$$\(EMULATOR\)/" \
 	| sed 's@^dtls_@$$(EBIN)/dtls_@' \
 	| sed 's@^inet_@$$(EBIN)/inet_@' \
@@ -174,7 +193,6 @@ $(DEP_FILE): $(ERL_FILES)
 	| sed 's@^tls_@$$(EBIN)/tls_@' \
 	> $(DEP_FILE)
 
-debug opt: $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) $(DEP_FILE)
 
 clean:
 	rm -f $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) $(BEHAVIOUR_TARGET_FILES) 

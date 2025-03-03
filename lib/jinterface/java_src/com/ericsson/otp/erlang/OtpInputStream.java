@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2016. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2021. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -750,7 +750,7 @@ public class OtpInputStream extends ByteArrayInputStream {
             nb = new byte[4];
             if (this.readN(nb) != 4) { // Big endian
                 throw new OtpErlangDecodeException(
-                        "Cannot read from intput stream");
+                        "Cannot read from input stream");
             }
             break;
 
@@ -775,7 +775,7 @@ public class OtpInputStream extends ByteArrayInputStream {
             // with one zero byte to make the value 2's complement positive.
             if (this.readN(nb, 0, arity) != arity) {
                 throw new OtpErlangDecodeException(
-                        "Cannot read from intput stream");
+                        "Cannot read from input stream");
             }
             // Reverse the array to make it big endian.
             for (int i = 0, j = nb.length; i < j--; i++) {
@@ -997,26 +997,34 @@ public class OtpInputStream extends ByteArrayInputStream {
      */
     public OtpErlangPort read_port() throws OtpErlangDecodeException {
         String node;
-        int id;
+        long id;
         int creation;
         int tag;
 
         tag = read1skip_version();
 
         if (tag != OtpExternal.portTag &&
-	    tag != OtpExternal.newPortTag) {
+	    tag != OtpExternal.newPortTag &&
+	    tag != OtpExternal.v4PortTag) {
             throw new OtpErlangDecodeException(
                     "Wrong tag encountered, expected " + OtpExternal.portTag
-		    + " or " + OtpExternal.newPortTag
-                            + ", got " + tag);
+		    + ", " + OtpExternal.newPortTag + ", or "
+                     + OtpExternal.v4PortTag + ", got " + tag);
         }
 
         node = read_atom();
-        id = read4BE();
-	if (tag == OtpExternal.portTag)
-	    creation = read1();
-	else
+        if (tag == OtpExternal.v4PortTag) {
+            id = read8BE();
+	    creation = read4BE();            
+        }
+        else if (tag == OtpExternal.newPortTag) {
+            id = (long) read4BE();
 	    creation = read4BE();
+        }
+        else {
+            id = read4BE();
+	    creation = read1();
+        }
 
         return new OtpErlangPort(tag, node, id, creation);
     }
@@ -1047,7 +1055,7 @@ public class OtpInputStream extends ByteArrayInputStream {
         case OtpExternal.newRefTag:
         case OtpExternal.newerRefTag:
             final int arity = read2BE();
-            if (arity > 3) {
+            if (arity > 5) {
 		throw new OtpErlangDecodeException(
 		    "Ref arity " + arity + " too large ");
 	    }
@@ -1239,6 +1247,7 @@ public class OtpInputStream extends ByteArrayInputStream {
 
         case OtpExternal.portTag:
         case OtpExternal.newPortTag:
+        case OtpExternal.v4PortTag:
             return new OtpErlangPort(this);
 
         case OtpExternal.pidTag:
@@ -1281,7 +1290,7 @@ public class OtpInputStream extends ByteArrayInputStream {
 	    return new OtpErlangExternalFun(this);
 
         default:
-            throw new OtpErlangDecodeException("Uknown data type: " + tag);
+            throw new OtpErlangDecodeException("Unknown data type: " + tag);
         }
     }
 

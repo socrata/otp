@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 1996-2020. All Rights Reserved.
+# Copyright Ericsson AB 1996-2023. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ XMLDIR := $(XMLDIR)/general_info
 # ----------------------------------------------------
 # Release directory specification
 # ----------------------------------------------------
-RELSYSDIR = "$(RELEASE_PATH)/doc/general_info"
+RELSYSDIR = $(RELEASE_PATH)/doc/general_info
 
 # ----------------------------------------------------
 # Target Specs
@@ -85,12 +85,14 @@ debug opt:
 
 DEPRECATIONS_SCRIPT = $(ERL_TOP)/lib/stdlib/scripts/update_deprecations
 
-$(XMLDIR)/deprecations.xml: DEPRECATIONS
+$(XMLDIR)/deprecations.xml: DEPRECATIONS $(wildcard deprecations_*.inc)
 	$(gen_verbose)escript $(DEPRECATIONS_SCRIPT) make_xml deprecations $(ERL_TOP) $@
 
-$(XMLDIR)/scheduled_for_removal.xml: DEPRECATIONS
-	$(gen_verbose)escript $(DEPRECATIONS_SCRIPT) make_xml removals $(ERL_TOP) $@
+$(XMLDIR)/scheduled_for_removal.xml: DEPRECATIONS $(wildcard scheduled_*.inc)
+	$(gen_verbose)escript $(DEPRECATIONS_SCRIPT) make_xml scheduled_for_removal $(ERL_TOP) $@
 
+$(XMLDIR)/removed.xml: DEPRECATIONS $(wildcard removed_*.inc)
+	$(gen_verbose)escript $(DEPRECATIONS_SCRIPT) make_xml removed $(ERL_TOP) $@
 
 clean clean_docs:
 	rm -f $(XMLDIR)/*.xml
@@ -106,7 +108,7 @@ include $(ERL_TOP)/make/otp_release_targets.mk
 release_html_spec: html
 	$(INSTALL_DIR) "$(RELSYSDIR)"
 	$(INSTALL_DATA) $(GIF_FILES) $(EXTRA_FILES) $(HTMLDIR)/*.html \
-		$(RELSYSDIR)
+		"$(RELSYSDIR)"
 
 release_docs_spec: $(DOC_TARGETS:%=release_%_spec)
 

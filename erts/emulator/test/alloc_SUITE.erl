@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2003-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@
 
 -module(alloc_SUITE).
 -author('rickard.green@uab.ericsson.se').
--export([all/0, suite/0, init_per_testcase/2, end_per_testcase/2]).
-
+-export([all/0, suite/0, init_per_testcase/2, end_per_testcase/2,
+	 init_per_suite/1, end_per_suite/1]).
 -export([basic/1,
 	 coalesce/1,
 	 threads/1,
@@ -32,7 +32,11 @@
 	 erts_mmap/1,
 	 cpool/1,
          set_dyn_param/1,
-	 migration/1]).
+	 migration/1,
+         cpool_opt/1]).
+
+%% Internal export
+-export([run_drv_case/2]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -43,13 +47,26 @@ suite() ->
 all() -> 
     [basic, coalesce, threads, realloc_copy, bucket_index,
      set_dyn_param,
-     bucket_mask, rbtree, mseg_clear_cache, erts_mmap, cpool, migration].
+     bucket_mask, rbtree, mseg_clear_cache, erts_mmap, cpool, migration,
+     cpool_opt].
+
+init_per_suite(Config) ->
+    case test_server:memory_checker() of
+	MC when MC =:= valgrind; MC =:= asan ->
+	    %% No point testing own allocators under valgrind or asan.
+	    {skip, "Memory checker " ++ atom_to_list(MC)};
+	none ->
+	    Config
+    end.
+
+end_per_suite(_Config) ->
+    ok.
 
 init_per_testcase(Case, Config) when is_list(Config) ->
-    [{testcase, Case},{debug,false}|Config].
+    [{testcase, Case}|Config].
 
 end_per_testcase(_Case, Config) when is_list(Config) ->
-    ok.
+    erts_test_utils:ept_check_leaked_nodes(Config).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%                                                                        %%
@@ -70,14 +87,53 @@ migration(Cfg) ->
     %% Enable test_alloc.
     %% Disable driver_alloc to avoid recursive alloc_util calls
     %% through enif_mutex_create() in my_creating_mbc().
-    drv_case(Cfg, concurrent, "+MZe true +MRe false"),
-    drv_case(Cfg, concurrent, "+MZe true +MRe false +MZas ageffcbf"),
-    drv_case(Cfg, concurrent, "+MZe true +MRe false +MZas chaosff").
+    drv_case(Cfg, concurrent, ["+MZe", "true", "+MRe", "false"]),
+    drv_case(Cfg, concurrent, ["+MZe", "true", "+MRe", "false", "+MZas", "ageffcbf"]),
+    drv_case(Cfg, concurrent, ["+MZe", "true", "+MRe", "false", "+MZas", "chaosff"]).
+
+cpool_opt(Config) when is_list(Config) ->
+    {ok, PeerA, NodeA} = ?CT_PEER(["+Mue", "true", "+Mut", "true", "+Muacul", "de", "+Mucp", "@"]),
+    {cp, '@'} = get_cp_opt(NodeA, binary_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, std_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, ets_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, fix_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, eheap_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, ll_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, driver_alloc),
+    {cp, '@'} = get_cp_opt(NodeA, sl_alloc),
+    peer:stop(PeerA),
+    {ok, PeerB, NodeB} = ?CT_PEER(["+Mue", "true", "+Mut", "true", "+Muacul", "de", "+Mucp", ":"]),
+    {cp, 'B'} = get_cp_opt(NodeB, binary_alloc),
+    {cp, 'D'} = get_cp_opt(NodeB, std_alloc),
+    {cp, 'E'} = get_cp_opt(NodeB, ets_alloc),
+    {cp, 'F'} = get_cp_opt(NodeB, fix_alloc),
+    {cp, 'H'} = get_cp_opt(NodeB, eheap_alloc),
+    {cp, 'L'} = get_cp_opt(NodeB, ll_alloc),
+    {cp, 'R'} = get_cp_opt(NodeB, driver_alloc),
+    {cp, 'S'} = get_cp_opt(NodeB, sl_alloc),
+    peer:stop(PeerB),
+    {ok, PeerC, NodeC} = ?CT_PEER(["+Mue", "true", "+Mut", "true", "+Muacul", "de", "+Mucp", ":", "+MEcp", "H"]),
+    {cp, 'B'} = get_cp_opt(NodeC, binary_alloc),
+    {cp, 'D'} = get_cp_opt(NodeC, std_alloc),
+    {cp, 'H'} = get_cp_opt(NodeC, ets_alloc),
+    {cp, 'F'} = get_cp_opt(NodeC, fix_alloc),
+    {cp, 'H'} = get_cp_opt(NodeC, eheap_alloc),
+    {cp, 'L'} = get_cp_opt(NodeC, ll_alloc),
+    {cp, 'R'} = get_cp_opt(NodeC, driver_alloc),
+    {cp, 'S'} = get_cp_opt(NodeC, sl_alloc),
+    peer:stop(PeerC).
+
+get_cp_opt(Node, Alloc) ->
+    AInfo = rpc:call(Node, erlang, system_info, [{allocator,Alloc}]),
+    {instance, 1, IList} = lists:keyfind(1, 2, AInfo),
+    {options, OList} = lists:keyfind(options, 1, IList),
+    lists:keyfind(cp, 1, OList).
+    
 
 erts_mmap(Config) when is_list(Config) ->
     case {os:type(), mmsc_flags()} of
 	{{unix,_}, false} ->
-	    [erts_mmap_do(Config, SCO, SCRPM, SCRFSD)
+	    [erts_mmap_do(SCO, SCRPM, SCRFSD)
 	     || SCO <-[true,false], SCRFSD <-[1234,0], SCRPM <- [true,false]];
 	{{unix,_}, Flags} ->
 	    {skipped, Flags};
@@ -103,23 +159,21 @@ mmsc_flags(Env) ->
             end
     end.
 
-erts_mmap_do(Config, SCO, SCRPM, SCRFSD) ->
+erts_mmap_do(SCO, SCRPM, SCRFSD) ->
     %% We use the number of schedulers + 1 * approx main carriers size
     %% to calculate how large the super carrier has to be
     %% and then use a minimum of 100 for systems with a low amount of
     %% schedulers
     Schldr = erlang:system_info(schedulers_online)+1,
     SCS = max(round((262144 * 6 + 3 * 1048576) * Schldr / 1024 / 1024),100),
-    O1 = "+MMscs" ++ integer_to_list(SCS)
-	++ " +MMsco" ++ atom_to_list(SCO)
-	++ " +MMscrpm" ++ atom_to_list(SCRPM),
+    O1 = ["+MMscs" ++ integer_to_list(SCS),
+	"+MMsco" ++ atom_to_list(SCO),
+	"+MMscrpm" ++ atom_to_list(SCRPM)],
     Opts = case SCRFSD of
 	       0 -> O1;
-	       _ -> O1 ++ " +MMscrfsd"++integer_to_list(SCRFSD)
+	       _ -> O1 ++ ["+MMscrfsd"++integer_to_list(SCRFSD)]
 	   end,
-    {ok, Node} = start_node(Config, Opts, []),
-    Self = self(),
-    Ref = make_ref(),
+    {ok, Peer, Node} = ?CT_PEER(Opts),
     F = fun() ->
                 SI = erlang:system_info({allocator,erts_mmap}),
                 {default_mmap,EM} = lists:keyfind(default_mmap, 1, SI),
@@ -138,12 +192,12 @@ erts_mmap_do(Config, SCO, SCRPM, SCRFSD) ->
                     {false, {os,_}} -> ok
                 end,
 
-                Self ! {Ref, ok}
+                exit(ok)
         end,
 
-    spawn_link(Node, F),
-    Result = receive {Ref, Rslt} -> Rslt end,
-    stop_node(Node),
+    {Pid, MRef} = spawn_monitor(Node, F),
+    Result = receive {'DOWN', MRef, process, Pid, Rslt} -> Rslt end,
+    peer:stop(Peer),
     Result.
 
 
@@ -234,18 +288,11 @@ drv_case(Config) ->
 drv_case(Config, Mode, NodeOpts) when is_list(Config) ->
     case os:type() of
 	{Family, _} when Family == unix; Family == win32 ->
-            %%Prog = {prog,"/my/own/otp/bin/cerl -debug"},
-            Prog = [],
-	    {ok, Node} = start_node(Config, NodeOpts, Prog),
-	    Self = self(),
-	    Ref = make_ref(),
-	    spawn_link(Node,
-			     fun () ->
-				     Res = run_drv_case(Config, Mode),
-				     Self ! {Ref, Res}
-			     end),
-	    Result = receive {Ref, Rslt} -> Rslt end,
-	    stop_node(Node),
+            %% ?CT_PEER(#{exec => {"/usr/local/bin/erl", ["-emu_type", "debug"]}})
+            TC = proplists:get_value(testcase, Config),
+	    {ok, Peer, Node} = ?CT_PEER(#{name => ?CT_PEER_NAME(TC), args => NodeOpts}),
+            Result = erpc:call(Node, ?MODULE, run_drv_case, [Config, Mode]),
+	    peer:stop(Peer),
 	    Result;
 	SkipOs ->
 	    {skipped,
@@ -434,48 +481,21 @@ handle_result(_State, Result0) ->
 	    continue
     end.
 
-start_node(Config, Opts, Prog) when is_list(Config), is_list(Opts) ->
-    case proplists:get_value(debug,Config) of
-	true -> {ok, node()};
-	_ -> start_node_1(Config, Opts, Prog)
-    end.
-
-start_node_1(Config, Opts, Prog) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    Name = list_to_atom(atom_to_list(?MODULE)
-			++ "-"
-			++ atom_to_list(proplists:get_value(testcase, Config))
-			++ "-"
-			++ integer_to_list(erlang:system_time(second))
-			++ "-"
-			++ integer_to_list(erlang:unique_integer([positive]))),
-    ErlArg = case Prog of
-                 [] -> [];
-                 _ -> [{erl,[Prog]}]
-             end,
-    test_server:start_node(Name, slave, [{args, Opts++" -pa "++Pa} | ErlArg]).
-
-stop_node(Node) when Node =:= node() -> ok;
-stop_node(Node) ->
-    test_server:stop_node(Node).
-
 free_memory() ->
     %% Free memory in MB.
     try
 	SMD = memsup:get_system_memory_data(),
-	{value, {free_memory, Free}} = lists:keysearch(free_memory, 1, SMD),
-	TotFree = (Free +
-		   case lists:keysearch(cached_memory, 1, SMD) of
-		       {value, {cached_memory, Cached}} -> Cached;
-		       false -> 0
-		   end +
-		   case lists:keysearch(buffered_memory, 1, SMD) of
-		       {value, {buffered_memory, Buffed}} -> Buffed;
-		       false -> 0
-		   end),
+        TotFree = proplists:get_value(
+                    available_memory, SMD,
+                    proplists:get_value(free_memory, SMD) +
+                        proplists:get_value(cached_memory, SMD, 0) +
+                        proplists:get_value(buffered_memory, SMD, 0)
+                   ),
 	TotFree div (1024*1024)
     catch
 	error : undef ->
 	    ct:fail({"os_mon not built"})
     end.
+
+
 

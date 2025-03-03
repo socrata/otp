@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2003-2020. All Rights Reserved.
+# Copyright Ericsson AB 2003-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,6 +39,9 @@ RELSYSDIR = $(RELEASE_PATH)/lib/common_test-$(VSN)
 # ----------------------------------------------------
 # Target Specs
 # ----------------------------------------------------
+
+BEHAVIOUR_MODULES= \
+	ct_suite
 
 MODULES= \
 	ct \
@@ -88,9 +91,13 @@ MODULES= \
 
 
 TARGET_MODULES= $(MODULES:%=$(EBIN)/%)
-BEAM_FILES= $(MODULES:%=$(EBIN)/%.$(EMULATOR))
+BEAM_FILES= $(MODULES:%=$(EBIN)/%.$(EMULATOR)) \
+			$(BEHAVIOUR_MODULES:%=$(EBIN)/%.$(EMULATOR))
 
-ERL_FILES= $(MODULES:=.erl)
+ERL_FILES= \
+	$(MODULES:=.erl) \
+	$(BEHAVIOUR_MODULES:%=%.erl)
+
 HRL_FILES = \
 	ct_util.hrl \
 	ct_netconfc.hrl
@@ -126,7 +133,7 @@ APPUP_FILE= common_test.appup
 APPUP_SRC= $(APPUP_FILE).src
 APPUP_TARGET= $(EBIN)/$(APPUP_FILE)
 
-tests debug opt: $(TARGET_FILES)
+tests $(TYPES): $(TARGET_FILES)
 
 docs:
 

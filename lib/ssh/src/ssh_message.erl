@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -33,11 +33,15 @@
 -export([encode/1, decode/1, decode_keyboard_interactive_prompts/2]).
 -export([ssh2_pubkey_decode/1,
          ssh2_pubkey_encode/1,
-         ssh2_privkey_decode2/1]).
+         ssh2_privkey_decode2/1,
+         oid2ssh_curvename/1,
+         ssh_curvename2oid/1,
+         %% experimental:
+         ssh2_privkey_encode/1
+        ]).
 
 -behaviour(ssh_dbg).
 -export([ssh_dbg_trace_points/0, ssh_dbg_flags/1, ssh_dbg_on/1, ssh_dbg_off/1, ssh_dbg_format/2]).
-
 
 ucl(B) ->
     try unicode:characters_to_list(B) of
@@ -170,7 +174,7 @@ encode(#ssh_msg_userauth_pk_ok{
     <<?Ebyte(?SSH_MSG_USERAUTH_PK_OK), ?Estring(Alg), ?Ebinary(KeyBlob)>>;
 
 encode(#ssh_msg_userauth_passwd_changereq{prompt = Prompt,
-					  languge = Lang
+					  language = Lang
 					 })->
     <<?Ebyte(?SSH_MSG_USERAUTH_PASSWD_CHANGEREQ), ?Estring_utf8(Prompt), ?Estring(Lang)>>;
 
@@ -366,13 +370,25 @@ decode(<<?BYTE(?SSH_MSG_CHANNEL_CLOSE),  ?UINT32(Recipient)>>) ->
        recipient_channel = Recipient
       };
 decode(<<?BYTE(?SSH_MSG_CHANNEL_REQUEST), ?UINT32(Recipient),
-	 ?DEC_BIN(RequestType,__0), ?BYTE(Bool), Data/binary>>) ->
-    #ssh_msg_channel_request{
-       recipient_channel = Recipient,
-       request_type = ?unicode_list(RequestType),
-       want_reply = erl_boolean(Bool),
-       data  = Data
-      };
+	 ?DEC_BIN(RequestType,__0), ?BYTE(Bool), Data/binary>>=Bytes) ->
+    try
+        #ssh_msg_channel_request{
+           recipient_channel = Recipient,
+           request_type = ?unicode_list(RequestType),
+           want_reply = erl_boolean(Bool),
+           data  = Data
+          }
+    catch _:_ ->
+            %% Faulty, RFC4254 says:
+            %% "If the request is not recognized or is not
+            %% supported for the channel, SSH_MSG_CHANNEL_FAILURE is returned."
+            %% So we provoke such a message to be sent
+            #ssh_msg_channel_request{
+               recipient_channel = Recipient,
+               request_type = faulty_msg,
+               data = Bytes
+              }
+    end;
 decode(<<?BYTE(?SSH_MSG_CHANNEL_SUCCESS),  ?UINT32(Recipient)>>) ->
     #ssh_msg_channel_success{
        recipient_channel = Recipient
@@ -424,7 +440,7 @@ decode(<<?BYTE(?SSH_MSG_USERAUTH_INFO_REQUEST),
 decode(<<?BYTE(?SSH_MSG_USERAUTH_PASSWD_CHANGEREQ), ?DEC_BIN(Prompt,__0), ?DEC_BIN(Lang,__1) >>) ->
     #ssh_msg_userauth_passwd_changereq{
        prompt = Prompt,
-       languge = Lang
+       language = Lang
       };
 
 %%% Unhandled message, also masked by same 1:st byte value as ?SSH_MSG_USERAUTH_INFO_REQUEST:
@@ -557,16 +573,29 @@ decode(<<?BYTE(?SSH_MSG_DEBUG), ?BYTE(Bool), ?DEC_BIN(Msg,__0), ?DEC_BIN(Lang,__
 %%%-------- public key --------
 ssh2_pubkey_encode(#'RSAPublicKey'{modulus = N, publicExponent = E}) ->
     <<?STRING(<<"ssh-rsa">>), ?Empint(E), ?Empint(N)>>;
+
 ssh2_pubkey_encode({Y,  #'Dss-Parms'{p = P, q = Q, g = G}}) ->
     <<?STRING(<<"ssh-dss">>), ?Empint(P), ?Empint(Q), ?Empint(G), ?Empint(Y)>>;
+
+ssh2_pubkey_encode({#'ECPoint'{point = Q}, {namedCurve,OID}}) when OID == ?'id-Ed25519' orelse
+                                                                   OID == ?'id-Ed448' ->
+    {KeyType, _} = oid2ssh_curvename(OID),
+    <<?STRING(KeyType), ?Estring(Q)>>;
+
+ssh2_pubkey_encode(#'ECPrivateKey'{parameters = {namedCurve,OID},
+                                   publicKey = Key}) when OID == ?'id-Ed25519' orelse
+                                                          OID == ?'id-Ed448' ->
+    {KeyType, _} = oid2ssh_curvename(OID),
+    <<?STRING(KeyType), ?Estring(Key)>>;
+
+ssh2_pubkey_encode(#'ECPrivateKey'{parameters = {namedCurve,OID},
+                                   publicKey = Key}) ->
+    {KeyType,Curve} = oid2ssh_curvename(OID),
+    <<?STRING(KeyType), ?STRING(Curve), ?Estring(Key)>>;
+
 ssh2_pubkey_encode({#'ECPoint'{point = Q}, {namedCurve,OID}}) ->
-    Curve = public_key:oid2ssh_curvename(OID),
-    KeyType = <<"ecdsa-sha2-", Curve/binary>>,
-    <<?STRING(KeyType), ?STRING(Curve), ?Estring(Q)>>;
-ssh2_pubkey_encode({ed_pub, ed25519, Key}) ->
-    <<?STRING(<<"ssh-ed25519">>), ?Estring(Key)>>;
-ssh2_pubkey_encode({ed_pub, ed448, Key}) ->
-    <<?STRING(<<"ssh-ed448">>), ?Estring(Key)>>.
+    {KeyType,Curve} = oid2ssh_curvename(OID),
+    <<?STRING(KeyType), ?STRING(Curve), ?Estring(Q)>>.
 
 %%%--------
 ssh2_pubkey_decode(KeyBlob) ->
@@ -590,33 +619,90 @@ ssh2_pubkey_decode2(<<?UINT32(7), "ssh-dss",
                       q = Q,
                       g = G}
      }, Rest};
-ssh2_pubkey_decode2(<<?UINT32(TL), "ecdsa-sha2-",KeyRest/binary>>) ->
-    Sz = TL-11,
-    <<_Curve:Sz/binary,
-      ?DEC_BIN(SshName, _IL),
-      ?DEC_BIN(Q, _QL),
-      Rest/binary>> = KeyRest,
-    OID = public_key:ssh_curvename2oid(SshName),
-    {{#'ECPoint'{point = Q}, {namedCurve,OID}
-     }, Rest};
-ssh2_pubkey_decode2(<<?UINT32(11), "ssh-ed25519",
-                      ?DEC_BIN(Key, _L),
-                      Rest/binary>>) ->
-    {{ed_pub, ed25519, Key},
-     Rest};
-ssh2_pubkey_decode2(<<?UINT32(9), "ssh-ed448",
-                      ?DEC_BIN(Key, _L),
-                      Rest/binary>>) ->
-    {{ed_pub, ed448, Key},
+
+ssh2_pubkey_decode2(<<?DEC_BIN(SshCurveName,SCNL), Rest0/binary>>) ->
+    {Pub, Rest} =
+        case {SshCurveName, Rest0} of
+            {<<"ecdsa-sha2-", _/binary>>,
+             <<?DEC_BIN(_Curve, _IL),
+               ?DEC_BIN(Q, _QL),
+               Rest1/binary>>} ->  {Q, Rest1};
+            
+            {<<"ssh-ed",_/binary>>,
+             <<?DEC_BIN(Key, _L),
+               Rest1/binary>>} ->  {Key, Rest1}
+        end,
+    OID = ssh_curvename2oid(SshCurveName),
+    {{#'ECPoint'{point = Pub}, {namedCurve,OID}},
      Rest}.
-                     
+
 %%%-------- private key --------
 
 %% dialyser... ssh2_privkey_decode(KeyBlob) ->
 %% dialyser...     {Key,_RestBlob} = ssh2_privkey_decode2(KeyBlob),
 %% dialyser...     Key.
-
 %% See sshkey_private_serialize_opt in sshkey.c
+
+ssh2_privkey_encode(#'RSAPrivateKey'
+                    {version = 'two-prime', % Found this in public_key:generate_key/1 ..
+                     modulus = N,
+                     publicExponent = E,
+                     privateExponent = D,
+                     prime1 = P,
+                     prime2 = Q,
+                     %% exponent1, % D_mod_P_1
+                     %% exponent2, % D_mod_Q_1
+                     coefficient = IQMP
+                    }) ->
+    <<?STRING(<<"ssh-rsa">>),
+      ?Empint(N), % Yes, N and E is reversed relative pubkey format
+      ?Empint(E), % --"--
+      ?Empint(D),
+      ?Empint(IQMP),
+      ?Empint(P),
+      ?Empint(Q)>>;
+
+ssh2_privkey_encode(#'DSAPrivateKey'
+                    {version = 0,
+                     p = P,
+                     q = Q,
+                     g = G,
+                     y = Y,
+                     x = X
+                    }) ->
+    <<?STRING(<<"ssh-dss">>),
+      ?Empint(P),
+      ?Empint(Q),
+      ?Empint(G),
+      ?Empint(Y), % Publ key
+      ?Empint(X)  % Priv key
+    >>;
+
+ssh2_privkey_encode(#'ECPrivateKey'
+                    {version = 1,
+                     parameters = {namedCurve,OID},
+                     privateKey = Priv,
+                     publicKey = Pub
+                    }) when OID == ?'id-Ed25519' orelse
+                            OID == ?'id-Ed448' ->
+    {CurveName,_} = oid2ssh_curvename(OID),
+    <<?STRING(CurveName),
+      ?STRING(Pub),
+      ?STRING(Priv)>>;
+
+ssh2_privkey_encode(#'ECPrivateKey'
+                    {version = 1,
+                     parameters = {namedCurve,OID},
+                     privateKey = Priv,
+                     publicKey = Q
+                    }) ->
+    {CurveName,_} = oid2ssh_curvename(OID),
+    <<?STRING(CurveName),
+      ?STRING(CurveName), % SIC!
+      ?STRING(Q),
+      ?STRING(Priv)>>.
+      
+%%%--------
 ssh2_privkey_decode2(<<?UINT32(7), "ssh-rsa",
                        ?DEC_INT(N, _NL), % Yes, N and E is reversed relative pubkey format
                        ?DEC_INT(E, _EL), % --"--
@@ -649,30 +735,49 @@ ssh2_privkey_decode2(<<?UINT32(7), "ssh-dss",
                       y = Y,
                       x = X
                      }, Rest};
-ssh2_privkey_decode2(<<?UINT32(TL), "ecdsa-sha2-",KeyRest/binary>>) ->
-    Sz = TL-11,
-    <<_Curve:Sz/binary,
-      ?DEC_BIN(CurveName, _SNN),
-      ?DEC_BIN(Q, _QL),
-      ?DEC_BIN(Priv, _PrivL),
-      Rest/binary>> = KeyRest,
-    OID = public_key:ssh_curvename2oid(CurveName),
+
+ssh2_privkey_decode2(<<?DEC_BIN(SshCurveName,SCNL), Rest0/binary>>) ->
+    {Pub, Priv, Rest} =
+        case {SshCurveName, Rest0} of
+            {<<"ecdsa-sha2-",_/binary>>,
+             <<?DEC_BIN(_Curve, _IL),
+               ?DEC_BIN(Pub1, _QL),
+               ?DEC_BIN(Priv1, _PrivL),
+               Rest1/binary>>} ->
+                {Pub1, Priv1, Rest1};
+
+            {<<"ssh-ed",_/binary>>,
+             <<?DEC_BIN(Pub1, PL),
+               ?DEC_BIN(PrivPub, PPL),
+               Rest1/binary>>} ->
+               PL = PPL div 2,
+                <<Priv1:PL/binary, _/binary>> = PrivPub,
+                {Pub1, Priv1, Rest1}
+        end,
+    OID = ssh_curvename2oid(SshCurveName),
     {#'ECPrivateKey'{version = 1,
                      parameters = {namedCurve,OID},
                      privateKey = Priv,
-                     publicKey = Q
-                    }, Rest};
-ssh2_privkey_decode2(<<?UINT32(11), "ssh-ed25519",
-                       ?DEC_BIN(Pub,_Lpub),
-                       ?DEC_BIN(Priv,_Lpriv),
-                       Rest/binary>>) ->
-    {{ed_pri, ed25519, Pub, Priv}, Rest};
-ssh2_privkey_decode2(<<?UINT32(9), "ssh-ed448",
-                       ?DEC_BIN(Pub,_Lpub),
-                       ?DEC_BIN(Priv,_Lpriv),
-                       Rest/binary>>) ->
-    {{ed_pri, ed448, Pub, Priv}, Rest}.
+                     publicKey = Pub
+                    }, Rest}.
 
+
+%% Description: Converts from the ssh name of elliptic curves to
+%% the OIDs.
+%%--------------------------------------------------------------------
+ssh_curvename2oid(<<"ssh-ed25519">>) -> ?'id-Ed25519';
+ssh_curvename2oid(<<"ssh-ed448">>  ) -> ?'id-Ed448';
+ssh_curvename2oid(<<"ecdsa-sha2-nistp256">>) -> ?'secp256r1';
+ssh_curvename2oid(<<"ecdsa-sha2-nistp384">>) -> ?'secp384r1';
+ssh_curvename2oid(<<"ecdsa-sha2-nistp521">>) -> ?'secp521r1'.
+
+%% Description: Converts from elliptic curve OIDs to the ssh name.
+%%--------------------------------------------------------------------
+oid2ssh_curvename(?'id-Ed25519')-> {<<"ssh-ed25519">>, 'n/a'};
+oid2ssh_curvename(?'id-Ed448')  -> {<<"ssh-ed448">>,   'n/a'};
+oid2ssh_curvename(?'secp256r1') -> {<<"ecdsa-sha2-nistp256">>, <<"nistp256">>};
+oid2ssh_curvename(?'secp384r1') -> {<<"ecdsa-sha2-nistp384">>, <<"nistp384">>};
+oid2ssh_curvename(?'secp521r1') -> {<<"ecdsa-sha2-nistp521">>, <<"nistp521">>}.
 
 %%%================================================================
 %%%
@@ -684,11 +789,17 @@ bin_foldr(Fun, Acc, Bin) ->
 
 bin_foldl(_, Acc, <<>>) -> Acc;
 bin_foldl(Fun, Acc0, Bin0) ->
-    {Bin,Acc} = Fun(Bin0,Acc0),
-    bin_foldl(Fun, Acc, Bin).
+    case Fun(Bin0,Acc0) of
+        {Bin0,Acc0} ->
+            Acc0;
+        {Bin,Acc} ->
+            bin_foldl(Fun, Acc, Bin)
+    end.
 
 %%%----------------------------------------------------------------
 decode_keyboard_interactive_prompts(<<>>, Acc) ->
+    lists:reverse(Acc);
+decode_keyboard_interactive_prompts(<<0>>, Acc) ->
     lists:reverse(Acc);
 decode_keyboard_interactive_prompts(<<?DEC_BIN(Prompt,__0), ?BYTE(Bool), Bin/binary>>,
 				    Acc) ->
@@ -728,13 +839,8 @@ encode_signature(#'RSAPublicKey'{}, SigAlg, Signature) ->
 encode_signature({_, #'Dss-Parms'{}}, _SigAlg, Signature) ->
     <<?Ebinary(<<"ssh-dss">>), ?Ebinary(Signature)>>;
 encode_signature({#'ECPoint'{}, {namedCurve,OID}}, _SigAlg, Signature) ->
-    Curve = public_key:oid2ssh_curvename(OID),
-    <<?Ebinary(<<"ecdsa-sha2-",Curve/binary>>), ?Ebinary(Signature)>>;
-encode_signature({ed_pub, ed25519,_}, _SigAlg, Signature) ->
-    <<?Ebinary(<<"ssh-ed25519">>), ?Ebinary(Signature)>>;
-encode_signature({ed_pub, ed448,_}, _SigAlg, Signature) ->
-    <<?Ebinary(<<"ssh-ed448">>), ?Ebinary(Signature)>>.
-    
+    {SshCurveName,_} = oid2ssh_curvename(OID),
+    <<?Ebinary(<<SshCurveName/binary>>), ?Ebinary(Signature)>>.
 
 
 %%%################################################################
@@ -770,7 +876,35 @@ ssh_dbg_format(ssh_messages, {call, {?MODULE,decode,[_]}}) ->
 ssh_dbg_format(ssh_messages, {return_from,{?MODULE,decode,1},Msg}) ->
     Name = string:to_upper(atom_to_list(element(1,Msg))),
     ["Received ",Name,":\n",
-     wr_record(ssh_dbg:shrink_bin(Msg))
+     wr_record(ssh_dbg:shrink_bin(Msg)),
+     case Msg of
+         #ssh_msg_userauth_request{service = "ssh-connection",
+                                   method = "publickey",
+                                   data = <<_,?DEC_BIN(Alg,__0),_/binary>>} ->
+             io_lib:format("  data decoded: ~s ... ~n", [Alg]);
+
+         #ssh_msg_channel_request{request_type = "env",
+                                  data = <<?DEC_BIN(Var,__0),?DEC_BIN(Val,__1)>>} ->
+             io_lib:format("  data decoded: ~s = ~s~n", [Var, Val]);
+
+         #ssh_msg_channel_request{request_type = "exec",
+                                  data = <<?DEC_BIN(Cmnd,__0)>>} ->
+             io_lib:format("  data decoded: ~s~n", [Cmnd]);
+
+         #ssh_msg_channel_request{request_type = "pty-req",
+                                  data = <<?DEC_BIN(BTermName,_TermLen),
+                                           ?UINT32(Width),?UINT32(Height),
+                                           ?UINT32(PixWidth), ?UINT32(PixHeight),
+                                           Modes/binary>>} ->
+             io_lib:format("  data decoded: terminal = ~s~n"
+                           "                width x height = ~p x ~p~n"
+                           "                pix-width x pix-height = ~p x ~p~n"
+                           "                pty-opts = ~p~n",
+                           [BTermName, Width,Height, PixWidth, PixHeight,
+                            ssh_connection:decode_pty_opts(Modes)]);
+         _ ->
+             ""
+     end
     ];
 
 ssh_dbg_format(raw_messages, {call,{?MODULE,decode,[BytesPT]}}) ->
@@ -832,4 +966,3 @@ ssh_dbg_format(raw_messages, {return_from,{?MODULE,encode,1},BytesPT}) ->
 ?wr_record(ssh_msg_channel_failure);
 
 wr_record(R) -> io_lib:format('~p~n',[R]).
-

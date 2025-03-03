@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -101,6 +101,12 @@ typedef struct {
             int current_level;
         } catree;
     } u;
+    Eterm* old_tpl;
+#ifdef DEBUG
+    Eterm old_tpl_dflt[2];
+#else
+    Eterm old_tpl_dflt[8];
+#endif
 } DbUpdateHandle;
 
 /* How safe are we from double-hits or missed objects
@@ -237,7 +243,7 @@ typedef struct db_table_method
     ** not DB_ERROR_NONE, the object is removed from the table. */
     void (*db_finalize_dbterm)(int cret, DbUpdateHandle* handle);
     void* (*db_eterm_to_dbterm)(int compress, int keypos, Eterm obj);
-    void* (*db_dbterm_list_prepend)(void* list, void* db_term);
+    void* (*db_dbterm_list_append)(void* last_term, void* db_term);
     void* (*db_dbterm_list_remove_first)(void** list);
     int (*db_put_dbterm)(DbTable* tb, /* [in out] */
                          void* obj,
@@ -302,7 +308,7 @@ typedef struct db_table_common {
     UWord heir_data;          /* To send in ETS-TRANSFER (is_immed or (DbTerm*) */
     Uint64 heir_started_interval;  /* To further identify the heir */
     Eterm the_name;           /* an atom */
-    Binary *btid;
+    Binary *btid;             /* table magic ref, read only after creation */
     DbTableMethod* meth;      /* table methods */
     /* The ErtsFlxCtr below contains:
      * - Total number of items in table
@@ -321,13 +327,9 @@ typedef struct db_table_common {
     int compress;
 
     /* For unfinished operations that needs to be helped */
-    void (*continuation)(long *reds_ptr,
-                         void** state,
-                         void* extra_context); /* To help yielded process */
-    erts_atomic_t continuation_state;
-    Binary* continuation_res_bin;
+    struct ets_insert_2_list_info* continuation_ctx;
 #ifdef ETS_DBG_FORCE_TRAP
-    erts_atomic_t dbg_force_trap;  /* &1 force enabled, &2 trap this call */
+    int dbg_force_trap;  /* force trap on table lookup */
 #endif
 } DbTableCommon;
 
@@ -345,12 +347,17 @@ typedef struct db_table_common {
 #define DB_FREQ_READ      (1 << 10) /* read_concurrency */
 #define DB_NAMED_TABLE    (1 << 11)
 #define DB_BUSY           (1 << 12)
+#define DB_EXPLICIT_LOCK_GRANULARITY  (1 << 13)
+#define DB_FINE_LOCKED_AUTO (1 << 14)
 
 #define DB_CATREE_FORCE_SPLIT (1 << 31)  /* erts_debug */
 #define DB_CATREE_DEBUG_RANDOM_SPLIT_JOIN (1 << 30)  /* erts_debug */
 
-#define IS_HASH_TABLE(Status) (!!((Status) & \
-				  (DB_BAG | DB_SET | DB_DUPLICATE_BAG)))
+#define IS_HASH_TABLE(Status) (!!((Status) &                       \
+                                  (DB_BAG | DB_SET | DB_DUPLICATE_BAG)))
+#define IS_HASH_WITH_AUTO_TABLE(Status) \
+    (((Status) &                                                        \
+      (DB_ORDERED_SET | DB_CA_ORDERED_SET | DB_FINE_LOCKED_AUTO)) == DB_FINE_LOCKED_AUTO)
 #define IS_TREE_TABLE(Status) (!!((Status) & \
 				  DB_ORDERED_SET))
 #define IS_CATREE_TABLE(Status) (!!((Status) & \
@@ -373,6 +380,7 @@ Eterm db_copy_from_comp(DbTableCommon* tb, DbTerm* bp, Eterm** hpp,
 			ErlOffHeap* off_heap);
 int db_eq_comp(DbTableCommon* tb, Eterm a, DbTerm* b);
 DbTerm* db_alloc_tmp_uncompressed(DbTableCommon* tb, DbTerm* org);
+void db_free_tmp_uncompressed(DbTerm* obj);
 
 ERTS_GLB_INLINE Eterm db_copy_object_from_ets(DbTableCommon* tb, DbTerm* bp,
 					      Eterm** hpp, ErlOffHeap* off_heap);
@@ -398,10 +406,10 @@ ERTS_GLB_INLINE Eterm db_copy_object_from_ets(DbTableCommon* tb, DbTerm* bp,
 					      Eterm** hpp, ErlOffHeap* off_heap)
 {
     if (tb->compress) {
-	return db_copy_from_comp(tb, bp, hpp, off_heap);
+        return db_copy_from_comp(tb, bp, hpp, off_heap);
     }
     else {
-	return copy_shallow(bp->tpl, bp->size, hpp, off_heap);
+        return make_tuple(copy_shallow(bp->tpl, bp->size, hpp, off_heap));
     }
 }
 
@@ -449,7 +457,7 @@ void* db_store_term_comp(DbTableCommon *tb, /*May be NULL*/
 Eterm db_copy_element_from_ets(DbTableCommon* tb, Process* p, DbTerm* obj,
 			       Uint pos, Eterm** hpp, Uint extra);
 int db_has_map(Eterm obj);
-int db_has_variable(Eterm obj);
+int db_is_fully_bound(Eterm obj);
 int db_is_variable(Eterm obj);
 void db_do_update_element(DbUpdateHandle* handle,
 			  Sint position,
@@ -465,7 +473,6 @@ typedef struct match_prog {
     ErlHeapFragment *term_save; /* Only if needed, a list of message 
 				    buffers for off heap copies 
 				    (i.e. binaries)*/
-    int single_variable;     /* ets:match needs to know this. */
     int num_bindings;        /* Size of heap */
     /* The following two are only filled in when match specs 
        are used for tracing */
@@ -516,7 +523,7 @@ typedef struct dmc_err_info {
 ** Compilation flags
 **
 ** The dialect is in the 3 least significant bits and are to be interspaced by
-** by at least 2 (decimal), thats why ((Uint) 2) isn't used. This is to be 
+** by at least 2 (decimal), that's why ((Uint) 2) isn't used. This is to be 
 ** able to add DBIF_GUARD or DBIF BODY to it to use in the match_spec bif
 ** table. The rest of the word is used like ordinary flags, one bit for each 
 ** flag. Note that DCOMP_TABLE and DCOMP_TRACE are mutually exclusive.
@@ -543,8 +550,10 @@ Binary *db_match_compile(Eterm *matchexpr, Eterm *guards,
                          Uint *freasonp);
 /* Returns newly allocated MatchProg binary with refc == 0*/
 
+Eterm db_match_dbterm_uncompressed(DbTableCommon* tb, Process* c_p, Binary* bprog,
+                                   DbTerm* obj, enum erts_pam_run_flags);
 Eterm db_match_dbterm(DbTableCommon* tb, Process* c_p, Binary* bprog,
-		      DbTerm* obj, Eterm** hpp, Uint extra);
+                      DbTerm *obj, enum erts_pam_run_flags);
 
 Eterm db_prog_match(Process *p, Process *self,
                     Binary *prog, Eterm term,
@@ -568,14 +577,15 @@ ERTS_GLB_INLINE Binary *erts_db_get_match_prog_binary_unchecked(Eterm term);
 
 /** @brief Ensure off-heap header is word aligned, make a temporary copy if
  * not. Needed when inspecting ETS off-heap lists that may contain unaligned
- * ProcBins if table is 'compressed'.
+ * ProcBin and ErtsMRefThing if table is 'compressed'.
  */
-struct erts_tmp_aligned_offheap
+union erts_tmp_aligned_offheap
 {
     ProcBin proc_bin;
+    ErtsMRefThing mref_thing;
 };
 ERTS_GLB_INLINE void erts_align_offheap(union erl_off_heap_ptr*,
-                                        struct erts_tmp_aligned_offheap* tmp);
+                                        union erts_tmp_aligned_offheap* tmp);
 
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
 
@@ -611,20 +621,27 @@ erts_db_get_match_prog_binary(Eterm term)
 
 ERTS_GLB_INLINE void
 erts_align_offheap(union erl_off_heap_ptr* ohp,
-                   struct erts_tmp_aligned_offheap* tmp)
+                   union erts_tmp_aligned_offheap* tmp)
 {
     if ((UWord)ohp->voidp % sizeof(UWord) != 0) {
         /*
-         * ETS store word unaligned ProcBins in its compressed format.
-         * Make a temporary aligned copy.
+         * ETS store word unaligned ProcBin and ErtsMRefThing in its compressed
+         * format. Make a temporary aligned copy.
          *
          * Warning, must pass (void*)-variable to memcpy. Otherwise it will
          * cause Bus error on Sparc due to false compile time assumptions
          * about word aligned memory (type cast is not enough).
          */
-        sys_memcpy(tmp, ohp->voidp, sizeof(*tmp));
-        ASSERT(tmp->proc_bin.thing_word == HEADER_PROC_BIN);
-        ohp->pb = &tmp->proc_bin;
+        sys_memcpy(tmp, ohp->voidp, sizeof(Eterm)); /* thing_word */
+        if (tmp->proc_bin.thing_word == HEADER_PROC_BIN) {
+            sys_memcpy(tmp, ohp->voidp, sizeof(tmp->proc_bin));
+            ohp->pb = &tmp->proc_bin;
+        }
+        else {
+            sys_memcpy(tmp, ohp->voidp, sizeof(tmp->mref_thing));
+            ASSERT(is_magic_ref_thing(&tmp->mref_thing));
+            ohp->mref = &tmp->mref_thing;
+        }
     }
 }
 

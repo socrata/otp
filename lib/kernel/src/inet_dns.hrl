@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1997-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 %% %CopyrightEnd%
 %%
 %%
-%% Defintion for Domain Name System
+%% Definition for Domain Name System
 %%
 
 %%
@@ -72,11 +72,13 @@
 -define(T_MX,		15).		%% mail routing information
 -define(T_TXT,		16).		%% text strings
 -define(T_AAAA,         28).            %% ipv6 address
+%% LOC (RFC 1876)
+-define(T_LOC,          29).            %% location information
 %% SRV (RFC 2052)
 -define(T_SRV,          33).            %% services
 %% NAPTR (RFC 2915)
 -define(T_NAPTR,        35).            %% naming authority pointer
--define(T_OPT,          41).            %% EDNS pseudo-rr RFC2671(7)
+-define(T_OPT,          41).            %% EDNS pseudo-rr RFC6891(7)
 %% SPF (RFC 4408)
 -define(T_SPF,          99).            %% server policy framework
 %%      non standard
@@ -89,6 +91,10 @@
 -define(T_MAILB,	253).		%% transfer mailbox records
 -define(T_MAILA,	254).		%% transfer mail agent records
 -define(T_ANY,		255).		%% wildcard match
+%% URI (RFC 7553)
+-define(T_URI,		256).		%% uniform resource identifier
+%% CAA (RFC 6844)
+-define(T_CAA,		257).		%% certification authority authorization
 
 %%
 %% Symbolic Type values for resources and queries
@@ -110,11 +116,13 @@
 -define(S_MX,		mx).		%% mail routing information
 -define(S_TXT,		txt).		%% text strings
 -define(S_AAAA,         aaaa).          %% ipv6 address
+%% LOC (RFC 1876)
+-define(S_LOC,          loc).           %% location information
 %% SRV (RFC 2052)
 -define(S_SRV,          srv).           %% services
 %% NAPTR (RFC 2915)
 -define(S_NAPTR,        naptr).         %% naming authority pointer
--define(S_OPT,          opt).           %% EDNS pseudo-rr RFC2671(7)
+-define(S_OPT,          opt).           %% EDNS pseudo-rr RFC6891(7)
 %% SPF (RFC 4408)
 -define(S_SPF,          spf).           %% server policy framework
 %%      non standard
@@ -127,6 +135,10 @@
 -define(S_MAILB,	mailb).		%% transfer mailbox records
 -define(S_MAILA,	maila).		%% transfer mail agent records
 -define(S_ANY,		any).		%% wildcard match
+%% URI (RFC 7553)
+-define(S_URI,		uri).		%% uniform resource identifier
+%% CAA (RFC 6844)
+-define(S_CAA,		caa).		%% certification authority authorization
 
 %%
 %% Values for class field
@@ -145,7 +157,7 @@
 %%
 %% Structure for query header, the order of the fields is machine and
 %% compiler dependent, in our case, the bits within a byte are assignd
-%% least significant first, while the order of transmition is most
+%% least significant first, while the order of transmission is most
 %% significant first.  This requires a somewhat confusing rearrangement.
 %%
 -record(dns_header, 
@@ -154,7 +166,7 @@
 	 %% byte F0
 	 qr = 0,       %% :1   response flag
 	 opcode = 0,   %% :4   purpose of message
-	 aa = 0,       %% :1   authoritive answer
+	 aa = 0,       %% :1   authoritative answer
 	 tc = 0,       %% :1   truncated message
 	 rd = 0,       %% :1   recursion desired 
 	 %% byte F1
@@ -182,28 +194,33 @@
 	 cnt = 0,       %% access count
 	 ttl = 0,       %% time to live
 	 data = [],     %% raw data
-	  %%
+	 %%
 	 tm,            %% creation time
-         bm = [],       %% Bitmap storing domain character case information.
-         func = false   %% Optional function calculating the data field.
+         bm = "",       %% Used to be defined as:
+         %%                Bitmap storing domain character case information
+         %%       but now; Case normalized domain
+         func = false   %% Was: Optional function calculating the data field.
+         %%                Now: cache-flush Class flag from mDNS RFC 6762
 	}).
 
 -define(DNS_UDP_PAYLOAD_SIZE, 1280).
 
--record(dns_rr_opt,           %% EDNS RR OPT (RFC2671), dns_rr{type=opt}
+-record(dns_rr_opt,           %% EDNS RR OPT (RFC6891), dns_rr{type=opt}
 	{
 	  domain = "",        %% should be the root domain
 	  type = opt,
-	  udp_payload_size = ?DNS_UDP_PAYLOAD_SIZE, %% RFC2671(4.5 CLASS)
-	  ext_rcode = 0,      %% RFC2671(4.6 EXTENDED-RCODE)
-	  version = 0,        %% RFC2671(4.6 VERSION)
-	  z = 0,              %% RFC2671(4.6 Z)
-	  data = []           %% RFC2671(4.4)
+	  udp_payload_size = ?DNS_UDP_PAYLOAD_SIZE, %% RFC6891(6.2.3 CLASS)
+	  ext_rcode = 0,      %% RFC6891(6.1.3 EXTENDED-RCODE)
+	  version = 0,        %% RFC6891(6.1.3 VERSION)
+	  z = 0,              %% RFC6891(6.1.3 Z)
+	  data = [],          %% RFC6891(6.1.2 RDATA)
+          do = false          %% RFC6891(6.1.3 DO)
 	 }).
 
 -record(dns_query,
 	{
-	 domain,     %% query domain
-	 type,        %% query type
-	 class      %% query class
+	 domain,                    %% query domain
+	 type,                      %% query type
+	 class,                     %% query class
+         unicast_response = false   %% mDNS RFC 6762 Class flag
 	 }).

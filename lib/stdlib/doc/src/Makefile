@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2018. All Rights Reserved.
+# Copyright Ericsson AB 1997-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ APPLICATION=stdlib
 XML_APPLICATION_FILES = ref_man.xml
 
 XML_REF3_FILES = \
+	argparse.xml \
 	array.xml \
 	base64.xml \
 	beam_lib.xml \
@@ -43,10 +44,14 @@ XML_REF3_FILES = \
 	dict.xml \
 	digraph.xml \
 	digraph_utils.xml \
+	edlin.xml \
+	edlin_expand.xml \
 	epp.xml \
 	erl_anno.xml \
+	erl_error.xmlsrc \
 	erl_eval.xml \
 	erl_expand_records.xml \
+	erl_features.xml \
 	erl_id_trans.xml \
 	erl_internal.xml \
 	erl_lint.xml \
@@ -73,6 +78,7 @@ XML_REF3_FILES = \
 	ms_transform.xml \
 	orddict.xml \
 	ordsets.xml \
+	peer.xml \
 	pool.xml \
 	proc_lib.xml \
 	proplists.xml \
@@ -101,7 +107,7 @@ XML_REF6_FILES = stdlib_app.xml
 
 XML_PART_FILES = part.xml
 XML_CHAPTER_FILES = introduction.xml io_protocol.xml unicode_usage.xml \
-	notes.xml assert_hrl.xml
+	uri_string_usage.xml notes.xml assert_hrl.xml
 
 BOOK_FILES = book.xml
 

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2004-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2004-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@
 
 #define MESSAGE_BACK(SIZE) \
     message("err = %d, size2 = %d, expected size = %d, long long val = %lld", \
-             err, size1, SIZE, (EI_LONGLONG)p); 
+             err, size1, SIZE, (EI_LONGLONG)p)
 
 #define ERLANG_ANY (ERLANG_ASCII|ERLANG_LATIN1|ERLANG_UTF8)
 
@@ -73,7 +73,7 @@ int ei_decode_my_string(const char *buf, int *index, char *to,
     } \
 \
     err = ei_ ## FUNC(buf+1, &size2, &p); \
-    MESSAGE_BACK(SIZE) \
+    MESSAGE_BACK(SIZE); \
     if (err != 0) { \
       if (err != -1) { \
 	fail("returned non zero but not -1"); \
@@ -246,6 +246,64 @@ int ei_decode_my_string(const char *buf, int *index, char *to,
   } \
 
 //#define EI_DECODE_UTF8_STRING(FUNC,SIZE,VAL) 
+
+static void decode_double(double VAL)
+{
+    const int SIZE = 9;
+    double p;
+    char *buf;
+    int size1 = 0;
+    int size2 = 0;
+    int err;
+    message("ei_decode_double value should be %lf", VAL);
+    buf = read_packet(NULL);
+
+    {
+        int ix = size1, type = -1, len = -2;
+        if (ei_get_type(buf+1, &ix, &type, &len) != 0
+            || ix != size1 || type != ERL_FLOAT_EXT || len != 0) {
+            fail2("ei_get_type failed for double, type=%d, len=%d", type, len);
+        }
+    }
+
+    err = ei_decode_double(buf+1, &size1, NULL);
+    message("err = %d, size1 = %d, expected size = %d",
+             err, size1, SIZE);
+    if (err != 0) {
+        if (err != -1) {
+            fail("returned non zero but not -1 if NULL pointer");
+        } else {
+            fail("returned non zero if NULL pointer");
+        }
+        return;
+    }
+
+    err = ei_decode_double(buf+1, &size2, &p);
+    MESSAGE_BACK(SIZE);
+    if (err != 0) {
+        if (err != -1) {
+            fail("returned non zero but not -1");
+        } else {
+            fail("returned non zero");
+        }
+        return;
+    }
+    if (p != VAL) {
+        fail("value is not correct");
+        return;
+    }
+
+    if (size1 != size2) {
+        fail("size with and without pointer differs");
+        return;
+    }
+
+    if (size1 != SIZE) {
+        fail1("size of encoded data (%d) is incorrect", size1);
+        return;
+    }
+    free_packet(buf);
+}
 
 static void decode_bin(int exp_size, const char* val, int exp_len)
 {
@@ -680,15 +738,15 @@ TESTCASE(test_ei_decode_misc)
 /*
     EI_DECODE_0(decode_version);
 */
-    EI_DECODE_2(decode_double, 9, double, 0.0);
-    EI_DECODE_2(decode_double, 9, double, -1.0);
-    EI_DECODE_2(decode_double, 9, double, 1.0);
+    decode_double(0.0);
+    decode_double(-1.0);
+    decode_double(1.0);
 
-    EI_DECODE_2(decode_boolean, 8, int, 0);
-    EI_DECODE_2(decode_boolean, 7, int, 1);
+    EI_DECODE_2(decode_boolean, 7, int, 0);
+    EI_DECODE_2(decode_boolean, 6, int, 1);
 
-    EI_DECODE_STRING(decode_my_atom, 6, "foo");
-    EI_DECODE_STRING(decode_my_atom, 3, "");
+    EI_DECODE_STRING(decode_my_atom, 5, "foo");
+    EI_DECODE_STRING(decode_my_atom, 2, "");
     EI_DECODE_STRING(decode_my_atom, 9, "≈ƒ÷Â‰ˆ");
 
     EI_DECODE_STRING(decode_my_string, 6, "foo");
@@ -744,10 +802,10 @@ TESTCASE(test_ei_decode_utf8_atom)
 		   P99({ERLANG_ANY,ERLANG_LATIN1,ERLANG_ASCII}));
   EI_DECODE_STRING_4(decode_my_atom_as, 4, "b",
 		     P99({ERLANG_UTF8,ERLANG_LATIN1,ERLANG_ASCII}));
-  EI_DECODE_STRING_4(decode_my_atom_as, 4, "c",
-		     P99({ERLANG_LATIN1,ERLANG_LATIN1,ERLANG_ASCII}));
-  EI_DECODE_STRING_4(decode_my_atom_as, 4, "d",
-		     P99({ERLANG_ASCII,ERLANG_LATIN1,ERLANG_ASCII}));
+  EI_DECODE_STRING_4(decode_my_atom_as, 3, "c",
+		     P99({ERLANG_LATIN1,ERLANG_UTF8,ERLANG_ASCII}));
+  EI_DECODE_STRING_4(decode_my_atom_as, 3, "d",
+		     P99({ERLANG_ASCII,ERLANG_UTF8,ERLANG_ASCII}));
 
   report(1);
 }

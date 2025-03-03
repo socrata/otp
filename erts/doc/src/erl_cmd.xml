@@ -4,7 +4,7 @@
 <comref>
   <header>
     <copyright>
-      <year>1996</year><year>2020</year>
+      <year>1996</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -175,7 +175,7 @@
           and lets the shell start in parallel with the rest of
           the system.</p>
       </item>
-      <tag><c><![CDATA[-boot File]]></c></tag>
+      <tag><marker id="boot" /><c><![CDATA[-boot File]]></c></tag>
       <item>
         <p>Specifies the name of the boot file, <c><![CDATA[File.boot]]></c>,
           which is used to start the system; see
@@ -207,21 +207,87 @@
         <p>Not recommended; use <seecom marker="erlc"><c>erlc</c></seecom>
           instead.</p>
       </item>
-      <tag><c><![CDATA[-config Config [Config]]]></c></tag>
+      <tag><marker id="config" /><c><![CDATA[-config Config [Config ...]]]></c></tag>
       <item>
         <p>Specifies the name of one or more configuration files,
           <c><![CDATA[Config.config]]></c>, which is used to configure
           applications; see
           <seefile marker="kernel:app"><c>app(4)</c></seefile> and
           <seeerl marker="kernel:application">
-          <c>application(3)</c></seeerl>.</p>
+          <c>application(3)</c></seeerl>. See the documentation for
+          the <seefile marker="kernel:config">configuration file
+          format</seefile> for a description of the configuration
+          format and the order in which configuration parameters are
+          read.</p>
+      </item>
+      <tag><marker id="configfd" /><c><![CDATA[-configfd FD [FD ...]]]></c></tag>
+      <item>
+        <p>Specifies the name of one or more file descriptors (called
+        configuration file descriptors from here on) with
+        configuration data for applications; see <seefile
+        marker="kernel:app"><c>app(4)</c></seefile> and
+        <seeerl marker="kernel:application">
+          <c>application(3)</c></seeerl>. See the documentation for
+          the <seefile marker="kernel:config">configuration file
+          format</seefile> for a description of the configuration
+          format and the order in which configuration parameters are
+          read.
+        </p>
+        <p>
+          A configuration file descriptor will be read until its end
+          and will then be closed.
+        </p>
+        <p>
+          The content of a configuration file
+          descriptor is stored so that it can be reused when <seemfa
+          marker="erts:init#restart/0"><c>init:restart/0</c></seemfa>
+          or <seemfa
+          marker="erts:init#restart/1"><c>init:restart/1</c></seemfa>
+          is called.
+        </p>
+        <p>
+          The parameter <c><![CDATA[-configfd 0]]></c> implies <c><![CDATA[-noinput]]></c>.
+        </p>
+        <note>
+          <p>
+            It is not recommended to use file descriptors 1 (standard
+            output), and 2 (standard error) together with
+            <c><![CDATA[-configfd]]></c> as these file descriptors are
+            typically used to print information to the console the program
+            is running in.
+          </p>
+        </note>
+        <p>Examples (Unix shell):</p>
+<pre>
+$ <input>erl \
+-noshell \
+-configfd 3 \
+-eval \
+'io:format("~p~n",[application:get_env(kernel, logger_level)]),erlang:halt()' 3&lt; \
+&lt;(echo '[{kernel, [{logger_level, warning}]}].')</input>
+{ok,warning}
+</pre>
+<pre>
+$ <input>echo '[{kernel, [{logger_level, warning}]}].' > test1.config</input>
+$ <input>echo '[{kernel, [{logger_level, error}]}].' > test2.config</input>
+$ <input>erl \
+-noshell \
+-configfd 3 \
+-configfd 4 \
+-eval \
+'io:format("~p~n",[application:get_env(kernel, logger_level)]),erlang:halt()' \
+3&lt; test1.config 4&lt; test2.config</input>
+{ok,error}
+</pre>
+
       </item>
       <tag><marker id="connect_all"/><c><![CDATA[-connect_all false]]></c></tag>
       <item>
-        <p>If this flag is present, <c><![CDATA[global]]></c> does not maintain
-          a fully connected network of distributed Erlang nodes, and then
-          global name registration cannot be used; see
-          <seeerl marker="kernel:global"><c>global(3)</c></seeerl>.</p>
+        <p>
+          This flag is deprecated and has been replaced by the <c>kernel</c>
+          application parameter
+          <seeapp marker="kernel:kernel_app#connect_all"><c>connect_all</c></seeapp>.
+        </p>
       </item>
       <tag><c><![CDATA[-cookie Cookie]]></c></tag>
       <item>
@@ -235,16 +301,68 @@
           console. Useful for running daemons and backgrounds processes. Implies
           <c><![CDATA[-noinput]]></c>.</p>
       </item>
+      <tag>
+        <marker id="disable-feature"></marker>
+        <c><![CDATA[-disable-feature feature]]></c>
+      </tag>
+      <item>
+        <p>Disables the
+	<seeguide
+            marker="system/reference_manual:features#features">feature</seeguide> <c><![CDATA[feature]]></c>
+        in the runtime system.  The special feature <c>all</c> can be
+        used to disable all non permanent features.
+      </p>
+      </item>
+      <tag><marker id="dist_listen"/><c>-dist_listen true|false</c></tag>
+      <item><p>
+        Specifies whether this node should be listening for incoming
+        distribution connections or not. By default a node will listen for
+        incoming connections. Setting this option to <c>false</c>
+        implies <seecom marker="#hidden"><c>-hidden</c></seecom>.
+      </p></item>
       <tag><c><![CDATA[-emu_args]]></c></tag>
       <item>
         <p>Useful for debugging. Prints the arguments sent to the emulator.</p>
       </item>
-      <tag><c><![CDATA[-emu_type Type]]></c></tag>
+      <tag><c><![CDATA[-emu_flavor emu|jit|smp]]></c></tag>
+      <item>
+        <p>Start an emulator of a different flavor. Normally only one flavor is
+          available, more can be added by building specific flavors. The currently
+          available flavors are: <c>emu</c> and <c>jit</c>.
+          The <c>smp</c> flavor is an alias for the current default flavor.
+          You can combine this flag with
+          <c>--emu_type</c>. You can get the current flavor at run-time using
+          <seeerl marker="erlang#system_info_emu_flavor">
+            <c>erlang:system_info(emu_flavor)</c></seeerl>.
+          (The emulator with this flavor must be built. You can
+          build a specific flavor by doing <c>make FLAVOR=$FLAVOR</c> in the
+          Erlang/OTP source repository.)</p>
+      </item>
+      <tag>
+	<marker id="emu_type"></marker>
+	<c><![CDATA[-emu_type Type]]></c>
+      </tag>
       <item>
         <p>Start an emulator of a different type. For example, to start
-	the lock-counter emualator, use <c>-emu_type lcnt</c>. (The emulator
-	must already be built. Use the <c>configure</c> option
-	<c>--enable-lock-counter</c> to build the lock-counter emulator.)</p>
+	  the lock-counter emulator, use <c>-emu_type lcnt</c>.
+          You can get the current type at run-time using
+          <seeerl marker="erlang#system_info_emu_type">
+            <c>erlang:system_info(build_type)</c></seeerl>.
+          (The emulator of this type must already be built.
+          Use the <c>configure</c> option <c>--enable-lock-counter</c> to
+          build the lock-counter emulator.)</p>
+      </item>
+      <tag>
+        <marker id="enable-feature"></marker>
+        <c><![CDATA[-enable-feature feature]]></c>
+      </tag>
+      <item>
+        <p>Enables the
+	<seeguide
+            marker="system/reference_manual:features#features">feature</seeguide> <c><![CDATA[feature]]></c>
+        in the runtime system.  The special feature <c>all</c> can be
+        used to enable all features.
+      </p>
       </item>
       <tag><c><![CDATA[-env Variable Value]]></c></tag>
       <item>
@@ -306,7 +424,7 @@
           is mandatory if flag <c><![CDATA[-loader inet]]></c> is present.</p>
         <p>The IP addresses must be specified in the standard form (four
           decimal numbers separated by periods, for example,
-          <c><![CDATA["150.236.20.74"]]></c>. Hosts names are not acceptable,
+          <c><![CDATA["150.236.20.74"]]></c>). Hosts names are not acceptable,
           but a broadcast address (preferably limited to the local network)
           is.</p>
       </item>
@@ -317,7 +435,7 @@
           the name supplied together with flag <c><![CDATA[-sname]]></c> or
           <c><![CDATA[-name]]></c>.</p>
       </item>
-      <tag><c><![CDATA[-init_debug]]></c></tag>
+      <tag><marker id="init_debug"/><c><![CDATA[-init_debug]]></c></tag>
       <item>
         <p>Makes <c><![CDATA[init]]></c> write some debug information while
           interpreting the boot script.</p>
@@ -371,46 +489,30 @@
           the default. In <c><![CDATA[embedded]]></c> mode modules are not auto
           loaded. The latter is recommended when the boot script preloads all
           modules, as conventionally happens in OTP releases. See
-          <seeerl marker="kernel:code"><c>code(3)</c></seeerl></p>.
+          <seeerl marker="kernel:code"><c>code(3)</c></seeerl>.</p>
       </item>
       <tag><marker id="name"/><c><![CDATA[-name Name]]></c></tag>
       <item>
         <p>Makes the Erlang runtime system into a distributed node.
           This flag invokes all network servers necessary for a node to
           become distributed; see <seeerl marker="kernel:net_kernel">
-          <c>net_kernel(3)</c></seeerl>. It is also ensured that
+          <c>net_kernel(3)</c></seeerl>. It also ensures that
           <c><![CDATA[epmd]]></c> runs on the current host before Erlang is
-          started; see <seecom marker="epmd"><c>epmd(1)</c></seecom>.and the
-          <seecom marker="#start_epmd"><c>-start_epmd</c></seecom> option.</p>
+          started (see <seecom marker="epmd"><c>epmd(1)</c></seecom> and the
+          <seecom marker="#start_epmd"><c>-start_epmd</c></seecom> option) and
+          that a magic cookie has been set
+          (see <seecom marker="#setcookie">-setcookie</seecom>).</p>
         <p>The node name will be <c><![CDATA[Name@Host]]></c>, where
           <c><![CDATA[Host]]></c> is the fully qualified host name of the
           current host. For short names, use flag <c><![CDATA[-sname]]></c>
           instead.</p>
         <p>If <c>Name</c> is set to <em><c>undefined</c></em> the node will
           be started in a special mode optimized to be the temporary client
-          of another node. When enabled the node will request a
-          <seeguide marker="erl_dist_protocol#DFLAG_NAME_ME">dynamic
-          node name</seeguide> from the first node it connects to. In addition
-          these distribution settings will be set:
+          of another node. The node will then request a dynamic node
+          name from the first node it connects to. Read more in
+          <seeguide marker="system/reference_manual:distributed#dyn_node_name">
+          Dynamic Node Name</seeguide>.
         </p>
-        <pre><seeapp marker="kernel:kernel_app#dist_listen">-dist_listen false</seeapp> <seecom marker="#hidden">-hidden</seecom> <seeapp marker="kernel:kernel_app#dist_auto_connect">-dist_auto_connect never</seeapp></pre>
-        <p>Because <c>-dist_auto_connect</c> is set to <c>never</c>, the system will have
-          to manually call <seemfa marker="kernel:net_kernel#connect_node/1">
-          <c>net_kernel:connect_node/1</c></seemfa> in order to start the distribution.
-          If the distribution channel is closed, when a node uses a dynamic
-          node name, the node will stop the distribution and a new call to
-          <seemfa marker="kernel:net_kernel#connect_node/1">
-          <c>net_kernel:connect_node/1</c></seemfa> has to be made. Note that the node
-          name may change if the distribution is dropped and then set up again.
-        </p>
-	<note>
-	  <p>
-	    The <em>dynamic node name</em> feature is supported from
-	    OTP 23. Both the temporary client node and the first
-	    connected peer node (supplying the dynamic node name) must
-	    be at least OTP 23 for it to work.
-	  </p>
-	</note>
         <warning>
           <p>
             Starting a distributed node without also specifying
@@ -422,12 +524,28 @@
           </p>
         </warning>
       </item>
-      <tag><c><![CDATA[-noinput]]></c></tag>
+      <tag><c><![CDATA[-no_epmd]]></c></tag>
+      <item>
+        <p>Specifies that the distributed node does not need
+          <seecom marker="epmd">epmd</seecom> at all.</p>
+        <p>This option ensures that the Erlang runtime system does not
+          start <seecom marker="epmd">epmd</seecom> and does not start
+          the <seeerl marker="kernel:erl_epmd">erl_epmd</seeerl> process
+          for distribution either.</p>
+        <p>This option only works if Erlang is started as a distributed node
+          with the <seecom marker="#proto_dist">-proto_dist</seecom> option
+          using an alternative protocol for Erlang distribution which
+          does not rely on epmd for node registration and discovery.
+          For more information, see <seeguide marker="erts:alt_dist">How
+          to implement an Alternative Carrier for the Erlang
+          Distribution</seeguide>.</p>
+      </item>
+      <tag><marker id="noinput"/><c><![CDATA[-noinput]]></c></tag>
       <item>
         <p>Ensures that the Erlang runtime system never tries to read
           any input. Implies <c><![CDATA[-noshell]]></c>.</p>
       </item>
-      <tag><c><![CDATA[-noshell]]></c></tag>
+      <tag><marker id="noshell"/><c><![CDATA[-noshell]]></c></tag>
       <item>
         <p>Starts an Erlang runtime system with no shell. This flag
           makes it possible to have the Erlang runtime system as a
@@ -492,14 +610,16 @@
       <item>
         <p>Starts Erlang with a remote shell connected to <c><![CDATA[Node]]></c>.</p>
         <p>If no <c><![CDATA[-name]]></c> or <c><![CDATA[-sname]]></c> is given
-          the node will be started using <c>-sname undefined</c>. If <c>Node</c>
-          is using long names then you should give <c>-name undefined</c>.
+          the node will be started using <c>-sname undefined</c>.
           If <c><![CDATA[Node]]></c> does not contain a hostname, one is automatically
           taken from <c><![CDATA[-name]]></c> or <c><![CDATA[-sname]]></c>
         </p>
         <note><p>Before OTP-23 the user <em>needed</em> to supply a valid <c>-sname</c> or
           <c>-name</c> for <c>-remsh</c> to work. This is still the case if the target
           node is not running OTP-23 or later.</p></note>
+        <note><p>The connecting node needs to have a proper shell with terminal emulation.
+          This means that UNIX users must use an Erlang compiled with terminal capabilities and
+          Windows users must use <seecom marker="werl"><c>werl(1)</c></seecom>.</p></note>
       </item>
       <tag><c><![CDATA[-rsh Program]]></c></tag>
       <item>
@@ -528,9 +648,19 @@
           passed as atoms. See <seeerl marker="init">
           <c>init(3)</c></seeerl>.</p>
       </item>
-      <tag><c><![CDATA[-setcookie Cookie]]></c></tag>
+      <tag><marker id="setcookie"/><c><![CDATA[-setcookie Cookie]]></c></tag>
       <item>
         <p>Sets the magic cookie of the node to <c><![CDATA[Cookie]]></c>; see
+          <seemfa marker="erlang#set_cookie/1"><c>erlang:set_cookie/1</c></seemfa>.
+          See see section
+          <seeguide marker="system/reference_manual:distributed">Distributed Erlang</seeguide>
+          in the Erlang Reference Manual for more details.
+        </p>
+      </item>
+      <tag><c><![CDATA[-setcookie Node Cookie]]></c></tag>
+      <item>
+        <p>Sets the magic cookie for <c><![CDATA[Node]]></c>
+          to <c><![CDATA[Cookie]]></c>; see
           <seemfa marker="erlang#set_cookie/2">
           <c>erlang:set_cookie/2</c></seemfa>.</p>
       </item>
@@ -541,7 +671,7 @@
           <c><![CDATA[Time]]></c> milliseconds have elapsed, all processes still
           existing are killed. Defaults to <c><![CDATA[infinity]]></c>.</p>
       </item>
-      <tag><c><![CDATA[-sname Name]]></c></tag>
+      <tag><marker id="sname"/><c><![CDATA[-sname Name]]></c></tag>
       <item>
         <p>Makes the Erlang runtime system into a distributed node, similar to
           <seecom marker="#name"><c><![CDATA[-name]]></c></seecom>, but the host
@@ -552,6 +682,14 @@
           exist between nodes running with flag <c><![CDATA[-sname]]></c>
           and those running with flag <c><![CDATA[-name]]></c>, as node
           names must be unique in distributed Erlang systems.</p>
+        <p>
+          If <c>Name</c> is set to <em><c>undefined</c></em> the node will
+          be started in a special mode optimized to be the temporary client
+          of another node. The node will then request a dynamic node
+          name from the first node it connects to. Read more in
+          <seeguide marker="system/reference_manual:distributed#dyn_node_name">
+          Dynamic Node Name</seeguide>.
+        </p>
         <warning>
           <p>
             Starting a distributed node without also specifying
@@ -679,7 +817,7 @@
           produces a crash dump. On Unix systems, sending an emulator process
           a <c>SIGUSR1</c> signal also forces a crash dump.</p>
       </item>
-      <tag><marker id="+dcg"/><c><![CDATA[+rg DecentralizedCounterGroupsLimit]]></c></tag>
+      <tag><marker id="+dcg"/><c><![CDATA[+dcg DecentralizedCounterGroupsLimit]]></c></tag>
       <item>
         <p>Limits the number of decentralized counter groups used by
            decentralized counters optimized for update operations in the
@@ -733,7 +871,7 @@
         <p>The virtual machine works with filenames as if they are encoded
           using UTF-8 (or some other system-specific Unicode encoding). This is
           the default on operating systems that enforce Unicode encoding, that
-          is, Windows and MacOS X.</p>
+          is, Windows MacOS X and Android.</p>
         <p>The <c>+fnu</c> switch can be followed by <c>w</c>, <c>i</c>, or
           <c>e</c> to control how wrongly encoded filenames are to be
           reported:</p>
@@ -769,8 +907,8 @@
         <p>Selection between <c>+fnl</c> and <c>+fnu</c> is done based
           on the current locale settings in the OS. This means that if you
           have set your terminal for UTF-8 encoding, the filesystem is
-          expected to use the same encoding for filenames. This is
-          default on all operating systems, except MacOS X and Windows.</p>
+          expected to use the same encoding for filenames. This is the default
+          on all operating systems, except Android, MacOS X and Windows.</p>
         <p>The <c>+fna</c> switch can be followed by <c>w</c>, <c>i</c>, or
           <c>e</c>. This has effect if the locale settings cause the behavior
           of <c>+fnu</c> to be selected; see the description of <c>+fnu</c>
@@ -798,7 +936,7 @@
       <tag><marker id="+hmax"/><c><![CDATA[+hmax Size]]></c></tag>
       <item>
         <p>Sets the default maximum heap size of processes to the size
-          <c><![CDATA[Size]]></c>. Defaults to <c>0</c>, which means that no
+          <c><![CDATA[Size]]></c> words. Defaults to <c>0</c>, which means that no
           maximum heap size is used. For more information, see
           <seeerl marker="erlang#process_flag_max_heap_size">
           <c>process_flag(max_heap_size, MaxHeapSize)</c></seeerl>.</p>
@@ -808,6 +946,14 @@
         <p>Sets whether to send an error logger message or not for processes
           reaching the maximum heap size. Defaults to <c>true</c>.
           For more information, see
+          <seeerl marker="erlang#process_flag_max_heap_size">
+          <c>process_flag(max_heap_size, MaxHeapSize)</c></seeerl>.</p>
+      </item>
+      <tag><marker id="+hmaxib"/><c><![CDATA[+hmaxib true|false]]></c></tag>
+      <item>
+        <p>Sets whether to include the size of shared off-heap binaries
+          in the sum compared against the maximum heap size. Defaults to
+	  <c>false</c>. For more information, see
           <seeerl marker="erlang#process_flag_max_heap_size">
           <c>process_flag(max_heap_size, MaxHeapSize)</c></seeerl>.</p>
       </item>
@@ -825,9 +971,9 @@
       </item>
       <tag><marker id="+hmqd"/><c>+hmqd off_heap|on_heap</c></tag>
       <item>
-        <p>Sets the default value for process flag <c>message_queue_data</c>.
+        <p>Sets the default value of the <c>message_queue_data</c> process flag.
           Defaults to <c>on_heap</c>. If <c>+hmqd</c> is not
-	  passed, <c>on_heap</c> will be the default. For more information, see
+          passed, <c>on_heap</c> will be the default. For more information, see
           <seeerl marker="erlang#process_flag_message_queue_data">
           <c>process_flag(message_queue_data, MQD)</c></seeerl>.</p>
       </item>
@@ -866,10 +1012,61 @@
           <c>+IOt</c> are used, <c>+IOPt</c> is ignored.
         </p>
       </item>
-      <tag><c><![CDATA[+l]]></c></tag>
+      <tag><marker id="+IOs"/><c>+IOs true|false</c></tag>
       <item>
-        <p>Enables autoload tracing, displaying information while loading
-          code.</p>
+        <p>Enable or disable scheduler thread poll optimization. Default is
+          <c>true</c>.
+        </p>
+        <p>If enabled, file descriptors that are frequently read may be moved to
+          a special pollset used by scheduler threads. The objective is to
+          reduce the number of system calls and thereby CPU load, but it can
+          in some cases increase scheduling latency for individual file
+          descriptor input events.
+        </p>
+      </item>
+      <tag><marker id="+JPperf"/><c>+JPperf true|false|dump|map|fp|no_fp</c></tag>
+      <item>
+        <p>Enables or disables support for the <c>perf</c> profiler when
+          running with the JIT on Linux. Defaults to false.</p>
+        <p>This option can be combined multiple times to enable several
+          options:</p>
+        <taglist>
+          <tag><c>dump</c></tag>
+          <item>Gives <c>perf</c> detailed line information, so that the
+            <c>perf annotate</c> feature works.</item>
+          <tag><c>map</c></tag>
+          <item>Gives <c>perf</c> a map over all module code, letting it
+            translate machine code addresses to Erlang source code
+            locations. This also enables frame pointers for Erlang code so that
+            <c>perf</c> can walk the call stacks of Erlang processes, which
+            costs one extra word per stack frame.</item>
+          <tag><c>fp</c></tag>
+          <item>Enables frame pointers independently of the <c>map</c>
+            option.</item>
+          <tag><c>no_fp</c></tag>
+          <item>Disables the frame pointers added by the <c>map</c>
+            option.</item>
+          <tag><c>true</c></tag>
+          <item>Enables <c>map</c> and <c>dump</c>.</item>
+          <tag><c>false</c></tag>
+          <item>Disables all other options.</item>
+        </taglist>
+        <p>For more details about how to run perf see the
+          <seeguide marker="erts:BeamAsm#linux-perf-support">perf support</seeguide>
+          section in the BeamAsm internal documentation.
+        </p>
+      </item>
+      <tag><marker id="+JMsingle"/><c>+JMsingle true|false</c></tag>
+      <item>
+        <p>Enables or disables the use of single-mapped RWX memory for JIT
+          code. The default is to map JIT:ed machine code into two
+          regions sharing the same physical pages, where one region is
+          executable but not writable, and the other writable but not
+          executable. As some tools, such as QEMU user mode emulation,
+          cannot deal with the dual mapping, this flags allows it to be
+          disabled. This flag is automatically enabled by the
+          <seecom marker="#+JPperf"><c>+JPperf</c></seecom> flag.
+        </p>
       </item>
       <tag><c><![CDATA[+L]]></c></tag>
       <item>
@@ -881,6 +1078,23 @@
       <item>
         <p>Memory allocator-specific flags. For more information, see
           <seecref marker="erts_alloc"><c>erts_alloc(3)</c></seecref>.</p>
+      </item>
+      <tag><marker id="+pad"/><c>+pad true|false</c></tag>
+      <item>
+        <p>Since: OTP 25.3</p>
+        <p>
+          The boolean value used with the <c>+pad</c> parameter determines
+          the default value of the
+          <seeerl marker="erlang#process_flag_async_dist">
+            <c>async_dist</c></seeerl> process flag of newly spawned processes.
+          By default, if no <c>+pad</c> command line option is passed,
+          the <c>async_dist</c> flag will be set to <c>false</c>.
+        </p>
+        <p>
+          The value used in runtime can be inspected by calling
+          <seeerl marker="erlang#system_info_async_dist">
+            <c>erlang:system_info(async_dist)</c></seeerl>.
+        </p>
       </item>
       <tag><marker id="+pc"/><marker id="printable_character_range"/>
         <c><![CDATA[+pc Range]]></c></tag>
@@ -1402,6 +1616,16 @@
               <seeerl marker="erlang#system_info_cpu_topology">
               <c>erlang:system_info(cpu_topology)</c></seeerl>.</p>
           </item>
+          <tag><marker id="+ssrct"/><c>+ssrct</c></tag>
+          <item>
+            <p>Skips reading CPU topology.</p>
+            <note>
+              <p>Reading CPU topology slows down startup when starting many
+                parallel instances of ERTS on systems with large amount of
+                cores, using this flag might speed up execution in such
+                scenarios.</p>
+            </note>
+          </item>
           <tag><marker id="+sfwi"/><c>+sfwi Interval</c></tag>
           <item>
             <p>Sets scheduler-forced wakeup interval. All run queues are
@@ -1412,8 +1636,8 @@
             <note>
               <p>This feature has been introduced as a temporary workaround
                 for long-executing native code, and native code that does not
-                bump reductions properly in OTP. When these bugs have be fixed,
-                this flag will be removed.</p>
+                bump reductions properly in OTP. When these bugs have been
+                fixed, this flag will be removed.</p>
             </note>
           </item>
           <tag><marker id="+spp"/><c>+spp Bool</c></tag>
@@ -1430,7 +1654,7 @@
               <seeerl marker="erlang#open_port_parallelism">
               <c>parallelism</c></seeerl> to
               <seemfa marker="erlang#open_port/2">
-              <c>erlang:open_port/2</c></seemfa></p>.
+              <c>erlang:open_port/2</c></seemfa>.</p>
           </item>
           <tag><marker id="sched_thread_stack_size"/>
             <c><![CDATA[+sss size]]></c></tag>
@@ -1617,6 +1841,11 @@
               limit is per distribution channel. A higher limit
               gives lower latency and higher throughput at the expense
               of higher memory use.</p>
+            <p>
+              This limit only affects processes that have disabled
+              <seeerl marker="erlang#process_flag_async_dist"><i>fully
+              asynchronous distributed signaling</i></seeerl>.
+            </p>
           </item>
           <tag><marker id="+zdntgc"/><c>+zdntgc time</c></tag>
           <item>
@@ -1628,6 +1857,17 @@
               in the table for at least the amount of time that this
               parameter determines. The lingering prevents repeated
               deletions and insertions in the tables from occurring.</p>
+          </item>
+          <tag><marker id="+zosrl"/><c>+zosrl limit</c></tag>
+          <item>
+            <p>
+              Sets a limit on the amount of outstanding requests made by
+              a system process orchestrating system wide changes. Valid
+              range of this limit is <c>[1, 134217727]</c>. See
+              <seeerl marker="erts:erlang#system_flag_outstanding_system_requests_limit">
+              <c>erlang:system_flag(outstanding_system_requests_limit, Limit)</c></seeerl>
+              for more information.
+            </p>
           </item>
         </taglist>
       </item>
@@ -1672,7 +1912,7 @@
           </item>
           <tag><c><![CDATA[ERL_CRASH_DUMP_SECONDS=-1]]></c></tag>
           <item>A negative value causes the termination of the runtime system
-	    to wait indefinitely until the crash dump file has been completly
+	    to wait indefinitely until the crash dump file has been completely
 	    written. This is the default if option <c>-heart</c> is <em>not</em>
 	    passed to <c>erl</c> and <c>ERL_CRASH_DUMP_SECONDS</c> is not set.
           </item>
@@ -1761,14 +2001,17 @@
       <tag>The <c>.erlang</c> startup file</tag>
       <item>
         <p>When Erlang/OTP is started, the system searches for a file named
-        <c>.erlang</c> in the user&apos;s home directory.</p>
+          <c>.erlang</c> in the <seeerl marker="erts:init#home">
+          user&apos;s home directory</seeerl> and then
+          <seeerl marker="stdlib:filename#user_config">
+            <c>filename:basedir(user_config, "erlang")</c></seeerl>.</p>
         <p>If an <c>.erlang</c> file is found, it is assumed to contain valid
           Erlang expressions. These expressions are evaluated as if they were
           input to the shell.</p>
         <p>A typical <c>.erlang</c> file contains a set of search paths, for
           example:</p>
     <code type="none"><![CDATA[
-io:format("executing user profile in HOME/.erlang\n",[]).
+io:format("executing user profile in $HOME/.erlang\n",[]).
 code:add_path("/home/calvin/test/ebin").
 code:add_path("/home/hobbes/bigappl-1.2/ebin").
 io:format(".erlang rc finished\n",[]).    ]]></code>

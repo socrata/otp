@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2007</year><year>2020</year>
+      <year>2007</year><year>2021</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -300,7 +300,7 @@ A3 = array:fix(A2).</pre>
       <fsummary>Create a new array according to the specified options.
       </fsummary>
       <desc>
-        <p>Creates a new array according to the specified otions. By default,
+        <p>Creates a new array according to the specified options. By default,
           the array is extendible and has initial size zero. Array indices
           start at <c>0</c>.</p> 
         <p><c><anno>Options</anno></c> is a single term or a list of terms,
@@ -356,9 +356,9 @@ array:new([{size,10},{fixed,false},{default,-1}])</pre>
           Notice that any size specifications in <c><anno>Options</anno></c>
           override parameter <c><anno>Size</anno></c>.</p>
         <p>If <c><anno>Options</anno></c> is a list, this is equivalent to
-          <c>new([{size, <anno>Size</anno>} | <anno>Options</anno>]</c>,
+          <c>new([{size, <anno>Size</anno>} | <anno>Options</anno>])</c>,
           otherwise it is equivalent to <c>new([{size, <anno>Size</anno>} |
-          [<anno>Options</anno>]]</c>. However, using this function directly is
+          [<anno>Options</anno>]])</c>. However, using this function directly is
           more efficient.</p>
         <p><em>Example:</em></p>
         <pre>

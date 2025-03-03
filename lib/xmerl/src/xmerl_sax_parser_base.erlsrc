@@ -1,7 +1,7 @@
 %%-*-erlang-*-
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1209,7 +1209,12 @@ parse_att_value(?STRING_REST("&", Rest), State, Stop, Acc)  ->
         {external_general, Name, _} ->
             ?fatal_error(State1, "External parsed entity reference in attribute value: " ++ Name);
         {not_found, Name} when State#xmerl_sax_parser_state.file_type =:= normal ->
-            ?fatal_error(State1, "Undeclared reference: " ++ Name);
+            case State1#xmerl_sax_parser_state.fail_undeclared_ref of
+                true ->
+                    ?fatal_error(State1, "Undeclared reference: " ++ Name);
+                false ->
+                    parse_att_value(Rest1, State1, Stop, ";" ++ lists:reverse(Name) ++ "&" ++ Acc)
+            end;
         {not_found, Name} ->
             parse_att_value(Rest1, State1, Stop, ";" ++ lists:reverse(Name) ++ "&" ++ Acc);
         {unparsed, Name, _}  ->
@@ -1320,8 +1325,23 @@ parse_content(?STRING_EMPTY, #xmerl_sax_parser_state{end_tags = ET} = State, Acc
         Other ->
             throw(Other)
     end;
-parse_content(?STRING("\r") = Bytes, State, Acc, IgnorableWS) ->
-    cf(Bytes, State, Acc, IgnorableWS, fun parse_content/4);
+parse_content(?STRING("\r") = Bytes, #xmerl_sax_parser_state{end_tags = ET} = State, Acc, IgnorableWS) ->
+    case catch cf(Bytes, State, Acc, IgnorableWS, fun parse_content/4) of
+        {fatal_error, {State1, "No more bytes"}} when ET == [] ->
+            Acc1 = [?lf |Acc],
+            State2 = send_character_event(length(Acc1), IgnorableWS, lists:reverse(Acc1), State1),
+            {?STRING_EMPTY, State2};
+        {fatal_error, {State1, "Continuation function undefined"}} when ET == [] ->
+            Acc1 = [?lf |Acc],
+            State2 = send_character_event(length(Acc1), IgnorableWS, lists:reverse(Acc1), State1),
+            {?STRING_EMPTY, State2};
+        {fatal_error, {State1, Msg}} ->
+            ?fatal_error(State1, Msg);
+        {Rest, State1} when is_record(State1, xmerl_sax_parser_state) ->
+            {Rest, State1};
+        Other ->
+            throw(Other)
+    end;
 parse_content(?STRING("<") = Bytes, State, Acc, IgnorableWS) ->	
     cf(Bytes, State, Acc, IgnorableWS, fun parse_content/4);
 parse_content(?STRING_REST("</", Rest), #xmerl_sax_parser_state{end_tags = ET} = State, Acc, IgnorableWS) ->
@@ -1419,10 +1439,10 @@ parse_content(?STRING_REST("&", Rest), #xmerl_sax_parser_state{file_type = Type}
             {Acc1, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = entity}, PubId, SysId, Acc),
             parse_content(Rest1, State2#xmerl_sax_parser_state{file_type = Type}, Acc1, false);
         {not_found, Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%VC: Entity Declared 
+            case State#xmerl_sax_parser_state.fail_undeclared_ref of
                 true ->
+                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%VC: Entity Declared 
+                false ->
                     parse_content(Rest1, State1, ";" ++ lists:reverse(Name) ++ "&" ++ Acc, false)
             end;
         {unparsed, Name, _}  ->
@@ -1707,7 +1727,7 @@ parse_reference(?STRING_UNBOUND_REST(C, Rest), State, HaveToExist) ->
     end;
 parse_reference(Bytes, State, HaveToExist) ->
     unicode_incomplete_check([Bytes, State, HaveToExist, fun parse_reference/3], 
-			     underfined).
+			     undefined).
 
 
 parse_reference_1(?STRING_EMPTY, State, HaveToExist, Name) ->
@@ -1779,7 +1799,7 @@ parse_pe_reference(?STRING_UNBOUND_REST(C, Rest), State) ->
     end;
 parse_pe_reference(Bytes, State) ->
     unicode_incomplete_check([Bytes, State, fun parse_pe_reference/2], 
-			     underfined).
+			     undefined).
 
 
 parse_pe_reference_1(?STRING_EMPTY, State, Name) ->
@@ -2008,7 +2028,7 @@ normalize_whitespace([], Acc) ->
 %%             State = #xmerl_sax_parser_state{}
 %% Result    : {Rest, State}
 %% Description: This function starts an parsing of the DTD
-%%              that sends apropriate events. 
+%%              that sends appropriate events. 
 %%              [28] doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S? 
 %%                          ('[' (markupdecl | PEReference | S)* ']' S?)? '>'
 %%----------------------------------------------------------------------
@@ -2037,7 +2057,7 @@ parse_doctype(Bytes, State) ->
 %%             Name = string()
 %%             Definition = true |false
 %% Result    : {Rest, State}
-%% Description: Gets the DTD name as a parameter and contine parse the DOCTYPE
+%% Description: Gets the DTD name as a parameter and continue parse the DOCTYPE
 %%              directive
 %%----------------------------------------------------------------------
 parse_doctype_1(?STRING_EMPTY, State, Name, Definition) ->
@@ -2126,6 +2146,11 @@ parse_external_entity(State, _PubId, SysId, Acc) ->
 %% Description: Returns working directory, entity and the opened
 %%              filedescriptor.
 %%----------------------------------------------------------------------
+handle_external_entity({file, _FileToOpen}, #xmerl_sax_parser_state{external_entities = none} = State, Acc) ->
+    {Acc,
+     State#xmerl_sax_parser_state.event_state,
+     State#xmerl_sax_parser_state.ref_table,
+     State#xmerl_sax_parser_state.attribute_values};
 handle_external_entity({file, FileToOpen}, #xmerl_sax_parser_state{encoding = Enc} = State, Acc) ->
 
     case file:open(FileToOpen, [raw, read, binary])  of
@@ -2150,7 +2175,7 @@ handle_external_entity({file, FileToOpen}, #xmerl_sax_parser_state{encoding = En
          EntityState#xmerl_sax_parser_state.ref_table,
          EntityState#xmerl_sax_parser_state.attribute_values}
     end;
-handle_external_entity({http, Url}, #xmerl_sax_parser_state{encoding = Enc} = State, Acc) ->
+handle_external_entity({http, Url}, #xmerl_sax_parser_state{encoding = Enc, external_entities = all} = State, Acc) ->
 
     try
 	{Host, Port, Key} = http(Url),
@@ -2180,6 +2205,11 @@ handle_external_entity({http, Url}, #xmerl_sax_parser_state{encoding = Enc} = St
 	throw:{error, Error} -> 	    
 	    ?fatal_error(State, Error)
     end;
+handle_external_entity({http, _Url}, State, Acc) ->
+    {Acc,
+     State#xmerl_sax_parser_state.event_state,
+     State#xmerl_sax_parser_state.ref_table,
+     State#xmerl_sax_parser_state.attribute_values};
 handle_external_entity({Tag, _Url}, State, _Acc) ->
     ?fatal_error(State, "Unsupported URI type: " ++ atom_to_list(Tag)).
 
@@ -2435,13 +2465,14 @@ parse_doctype_decl(?STRING_REST("%", Rest), #xmerl_sax_parser_state{file_type = 
             {_, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = dtd}, PubId, SysId, []),
             parse_doctype_decl(Rest1, State2#xmerl_sax_parser_state{file_type = Type});
         {not_found, _Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    parse_doctype_decl(Rest1, State1);
-                    %?fatal_error(State1, "Entity not declared: " ++ Name); %%P69 VC: Entity Declared 
-                true ->
-                    parse_doctype_decl(Rest1, State1)
-            end
+            parse_doctype_decl(Rest1, State1)
+            %% case State#xmerl_sax_parser_state.fail_undeclared_ref of
+            %%     false ->
+            %%         parse_doctype_decl(Rest1, State1);
+            %%         %?fatal_error(State1, "Entity not declared: " ++ Name); %%P69 VC: Entity Declared 
+            %%     true ->
+            %%         parse_doctype_decl(Rest1, State1)
+            %% end
     end;
 parse_doctype_decl(?STRING_REST("<![", Rest), State) ->
     {Rest1, State1} = parse_doctype_decl_2(Rest, State),
@@ -2511,9 +2542,13 @@ parse_doctype_decl_1(?STRING("ENTI") = Bytes, State) ->
 parse_doctype_decl_1(?STRING("ENTIT") = Bytes, State) ->
     cf(Bytes, State, fun parse_doctype_decl_1/2);
 parse_doctype_decl_1(?STRING_REST("ENTITY", Rest), State) ->
-    {Rest1, State1} = parse_entity_decl(Rest, State),
-    parse_doctype_decl(Rest1, State1);
-
+    case State#xmerl_sax_parser_state.allow_entities of
+        true ->
+            {Rest1, State1} = parse_entity_decl(Rest, State),
+            parse_doctype_decl(Rest1, State1);
+        false ->
+            ?fatal_error(State, "Entities not allowed in document")
+    end;
 parse_doctype_decl_1(?STRING("N") = Bytes, State) ->
     cf(Bytes, State, fun parse_doctype_decl_1/2);
 parse_doctype_decl_1(?STRING("NO") = Bytes, State) ->
@@ -2590,18 +2625,16 @@ parse_doctype_decl_2(?STRING_REST("%", Rest), State) ->
             {_, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = dtd}, PubId, SysId, []),
             parse_doctype_decl_2(Rest1, State2);
         {not_found, Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+            case State#xmerl_sax_parser_state.fail_undeclared_ref of
                 true ->
+                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                false ->
                     parse_doctype_decl_2(Rest1, State1)
             end
     end;
-    
 parse_doctype_decl_2(Bytes, State) ->
     unicode_incomplete_check([Bytes, State, fun parse_doctype_decl_2/2], 
                  "expecting INCLUDE or IGNORE").
-
 
 %%----------------------------------------------------------------------
 %% Function  : parse_element_decl(Rest, State) -> Result
@@ -2702,10 +2735,10 @@ parse_element_content_1(?STRING_REST("%", Rest), State, Acc) ->
             {Acc1, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = dtd}, PubId, SysId, Acc),
             parse_element_content_1(Rest1, State2, Acc1);
         {not_found, Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+            case State#xmerl_sax_parser_state.fail_undeclared_ref of
                 true ->
+                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                false ->
                     parse_element_content_1(Rest1, State1, Acc)
             end
     end;
@@ -2760,10 +2793,10 @@ parse_element_content_2(?STRING_REST("%", Rest), State, Acc, Depth) ->
                     {Acc1, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = entity}, PubId, SysId, Acc),
                     parse_element_content_2(Rest1, State2, Acc1, Depth);
                 {not_found, Name} ->
-                    case State#xmerl_sax_parser_state.skip_external_dtd of
-                        false ->
-                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                    case State#xmerl_sax_parser_state.fail_undeclared_ref of
                         true ->
+                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                        false ->
                             parse_element_content_2(Rest1, State1, Acc, Depth)
                     end
             end
@@ -2953,10 +2986,10 @@ parse_att_list_decl(?STRING_REST("%", Rest), State) ->
             {_, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = dtd}, PubId, SysId, []),
             parse_att_list_decl(Rest1, State2);
         {not_found, Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+            case State#xmerl_sax_parser_state.fail_undeclared_ref of
                 true ->
+                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                false ->
                     parse_att_list_decl(Rest1, State1)
             end
     end;
@@ -2980,10 +3013,10 @@ parse_att_list_decl_1(?STRING_REST("%", Rest), State) ->
                     {_, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = entity}, PubId, SysId, []),
                     parse_att_list_decl(Rest1, State2);
                 {not_found, Name} ->
-                    case State#xmerl_sax_parser_state.skip_external_dtd of
-                        false ->
-                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                    case State#xmerl_sax_parser_state.fail_undeclared_ref of
                         true ->
+                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                        false ->
                             parse_att_list_decl(Rest1, State1)
                     end
             end
@@ -3031,10 +3064,10 @@ parse_att_defs(?STRING_REST("%", Rest), #xmerl_sax_parser_state{file_type = Type
                     {_, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = entity}, PubId, SysId, []),
                     parse_att_defs(Rest1, State2#xmerl_sax_parser_state{file_type = Type}, ElementName);
                 {not_found, Name} ->
-                    case State#xmerl_sax_parser_state.skip_external_dtd of
-                        false ->
-                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                    case State#xmerl_sax_parser_state.fail_undeclared_ref of
                         true ->
+                            ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                        false ->
                             parse_att_defs(Rest1, State1, ElementName)
                     end
             end
@@ -3099,7 +3132,7 @@ add_default_attribute({ElementName, AttrName, Value},
 parse_att_type(?STRING_EMPTY, State) ->
     cf(?STRING_EMPTY, State, fun parse_att_type/2);
 parse_att_type(?STRING_UNBOUND_REST(C, _) = Bytes, State) when ?is_whitespace(C) ->
-    {_WS, Rest, State1} = whitespace(Bytes, State, []),
+    {_WS1, Rest, State1} = whitespace(Bytes, State, []),
     case parse_att_type_1(Rest, State1, []) of 
     {"(", Rest1, State2} -> 
         {T, Rest2, State3} = parse_until_right_paren(Rest1, State2, []),
@@ -3110,7 +3143,7 @@ parse_att_type(?STRING_UNBOUND_REST(C, _) = Bytes, State) when ?is_whitespace(C)
                 {"(" ++ T, Rest2, State3}
         end;
     {"NOTATION", Rest1, State2} ->
-        {_WS, Rest2, State3} = whitespace(Rest1, State2, []),
+        {_WS2, Rest2, State3} = whitespace(Rest1, State2, []),
         case parse_att_type_1(Rest2, State3, []) of
             {"(", Rest3, State4} ->
                 {T, Rest4, State5} = parse_until_right_paren(Rest3, State4, []),
@@ -3159,10 +3192,10 @@ parse_att_type_1(?STRING_REST("%", Rest), State, Acc) ->
             {Acc1, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = entity}, PubId, SysId, Acc),
             parse_att_type_1(Rest1, State2, Acc1);
         {not_found, Name} ->
-            case State#xmerl_sax_parser_state.skip_external_dtd of
-                false ->
-                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+            case State#xmerl_sax_parser_state.fail_undeclared_ref of
                 true ->
+                    ?fatal_error(State1, "Entity not declared: " ++ Name); %%WFC: Entity Declared 
+                false ->
                     parse_att_type_1(Rest1, State1, Acc)
             end
     end;
@@ -3547,10 +3580,10 @@ parse_entity_value(?STRING_REST("%", Rest), #xmerl_sax_parser_state{file_type=Ty
 		    {Acc1, State2} = parse_external_entity(State1#xmerl_sax_parser_state{file_type = text}, PubId, SysId, Acc),
 		    parse_entity_value(Rest1, State2#xmerl_sax_parser_state{file_type = Type}, Stop, Acc1);
 		{not_found, Name} ->
-		    case State#xmerl_sax_parser_state.skip_external_dtd of
-			false ->
-			    ?fatal_error(State1, "Entity not declared: " ++ Name); %%VC: Entity Declared
+		    case State#xmerl_sax_parser_state.fail_undeclared_ref of
 			true ->
+			    ?fatal_error(State1, "Entity not declared: " ++ Name); %%VC: Entity Declared
+			false ->
 			    parse_entity_value(Rest1, State1, Stop, ";" ++ lists:reverse(Name) ++ "&" ++ Acc)
 		    end
 			
@@ -3809,7 +3842,7 @@ parse_notation_decl_1(Bytes, State) ->
 %%             PubId = string()
 %%             SysId = string()
 %% Description: Parse a NOTATION identity. The public id case is a special 
-%%              variant of extenal id where just the public part is allowed.
+%%              variant of external id where just the public part is allowed.
 %%              This is allowed if the third parameter in parse_external_id/3 
 %%              is true.
 %%              [83] PublicID ::= 'PUBLIC' S PubidLiteral 
@@ -4833,7 +4866,7 @@ check_ref_cycle(#xmerl_sax_parser_state{ref_table = RefTable} = State) ->
         end,
     Mapped = lists:map(F, List),
     IsCycle = lists:any(fun({K, V}) ->
-                               check_ref_cycle(K, V, Mapped)
+                               check_ref_cycle(K, V, Mapped, 1, State)
                         end, Mapped),
     if
         IsCycle ->
@@ -4842,8 +4875,10 @@ check_ref_cycle(#xmerl_sax_parser_state{ref_table = RefTable} = State) ->
             ok
     end.
 
-check_ref_cycle(_, [], _) -> false;
-check_ref_cycle(Key, Vals, List) ->
+check_ref_cycle(_, [], _, _, _) -> false;
+check_ref_cycle(_, _, _, N, State) when N > State#xmerl_sax_parser_state.entity_recurse_limit ->
+    ?fatal_error(State, "Too deep");
+check_ref_cycle(Key, Vals, List, N, State) ->
     F = fun(V) ->
                case lists:keyfind(V, 1, List) of
                    false ->
@@ -4860,7 +4895,7 @@ check_ref_cycle(Key, Vals, List) ->
                 true ->
                     true;
                 false ->
-                    check_ref_cycle(Key, Refs, List)
+                    check_ref_cycle(Key, Refs, List, N+1, State)
             end
     end.
 

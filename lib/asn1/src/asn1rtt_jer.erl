@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,9 +31,9 @@
 %% Common code for all JER encoding/decoding
 %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-encode_jer(Module,InfoFunc,Val) ->
-    Info = Module:InfoFunc(),
-    encode_jer(Info,Val).
+encode_jer(Module, Type, Val) ->
+    Info = Module:typeinfo(Type),
+    encode_jer(Info, Val).
 
 %% {sequence,
 %%    Name::atom() % The record name used for the sequence 
@@ -50,10 +50,12 @@ encode_jer({sequence_tab,Simple,Sname,Arity,CompInfos},Value)
 %%    Arity::integer() % number of components
 %%    CompInfos::[CompInfo()] % list of components with name, type etc
 %%    Value::record matching name and arity
+encode_jer({sequence_map,_Sname,_Arity,CompInfos},Value) when is_map(Value) ->
+    encode_jer_component_map(CompInfos,Value,[]);
 encode_jer({sequence,Sname,Arity,CompInfos},Value) 
   when tuple_size(Value) == Arity+1 ->
     [Sname|Clist] = tuple_to_list(Value),
-    encode_jer_component(CompInfos,Clist,#{});
+    encode_jer_component(CompInfos,Clist,[]);
 encode_jer(string,Str) when is_list(Str) ->
     list_to_binary(Str);
 encode_jer({string,_Prop},Str) when is_list(Str) ->
@@ -104,10 +106,11 @@ encode_jer({'ENUMERATED_EXT',_EnumMap},Val) when is_atom(Val) ->
 encode_jer({Type = {'ENUMERATED_EXT',_EnumList},_Constr}, Val) ->
     encode_jer(Type,Val);
 
-encode_jer({typeinfo,{Module,Func}},Val) ->
-    TypeInfo = Module:Func(),
-    encode_jer(TypeInfo,Val);
- 
+
+encode_jer({typeinfo,{Module,Type}},Val) ->
+    TypeInfo = Module:typeinfo(Type),
+    encode_jer(TypeInfo, Val);
+
 encode_jer({sof,Type},Vals) when is_list(Vals) ->
     [encode_jer(Type,Val)||Val <- Vals];
 encode_jer({choice,Choices},{Alt,Value}) ->
@@ -153,7 +156,8 @@ encode_jer({'ObjClassFieldType',_,_},Val) when is_binary(Val)->
     Val;
 encode_jer('ASN1_OPEN_TYPE',Val) when is_binary(Val) ->
     Val;
-    
+encode_jer({container,Type,_Containing}, Val) ->
+    encode_jer(Type, Val);
 encode_jer(Type,Val) ->
     exit({error,{asn1,{{encode,Type},Val}}}).
 
@@ -167,20 +171,38 @@ encode_jer_component_tab([{Name, Type, _OptOrDefault} | CompInfos], [Value | Res
     encode_jer_component_tab(CompInfos, Rest, Simple, MapAcc#{Name => Enc});
 encode_jer_component_tab([], _, _Simple, MapAcc) ->
     MapAcc.
-
-encode_jer_component([{_Name, _Type, 'OPTIONAL'} | CompInfos], [asn1_NOVALUE | Rest], MapAcc) ->
-    encode_jer_component(CompInfos, Rest, MapAcc);
-encode_jer_component([{_Name, _Type, {'DEFAULT',_}} | CompInfos], [asn1_DEFAULT | Rest], MapAcc) ->
-    encode_jer_component(CompInfos, Rest, MapAcc);
-encode_jer_component([{Name, Type, _OptOrDefault} | CompInfos], [Value | Rest], MapAcc) ->
+encode_jer_component_map([{Name, AName, Type, _OptOrDefault} | CompInfos], MapVal, Acc) when is_map_key(AName,MapVal)->
+    Value = maps:get(AName, MapVal),
     Enc = encode_jer(Type, Value),
-    encode_jer_component(CompInfos, Rest, MapAcc#{Name => Enc});
-encode_jer_component([], _, MapAcc) ->
-    MapAcc.
+    encode_jer_component_map(CompInfos, MapVal, [{Name,Enc}|Acc]);
+encode_jer_component_map([{_Name, _AName, _Type, 'OPTIONAL'} | CompInfos], MapVal, Acc) ->
+    encode_jer_component_map(CompInfos, MapVal, Acc);
+encode_jer_component_map([{_Name, _AName, _Type, {'DEFAULT',_}} | CompInfos], MapVal, Acc) ->
+    encode_jer_component_map(CompInfos, MapVal, Acc);
+encode_jer_component_map([], MapVal, []) when map_size(MapVal) == 0->
+    #{}; % ensure that it is encoded as an empty object in JSON
+encode_jer_component_map([], MapVal, Acc) when map_size(MapVal) == length(Acc) ->
+    lists:reverse(Acc);
+encode_jer_component_map(_, MapVal, Acc) ->
+    ErroneousKeys = maps:keys(MapVal) -- [K || {K,_V} <- Acc],
+    exit({error,{asn1,{{encode,'SEQUENCE'},{erroneous_keys,ErroneousKeys}}}}).
 
-decode_jer(Module,InfoFunc,Val) ->
-    Info = Module:InfoFunc(),
-    decode_jer(Info,Val).
+
+encode_jer_component([{_Name, _Type, 'OPTIONAL'} | CompInfos], [asn1_NOVALUE | Rest], Acc) ->
+    encode_jer_component(CompInfos, Rest, Acc);
+encode_jer_component([{_Name, _Type, {'DEFAULT',_}} | CompInfos], [asn1_DEFAULT | Rest], Acc) ->
+    encode_jer_component(CompInfos, Rest, Acc);
+encode_jer_component([{Name, Type, _OptOrDefault} | CompInfos], [Value | Rest], Acc) ->
+    Enc = encode_jer(Type, Value),
+    encode_jer_component(CompInfos, Rest, [{Name,Enc}|Acc]);
+encode_jer_component([], _, []) ->
+    #{}; % ensure that it is encoded as an empty object in JSON
+encode_jer_component([], _, Acc) ->
+    lists:reverse(Acc).
+
+decode_jer(Module, Type, Val) ->
+    TypeInfo = Module:typeinfo(Type),
+    decode_jer(TypeInfo, Val).
 %% FIXME probably generate EnumList as a map with binaries as keys
 %% and check if the Value is in the map. Also take the extensionmarker into
 %% account and in that case allow any value but return as binary since it
@@ -201,13 +223,16 @@ decode_jer({'ENUMERATED_EXT',EnumList}, Val) ->
 decode_jer({Type = {'ENUMERATED_EXT',_EnumList},_Constr}, Val) ->
     decode_jer(Type,Val);
 
-decode_jer({typeinfo,{Module,Func}},Val) ->
-    TypeInfo = Module:Func(),
-    decode_jer(TypeInfo,Val); 
+decode_jer({typeinfo,{Module,Type}}, Val) ->
+    TypeInfo = Module:typeinfo(Type),
+    decode_jer(TypeInfo, Val);
 decode_jer({sequence,Sname,_Arity,CompInfos},Value) 
   when is_map(Value) ->    
     DecodedComps = decode_jer_component(CompInfos,Value,[]),
     list_to_tuple([Sname|DecodedComps]);
+decode_jer({sequence_map,_Sname,_Arity,CompInfos},Value) 
+  when is_map(Value) ->    
+    decode_jer_component_map(CompInfos,Value,[]);
 
 %% Unfortunately we have to represent strings as lists to be compatible 
 %% with the other backends. Should add an option to the compiler in the future
@@ -218,6 +243,8 @@ decode_jer({string,_Prop},Str) when is_binary(Str) ->
     binary_to_list(Str);
 decode_jer('INTEGER',Int) when is_integer(Int) ->
     Int;
+decode_jer({'INTEGER',{Min,Max}},Int) when is_integer(Int),Max >=Int, Int >= Min ->
+    Int;
 decode_jer({Type = {'INTEGER_NNL',_NNList},_},Int) ->
     decode_jer(Type,Int);
 decode_jer({'INTEGER_NNL',NNList},Int) ->
@@ -227,8 +254,6 @@ decode_jer({'INTEGER_NNL',NNList},Int) ->
         _ ->
             Int
     end;
-decode_jer({'INTEGER',_Prop},Int) when is_integer(Int) ->
-    Int;
 decode_jer('BOOLEAN',Bool) when is_boolean(Bool) ->
     Bool;
 decode_jer({'BOOLEAN',_Prop},Bool) when is_boolean(Bool) ->
@@ -278,7 +303,11 @@ decode_jer('RELATIVE-OID',OidBin) when is_binary(OidBin) ->
 decode_jer({'ObjClassFieldType',_,_},Bin) when is_binary(Bin) ->
     Bin;
 decode_jer('ASN1_OPEN_TYPE',Bin) when is_binary(Bin) ->
-    Bin.
+    Bin;
+decode_jer({container,Type,_Containing}, Val) ->
+    decode_jer(Type, Val);
+decode_jer(Type,Val) ->
+    exit({error,{asn1,{{decode,Type},Val}}}).
 
 decode_jer_component([{Name, Type, _OptOrDefault} | CompInfos], VMap, Acc)
     when is_map_key(Name, VMap) ->
@@ -293,6 +322,21 @@ decode_jer_component([{Name, _Type, _OptOrDefault} | _CompInfos], VMap, _Acc) ->
     exit({error,{asn1,{{decode,{mandatory_component_missing,Name}},VMap}}});
 decode_jer_component([], _, Acc) ->
     lists:reverse(Acc).
+
+decode_jer_component_map([{Name, AtomName, Type, _OptOrDefault} | CompInfos], VMap, Acc)
+    when is_map_key(Name, VMap) ->
+    Value = maps:get(Name, VMap),
+    Dec = decode_jer(Type, Value),
+    decode_jer_component_map(CompInfos, VMap, [{AtomName,Dec} | Acc]);
+decode_jer_component_map([{_Name, _AtomName, _Type, 'OPTIONAL'} | CompInfos], VMap, Acc) ->
+    decode_jer_component_map(CompInfos, VMap, Acc);
+decode_jer_component_map([{_Name, AtomName, _Type, {'DEFAULT',Dvalue}} | CompInfos], VMap, Acc) ->
+    decode_jer_component_map(CompInfos, VMap, [{AtomName, Dvalue} | Acc]);
+decode_jer_component_map([{Name, _AtomName, _Type, _OptOrDefault} | _CompInfos], VMap, _Acc) ->
+    exit({error,{asn1,{{decode,{mandatory_component_missing,Name}},VMap}}});
+decode_jer_component_map([], _, Acc) ->
+    %% not reusing the map from JSON decoder since it can contain non expected extra K,V pairs
+    maps:from_list(Acc).
 
 %% This is the default representation of octet string i.e binary
 json2octetstring2binary(Value) ->
@@ -420,7 +464,7 @@ jer_do_encode_named_bit_string([FirstVal | RestVal], NamedBitList) ->
     ToSetPos = jer_get_all_bitposes([FirstVal | RestVal], NamedBitList, []),
     Size = lists:max(ToSetPos) + 1,
     BitList = jer_make_and_set_list(Size, ToSetPos, 0),
-    encode_bitstring(BitList).
+    jer_encode_bitstring(BitList).
 
 jer_get_all_bitposes([{bit, ValPos} | Rest], NamedBitList, Ack) ->
     jer_get_all_bitposes(Rest, NamedBitList, [ValPos | Ack]);
@@ -450,31 +494,31 @@ jer_make_and_set_list(Len, [], XPos) ->
 %%     ([bitlist]) -> {ListLen, UnusedBits, OctetList}
 %%=================================================================
 
-encode_bitstring([B8, B7, B6, B5, B4, B3, B2, B1 | Rest]) ->
+jer_encode_bitstring([B8, B7, B6, B5, B4, B3, B2, B1 | Rest]) ->
     Val = (B8 bsl 7) bor (B7 bsl 6) bor (B6 bsl 5) bor (B5 bsl 4) bor
 	(B4 bsl 3) bor (B3 bsl 2) bor (B2 bsl 1) bor B1,
-    encode_bitstring(Rest, <<Val>>);
-encode_bitstring(Val) ->
-    unused_bitlist(Val, <<>>).
+    jer_encode_bitstring(Rest, <<Val>>);
+jer_encode_bitstring(Val) ->
+    jer_unused_bitlist(Val, <<>>).
 
-encode_bitstring([B8, B7, B6, B5, B4, B3, B2, B1 | Rest], Ack) ->
+jer_encode_bitstring([B8, B7, B6, B5, B4, B3, B2, B1 | Rest], Acc) ->
     Val = (B8 bsl 7) bor (B7 bsl 6) bor (B6 bsl 5) bor (B5 bsl 4) bor
 	(B4 bsl 3) bor (B3 bsl 2) bor (B2 bsl 1) bor B1,
-    encode_bitstring(Rest, [Ack | [Val]]);
+    jer_encode_bitstring(Rest, [Acc | [Val]]);
 %%even multiple of 8 bits..
-encode_bitstring([], Ack) ->
-    Ack;
+jer_encode_bitstring([], Acc) ->
+    Acc;
 %% unused bits in last octet
-encode_bitstring(Rest, Ack) ->
-    unused_bitlist(Rest,Ack).
+jer_encode_bitstring(Rest, Acc) ->
+    jer_unused_bitlist(Rest, Acc).
 
 %%%%%%%%%%%%%%%%%%
 %% unused_bitlist([list of ones and zeros <= 7], 7, []) ->
 %%  {Unused bits, Last octet with bits moved to right}
-unused_bitlist([], Ack) ->
-    Ack;
-unused_bitlist([Bit | Rest], Ack) ->
-    unused_bitlist(Rest, <<Ack/bitstring,Bit:1>>).
+jer_unused_bitlist([], Acc) ->
+    Acc;
+jer_unused_bitlist([Bit | Rest], Acc) ->
+    jer_unused_bitlist(Rest, <<Acc/bitstring,Bit:1>>).
 
 jer_bitstr2names(BitStr,[]) ->
     BitStr;

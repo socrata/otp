@@ -124,22 +124,26 @@ traverse(Tree, Out, State, CurrentFun) ->
       {merge_outs([HdFuns, TlFuns]), State2};
     'fun' ->
       %% io:format("Entering fun: ~w\n", [cerl_trees:get_label(Tree)]),
+      OldNumRvals = state__num_rvals(State),
+      State1 = state__store_num_rvals(1, State),
       Body = cerl:fun_body(Tree),
       Label = cerl_trees:get_label(Tree),
-      State1 =
-	if CurrentFun =:= top -> 
-	    state__add_deps(top, output(set__singleton(Label)), State);
-	   true -> 
-	    O1 = output(set__singleton(CurrentFun)),
-	    O2 = output(set__singleton(Label)),
-	    TmpState = state__add_deps(Label, O1, State),
-	    state__add_deps(CurrentFun, O2,TmpState)
+      State2 =
+        if
+          CurrentFun =:= top ->
+            state__add_deps(top, output(set__singleton(Label)), State1);
+          true ->
+            O1 = output(set__singleton(CurrentFun)),
+            O2 = output(set__singleton(Label)),
+            TmpState = state__add_deps(Label, O1, State1),
+            state__add_deps(CurrentFun, O2, TmpState)
 	end,
       Vars = cerl:fun_vars(Tree),
       Out1 = bind_single(Vars, output(set__singleton(external)), Out),
-      {BodyFuns, State2} =
-        traverse(Body, Out1, State1, cerl_trees:get_label(Tree)),
-      {output(set__singleton(Label)), state__add_esc(BodyFuns, State2)};
+      {BodyFuns, State3} =
+        traverse(Body, Out1, State2, cerl_trees:get_label(Tree)),
+      State4 = state__store_num_rvals(OldNumRvals, State3),
+      {output(set__singleton(Label)), state__add_esc(BodyFuns, State4)};
     'let' ->
       Vars = cerl:let_vars(Tree),
       Arg = cerl:let_arg(Tree),
@@ -181,8 +185,11 @@ traverse(Tree, Out, State, CurrentFun) ->
       {ActionFuns, State3} = traverse(Action, Out, State2, CurrentFun),
       {merge_outs([ClauseFuns, ActionFuns]), State3};
     seq ->
-      {_, State1} = traverse(cerl:seq_arg(Tree), Out, State, CurrentFun),
-      traverse(cerl:seq_body(Tree), Out, State1, CurrentFun);
+      OldNumRvals = state__num_rvals(State),
+      State1 = state__store_num_rvals(1, State),
+      {_, State2} = traverse(cerl:seq_arg(Tree), Out, State1, CurrentFun),
+      State3 = state__store_num_rvals(OldNumRvals, State2),
+      traverse(cerl:seq_body(Tree), Out, State3, CurrentFun);
     'try' ->
       Arg = cerl:try_arg(Tree),
       Body = cerl:try_body(Tree),
@@ -208,8 +215,12 @@ traverse(Tree, Out, State, CurrentFun) ->
       Val = cerl:map_pair_val(Tree),
       {List, State1} = traverse_list([Key,Val], Out, State, CurrentFun),
       {merge_outs(List), State1};
-    values ->      
-      traverse_list(cerl:values_es(Tree), Out, State, CurrentFun);
+    values ->
+      OldNumRvals = state__num_rvals(State),
+      State1 = state__store_num_rvals(1, State),
+      {List, State2} = traverse_list(cerl:values_es(Tree), Out, State1, CurrentFun),
+      State3 = state__store_num_rvals(OldNumRvals, State2),
+      {List, State3};
     var ->
       case map__lookup(cerl_trees:get_label(Tree), Out) of
 	none -> {output(none), State};
@@ -272,7 +283,7 @@ remote_call(Tree, ArgFuns, State) ->
     true ->
       M1 = cerl:atom_val(M),
       F1 = cerl:atom_val(F),
-      Literal = cerl_closurean:is_literal_op(M1, F1, A),
+      Literal = is_literal_op(M1, F1, A),
       case erl_bifs:is_pure(M1, F1, A) of
 	true ->
 	  case Literal of
@@ -282,7 +293,7 @@ remote_call(Tree, ArgFuns, State) ->
 	      {output(set__singleton(external)), state__add_esc(ArgFuns, State)}
 	  end;
 	false ->	  
-	  State1 = case cerl_closurean:is_escape_op(M1, F1, A) of
+	  State1 = case is_escape_op(M1, F1, A) of
 		     true -> state__add_esc(ArgFuns, State);
 		     false -> State
 		   end,
@@ -296,14 +307,74 @@ remote_call(Tree, ArgFuns, State) ->
 primop(Tree, ArgFuns, State) ->
   F = cerl:atom_val(cerl:primop_name(Tree)),
   A = length(cerl:primop_args(Tree)),
-  State1 = case cerl_closurean:is_escape_op(F, A) of
+  State1 = case is_escape_op(F, A) of
 	     true -> state__add_esc(ArgFuns, State);
 	     false -> State
 	   end,
-  case cerl_closurean:is_literal_op(F, A) of
+  case is_literal_op(F, A) of
     true -> {output(none), State1};
     false -> {ArgFuns, State1}
   end.
+
+%%------------------------------------------------------------
+
+%% Escape operators may let their arguments escape. Unless we know
+%% otherwise, and the function is not pure, we assume this is the case.
+%% Error-raising functions (fault/match_fail) are not considered as
+%% escapes (but throw/exit are). Zero-argument functions need not be
+%% listed.
+
+-spec is_escape_op(atom(), arity()) -> boolean().
+
+is_escape_op(match_fail, 1) -> false;
+is_escape_op(recv_wait_timeout, 1) -> false;
+is_escape_op(F, A) when is_atom(F), is_integer(A) -> true.
+
+-spec is_escape_op(atom(), atom(), arity()) -> boolean().
+
+is_escape_op(erlang, error, 1) -> false;
+is_escape_op(erlang, error, 2) -> false;
+is_escape_op(M, F, A) when is_atom(M), is_atom(F), is_integer(A) -> true.
+
+%% "Literal" operators will never return functional values even when
+%% found in their arguments. Unless we know otherwise, we assume this is
+%% not the case. (More functions can be added to this list, if needed
+%% for better precision. Note that the result of `term_to_binary' still
+%% contains an encoding of the closure.)
+
+-spec is_literal_op(atom(), arity()) -> boolean().
+
+is_literal_op(recv_wait_timeout, 1) -> true;
+is_literal_op(match_fail, 1) -> true;
+is_literal_op(F, A) when is_atom(F), is_integer(A) -> false.
+
+-spec is_literal_op(atom(), atom(), arity()) -> boolean().
+
+is_literal_op(erlang, '+', 2) -> true;
+is_literal_op(erlang, '-', 2) -> true;
+is_literal_op(erlang, '*', 2) -> true;
+is_literal_op(erlang, '/', 2) -> true;
+is_literal_op(erlang, '=:=', 2) -> true;
+is_literal_op(erlang, '==', 2) -> true;
+is_literal_op(erlang, '=/=', 2) -> true;
+is_literal_op(erlang, '/=', 2) -> true;
+is_literal_op(erlang, '<', 2) -> true;
+is_literal_op(erlang, '=<', 2) -> true;
+is_literal_op(erlang, '>', 2) -> true;
+is_literal_op(erlang, '>=', 2) -> true;
+is_literal_op(erlang, 'and', 2) -> true;
+is_literal_op(erlang, 'or', 2) -> true;
+is_literal_op(erlang, 'not', 1) -> true;
+is_literal_op(erlang, length, 1) -> true;
+is_literal_op(erlang, size, 1) -> true;
+is_literal_op(erlang, fun_info, 1) -> true;
+is_literal_op(erlang, fun_info, 2) -> true;
+is_literal_op(erlang, fun_to_list, 1) -> true;
+is_literal_op(erlang, throw, 1) -> true;
+is_literal_op(erlang, exit, 1) -> true;
+is_literal_op(erlang, error, 1) -> true;
+is_literal_op(erlang, error, 2) -> true;
+is_literal_op(M, F, A) when is_atom(M), is_atom(F), is_integer(A) -> false.
 
 %%------------------------------------------------------------
 %% Set
@@ -312,10 +383,10 @@ primop(Tree, ArgFuns, State) ->
 -record(set, {set :: sets:set()}).
 
 set__singleton(Val) ->
-  #set{set = sets:add_element(Val, sets:new())}.
+  #set{set = sets:add_element(Val, sets:new([{version, 2}]))}.
 
 set__from_list(List) ->
-  #set{set = sets:from_list(List)}.
+  #set{set = sets:from_list(List, [{version, 2}])}.
 
 set__is_element(_El, none) ->
   false;
@@ -633,7 +704,7 @@ test(Mod) ->
   CallEdges = lists:flatten(CallEdges0),
   NamedCallEdges = [{X, dict:fetch(Y, NameMap)} || {X, Y} <- CallEdges],
   AllNamedEdges = NamedEdges ++ NamedCallEdges,
-  hipe_dot:translate_list(AllNamedEdges, "/tmp/cg.dot", "CG", ColorEsc),
+  dialyzer_dot:translate_list(AllNamedEdges, "/tmp/cg.dot", "CG", ColorEsc),
   os:cmd("dot -T ps -o /tmp/cg.ps /tmp/cg.dot"),
   ok.
 

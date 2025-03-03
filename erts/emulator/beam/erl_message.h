@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1997-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1997-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,28 @@
 #define ERTS_MSG_COPY_WORDS_PER_REDUCTION 4
 #else
 #define ERTS_MSG_COPY_WORDS_PER_REDUCTION 64
+#endif
+
+/* The number of buffers have to be 64 or less because we currently
+   use a single word to implement a bitset with information about
+   non-empty buffers */
+#ifdef DEBUG
+#define ERTS_PROC_SIG_INQ_BUFFERED_NR_OF_BUFFERS 64
+#define ERTS_PROC_SIG_INQ_BUFFERED_CONTENTION_INSTALL_LIMIT 250
+#define ERTS_PROC_SIG_INQ_BUFFERED_ALWAYS_TURN_ON 1
+#define ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE 2
+#define ERTS_PROC_SIG_INQ_BUFFERED_MIN_NO_ENQUEUES_TO_KEEP \
+    (ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE +                    \
+     ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE / 2)
+#else
+#define ERTS_PROC_SIG_INQ_BUFFERED_NR_OF_BUFFERS 64
+#define ERTS_PROC_SIG_INQ_BUFFERED_CONTENTION_INSTALL_LIMIT 50
+#define ERTS_PROC_SIG_INQ_BUFFERED_ALWAYS_TURN_ON 0
+#define ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE 8192
+/* At least 1.5 enqueues per flush all op */
+#define ERTS_PROC_SIG_INQ_BUFFERED_MIN_NO_ENQUEUES_TO_KEEP \
+    (ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE +     \
+     ERTS_PROC_SIG_INQ_BUFFERED_MIN_FLUSH_ALL_OPS_BEFORE_CHANGE / 2)
 #endif
 
 struct proc_bin;
@@ -74,7 +96,27 @@ typedef struct {
         FACTORY_TMP
     } mode;
     Process* p;
+    /*
+       If the factory is initialized with erts_factory_proc_prealloc_init,
+       hp_start points to the top of the main heap if the preallocated data
+       fits in the main heap and otherwise it points to somewhere in the
+       data area of a heap fragment. If the factory is initialized with any
+       of the other init functions that sets the mode to FACTORY_HALLOC,
+       hp_start and original_htop always have the same value.
+
+       When erts_factory_proc_prealloc_init is used for initialization the
+       preallocated data might be allocated in an existing heap fragment but
+       data that is later allocated with erts_produce_heap might fit in the
+       main heap, so both hp_start and original_htop are needed to correctly
+       restore the heap in the erts_factory_undo function.
+    */
     Eterm* hp_start;
+    /*
+       original_htop stores the top of the main heap at the time
+       the factory was initialized and is used to reset the heap
+       state if an erts_factory_undo call is made.
+    */
+    Eterm* original_htop;
     Eterm* hp;
     Eterm* hp_end;
     ErtsMessage *message;
@@ -194,7 +236,7 @@ struct erl_mesg {
 /*
  * The ErtsMessage struct is only one special type
  * of signal. All signal structs have a common
- * begining and can be differentiated by looking
+ * beginning and can be differentiated by looking
  * at the ErtsSignal 'common.tag' field.
  *
  * - An ordinary message will have a value
@@ -238,6 +280,36 @@ typedef struct {
     ErtsMessage **next; /* ... next (non-message) signal */
     ErtsMessage **last; /* ... last (non-message) signal */
 } ErtsMsgQNMSigs;
+
+typedef struct {
+    ErtsSignal sig;
+    ErtsMessage **prev_next;
+    signed char is_yield_mark;
+    signed char pass;
+    signed char set_save;
+    signed char in_sigq;
+    signed char in_msgq;
+    signed char prev_ix;
+    signed char next_ix;
+#ifdef DEBUG
+    signed char used;
+    Process *proc;
+#endif
+} ErtsRecvMarker;
+
+#define ERTS_RECV_MARKER_BLOCK_SIZE 8
+
+typedef struct {
+    Eterm ref[ERTS_RECV_MARKER_BLOCK_SIZE];
+    ErtsRecvMarker marker[ERTS_RECV_MARKER_BLOCK_SIZE];
+    signed char free_ix;
+    signed char used_ix;
+    signed char unused;
+    signed char pending_set_save_ix;
+#ifdef ERTS_SUPPORT_OLD_RECV_MARK_INSTRS
+    signed char old_recv_marker_ix;
+#endif
+} ErtsRecvMarkerBlock;
 
 /* Size of default message buffer (erl_message.c) */
 #define ERL_MESSAGE_BUF_SZ 500
@@ -294,14 +366,14 @@ typedef struct {
     ErtsMessage *cont;
     ErtsMessage **cont_last;
     ErtsMsgQNMSigs nmsigs;
-
+    
     /* Common for inner and middle queue */
-    ErtsMessage **saved_last;	/* saved last pointer */
+    ErtsRecvMarkerBlock *recv_mrk_blk;
     Sint len; /* NOT message queue length (see above) */
     Uint32 flags;
 } ErtsSignalPrivQueues;
 
-typedef struct {
+typedef struct ErtsSignalInQueue_ {
     ErtsMessage* first;
     ErtsMessage** last;  /* point to the last next pointer */
     Sint len;            /* number of messages in queue */
@@ -311,6 +383,47 @@ typedef struct {
 #endif
 } ErtsSignalInQueue;
 
+typedef union {
+    struct ___ErtsSignalInQueueBufferFields {
+        erts_mtx_t lock;
+        /*
+         * Boolean value indicateing if the buffer is alive. An
+         * enqueue attempt to a dead buffer has to be canceled
+         */
+        int alive;
+        /*
+         * The number of enqueues that has been performed to this
+         * buffer. This value is used to decide if we should adapt
+         * back to an unbuffered state
+         */
+        Uint nr_of_enqueues;
+        ErtsSignalInQueue queue;
+    } b;
+    byte align__[ERTS_ALC_CACHE_LINE_ALIGN_SIZE(sizeof(struct ___ErtsSignalInQueueBufferFields))];
+} ErtsSignalInQueueBuffer;
+
+#if ERTS_PROC_SIG_INQ_BUFFERED_NR_OF_BUFFERS > 64
+#error The data structure holding information about which slots that are non-empty (the nonempty_slots field in the struct below) needs to be changed (it currently only supports up to 64 slots)
+#endif
+
+typedef struct {
+    ErtsSignalInQueueBuffer slots[ERTS_PROC_SIG_INQ_BUFFERED_NR_OF_BUFFERS];
+    ErtsThrPrgrLaterOp free_item;
+    erts_atomic64_t nonempty_slots;
+    erts_atomic32_t nonmsgs_in_slots;
+    erts_atomic32_t msgs_in_slots;
+    /*
+     * dirty_refc is incremented by dirty schedulers that access the
+     * buffer array to prevent deallocation while they are accessing
+     * the buffer array. This is needed since dirty schedulers are not
+     * part of the thread progress system.
+     */
+    erts_refc_t dirty_refc;
+    Uint nr_of_rounds_left;
+    Uint nr_of_enqueues;
+    int alive;
+} ErtsSignalInQueueBufferArray;
+
 typedef struct erl_trace_message_queue__ {
     struct erl_trace_message_queue__ *next; /* point to the next receiver */
     Eterm receiver;
@@ -319,51 +432,7 @@ typedef struct erl_trace_message_queue__ {
     Sint len;            /* queue length */
 } ErlTraceMessageQueue;
 
-#define ERTS_RECV_MARK_SAVE(P)                                          \
-    do {                                                                \
-        erts_proc_lock((P), ERTS_PROC_LOCK_MSGQ);                       \
-        erts_proc_sig_fetch((P));                                       \
-        erts_proc_unlock((P), ERTS_PROC_LOCK_MSGQ);                     \
-        if ((P)->sig_qs.cont) {                                         \
-            (P)->sig_qs.saved_last = (P)->sig_qs.cont_last;             \
-            (P)->sig_qs.flags |= FS_DEFERRED_SAVED_LAST;                \
-        }                                                               \
-        else {                                                          \
-            (P)->sig_qs.saved_last = (P)->sig_qs.last;                  \
-            (P)->sig_qs.flags &= ~FS_DEFERRED_SAVED_LAST;               \
-        }                                                               \
-    } while (0)
-
-#define ERTS_RECV_MARK_SET(P)                                           \
-    do {                                                                \
-        if ((P)->sig_qs.saved_last) {                                   \
-            if ((P)->sig_qs.flags & FS_DEFERRED_SAVED_LAST) {           \
-                (P)->sig_qs.flags |= FS_DEFERRED_SAVE;                  \
-                /*                                                      \
-                 * Trigger handling of signals in loop_rec by           \
-                 * setting save pointer to the end of message queue     \
-                 * (inner queue). This in order to resolv saved_last    \
-                 * which currently may point into inner or middle       \
-                 * queue.                                               \
-                 */                                                     \
-                (P)->sig_qs.save = (P)->sig_qs.last;                    \
-            }                                                           \
-            else {                                                      \
-                /* Points to inner queue; safe to use */                \
-                (P)->sig_qs.save = (P)->sig_qs.saved_last;              \
-            }                                                           \
-        }                                                               \
-    } while (0)
-
-#define ERTS_RECV_MARK_CLEAR(P)                                         \
-    do {                                                                \
-        (P)->sig_qs.saved_last = NULL;                                  \
-        (P)->sig_qs.flags &= ~(FS_DEFERRED_SAVED_LAST|FS_DEFERRED_SAVE); \
-    } while (0)
-
-
 /* Get "current" message */
-#define PEEK_MESSAGE(p)  (*(p)->sig_qs.save)
 
 #ifdef USE_VM_PROBES
 #define LINK_MESSAGE_DTAG(mp, dt) ERL_MESSAGE_DT_UTAG(mp) = dt
@@ -382,42 +451,18 @@ typedef struct erl_trace_message_queue__ {
 #endif
 
 /* Add one message last in message queue */
-#define LINK_MESSAGE(p, msg) \
+#define LINK_MESSAGE(p, msg, ps)                                        \
     do {                                                                \
         ASSERT(ERTS_SIG_IS_MSG(msg));                                   \
-        ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((p), "before");               \
+        ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((p), &(p)->sig_inq, "before");\
         *(p)->sig_inq.last = (msg);                                     \
         (p)->sig_inq.last = &(msg)->next;                               \
         (p)->sig_inq.len++;                                             \
-        ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((p), "before");               \
+        if (!((ps) & ERTS_PSFLG_MSG_SIG_IN_Q))                          \
+            (void) erts_atomic32_read_bor_nob(&(p)->state,              \
+                                              ERTS_PSFLG_MSG_SIG_IN_Q); \
+        ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((p), &(p)->sig_inq, "after"); \
     } while(0)
-
-/* Unlink current message */
-#define UNLINK_MESSAGE(p,msgp)                                          \
-    do {                                                                \
-        ErtsMessage *mp__ = (msgp)->next;                               \
-        ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__((p), 0, "before");          \
-        *(p)->sig_qs.save = mp__;                                       \
-        (p)->sig_qs.len--;                                              \
-        if (mp__ == NULL)                                               \
-            (p)->sig_qs.last = (p)->sig_qs.save;                        \
-        ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__((p), 0, "after");           \
-    } while(0)
-
-/*
- * Reset message save point (after receive match).
- * Also invalidate the saved position since it may no
- * longer be safe to use.
- */
-#define JOIN_MESSAGE(p)                                                 \
-   do {                                                                 \
-       (p)->sig_qs.save = &(p)->sig_qs.first;                           \
-       ERTS_RECV_MARK_CLEAR((p));                                       \
-   } while(0)
-
-/* Save current message */
-#define SAVE_MESSAGE(p) \
-     (p)->sig_qs.save = &(*(p)->sig_qs.save)->next
 
 #define ERTS_HEAP_FRAG_SIZE(DATA_WORDS) \
    (sizeof(ErlHeapFragment) - sizeof(Eterm) + (DATA_WORDS)*sizeof(Eterm))
@@ -465,6 +510,7 @@ void erts_link_mbuf_to_proc(Process *proc, ErlHeapFragment *bp);
 
 Uint erts_msg_attached_data_size_aux(ErtsMessage *msg);
 
+void erts_cleanup_offheap_list(struct erl_off_heap_header* first);
 void erts_cleanup_offheap(ErlOffHeap *offheap);
 void erts_save_message_in_proc(Process *p, ErtsMessage *msg);
 Sint erts_move_messages_off_heap(Process *c_p);
@@ -473,30 +519,8 @@ Eterm erts_change_message_queue_management(Process *c_p, Eterm new_state);
 
 void erts_cleanup_messages(ErtsMessage *mp);
 
-void *erts_alloc_message_ref(void);
 void erts_free_message_ref(void *);
-
-#define ERTS_SMALL_FIX_MSG_SZ 10
-#define ERTS_MEDIUM_FIX_MSG_SZ 20
-#define ERTS_LARGE_FIX_MSG_SZ 30
-
-void *erts_alloc_small_message(void);
-void erts_free_small_message(void *mp);
-
-typedef struct {
-    ErtsMessage m;
-    Eterm data[ERTS_SMALL_FIX_MSG_SZ-1];
-} ErtsSmallFixSzMessage;
-
-typedef struct {
-    ErtsMessage m;
-    Eterm data[ERTS_MEDIUM_FIX_MSG_SZ-1];
-} ErtsMediumFixSzMessage;
-
-typedef struct {
-    ErtsMessage m;
-    Eterm data[ERTS_LARGE_FIX_MSG_SZ-1];
-} ErtsLargeFixSzMessage;
+void *erts_alloc_message_ref(void) ERTS_ATTR_MALLOC_D(erts_free_message_ref,1);
 
 ErtsMessage *erts_try_alloc_message_on_heap(Process *pp,
 					    erts_aint32_t *psp,
@@ -528,15 +552,15 @@ ERTS_GLB_FORCE_INLINE ErtsMessage *erts_alloc_message(Uint sz, Eterm **hpp)
     ErtsMessage *mp;
 
     if (sz == 0) {
-	mp = erts_alloc_message_ref();
+	mp = (ErtsMessage *)erts_alloc_message_ref();
         ERTS_INIT_MESSAGE(mp);
 	if (hpp)
 	    *hpp = NULL;
 	return mp;
     }
 
-    mp = erts_alloc(ERTS_ALC_T_MSG,
-		    sizeof(ErtsMessage) + (sz - 1)*sizeof(Eterm));
+    mp = (ErtsMessage *)erts_alloc(
+        ERTS_ALC_T_MSG, sizeof(ErtsMessage) + (sz - 1)*sizeof(Eterm));
 
     ERTS_INIT_MESSAGE(mp);
     mp->data.attached = ERTS_MSG_COMBINED_HFRAG;
@@ -556,7 +580,7 @@ erts_shrink_message(ErtsMessage *mp, Uint sz, Eterm *brefs, Uint brefs_size)
 	if (!mp->data.attached)
 	    return mp;
 	ASSERT(mp->data.attached == ERTS_MSG_COMBINED_HFRAG);
-	nmp = erts_alloc_message_ref();
+	nmp = (ErtsMessage *)erts_alloc_message_ref();
 #ifdef DEBUG
 	if (brefs && brefs_size) {
 	    int i;
@@ -622,8 +646,8 @@ Uint erts_mbuf_size(Process *p);
 #define ERTS_FOREACH_SIG_PRIVQS(PROC, MVAR, CODE)                       \
     do {                                                                \
         int i__;                                                        \
-        ErtsMessage *msgs__[] = {(PROC)->sig_qs.first,                  \
-                                 (PROC)->sig_qs.cont};                  \
+        ErtsMessage *msgs__[2] = {(PROC)->sig_qs.first,                 \
+                                  (PROC)->sig_qs.cont};                 \
         for (i__ = 0; i__ < sizeof(msgs__)/sizeof(msgs__[0]); i__++) {  \
             ErtsMessage *MVAR;                                          \
             for (MVAR = msgs__[i__]; MVAR; MVAR = MVAR->next) {         \

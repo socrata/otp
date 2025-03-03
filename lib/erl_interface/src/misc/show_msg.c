@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2021. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,19 +29,9 @@
 
 #include "eidef.h"
 
-#ifndef __WIN32__
-#  ifdef TIME_WITH_SYS_TIME
-#    include <sys/time.h>
-#    include <time.h>
-#  else
-#    ifdef HAVE_SYS_TIME_H
-#       include <sys/time.h>
-#    else
-#       include <time.h>
-#    endif
-#  endif
-#else
-#  include <time.h>
+#include <time.h>
+#ifdef HAVE_SYS_TIME_H
+#  include <sys/time.h>
 #endif
 
 #include "eiext.h"
@@ -447,7 +437,7 @@ static void show_term(const char *termbuf, int *index, FILE *stream)
     case ERL_PORT_EXT:
     case ERL_NEW_PORT_EXT:
 	ei_decode_port(termbuf,index,&port);
-	fprintf(stream,"#Port<%s.%u.%u>",port.node,port.id,port.creation);
+	fprintf(stream,"#Port<%s.%llu.%u>",port.node,port.id,port.creation);
 	break;
       
     case ERL_BINARY_EXT:

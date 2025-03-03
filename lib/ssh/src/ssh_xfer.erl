@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -242,7 +242,7 @@ xf_request(XF, Op, Arg) ->
 	       is_list(Arg) ->
 		   ?to_binary(Arg)
 	   end,
-    Size = 1+size(Data),
+    Size = 1+byte_size(Data),
     ssh_connection:send(CM, Channel, [<<?UINT32(Size), Op, Data/binary>>]).
 
 xf_send_reply(#ssh_xfer{cm = CM, channel = Channel}, Op, Arg) ->    
@@ -252,7 +252,7 @@ xf_send_reply(#ssh_xfer{cm = CM, channel = Channel}, Op, Arg) ->
 	       is_list(Arg) ->
 		   ?to_binary(Arg)
 	   end,
-    Size = 1 + size(Data),
+    Size = 1 + byte_size(Data),
     ssh_connection:send(CM, Channel, [<<?UINT32(Size), Op, Data/binary>>]).
 
 xf_send_name(XF, ReqId, Name, Attr) ->
@@ -290,7 +290,7 @@ xf_send_status(#ssh_xfer{cm = CM, channel = Channel},
     LangTag = "en",
     ELen = length(ErrorMsg),
     TLen = 2, %% length(LangTag),
-    Size = 1 + 4 + 4 + 4+ELen + 4+TLen + size(Data),
+    Size = 1 + 4 + 4 + 4+ELen + 4+TLen + byte_size(Data),
     ToSend = [<<?UINT32(Size), ?SSH_FXP_STATUS, ?UINT32(ReqId),
 	       ?UINT32(ErrorCode)>>,
 	      <<?UINT32(ELen)>>, ErrorMsg,
@@ -300,13 +300,13 @@ xf_send_status(#ssh_xfer{cm = CM, channel = Channel},
 
 xf_send_attr(#ssh_xfer{cm = CM, channel = Channel, vsn = Vsn}, ReqId, Attr) ->
     EncAttr = encode_ATTR(Vsn, Attr),
-    ALen = size(EncAttr),
+    ALen = byte_size(EncAttr),
     Size = 1 + 4 + ALen,
     ToSend = [<<?UINT32(Size), ?SSH_FXP_ATTRS, ?UINT32(ReqId)>>, EncAttr],
     ssh_connection:send(CM, Channel, ToSend).
 
 xf_send_data(#ssh_xfer{cm = CM, channel = Channel}, ReqId, Data) ->
-    DLen = size(Data),
+    DLen = byte_size(Data),
     Size = 1 + 4 + 4+DLen,
     ToSend = [<<?UINT32(Size), ?SSH_FXP_DATA, ?UINT32(ReqId), ?UINT32(DLen)>>,
 	      Data],
@@ -660,7 +660,7 @@ encode_As(Vsn, [{AName, X}|As], Flags, Acc) ->
 	     encode_As(Vsn, As,Flags bor ?SSH_FILEXFER_ATTR_UIDGID,
 		       [?uint32(X) | Acc]);
 	ownergroup when Vsn>=5 ->
-	    X1 = list_to_binary(integer_to_list(X)), % TODO: check owner and group
+	    X1 = integer_to_binary(X), % TODO: check owner and group
 	    encode_As(Vsn, As,Flags bor ?SSH_FILEXFER_ATTR_OWNERGROUP,
 		      [?binary(X1) | Acc]);
 	permissions ->
@@ -736,13 +736,11 @@ decode_As(Vsn, [{AName, AField}|As], R, Flags, Tail) ->
 	    decode_As(Vsn, As, setelement(AField, R, X), Flags, Tail2);
 	ownergroup when ?is_set(?SSH_FILEXFER_ATTR_OWNERGROUP, Flags),Vsn>=5 ->
 	    <<?UINT32(Len), Bin:Len/binary, Tail2/binary>> = Tail,
-	    X = binary_to_list(Bin),
+	    X = binary_to_integer(Bin),
 	    decode_As(Vsn, As, setelement(AField, R, X), Flags, Tail2);
-
 	permissions when ?is_set(?SSH_FILEXFER_ATTR_PERMISSIONS,Flags),Vsn>=5->
 	    <<?UINT32(X), Tail2/binary>> = Tail,
 	    decode_As(Vsn, As, setelement(AField, R, X), Flags, Tail2);
-
 	permissions when ?is_set(?SSH_FILEXFER_ATTR_PERMISSIONS,Flags),Vsn=<3->
 	    <<?UINT32(X), Tail2/binary>> = Tail,
 	    R1 = setelement(AField, R, X),
@@ -757,7 +755,6 @@ decode_As(Vsn, [{AName, AField}|As], R, Flags, Tail) ->
 		       _ -> unknown
 		   end,
 	    decode_As(Vsn, As, R1#ssh_xfer_attr { type=Type}, Flags, Tail2);
-
 	acmodtime when ?is_set(?SSH_FILEXFER_ATTR_ACMODTIME,Flags),Vsn=<3 ->
 	    <<?UINT32(X), Tail2/binary>> = Tail,
 	    decode_As(Vsn, As, setelement(AField, R, X), Flags, Tail2);
@@ -809,18 +806,27 @@ decode_names(Vsn, I, <<?UINT32(Len), FileName:Len/binary,
 encode_names(Vsn, NamesAndAttrs) ->
     lists:mapfoldl(fun(N, L) -> encode_name(Vsn, N, L) end, 0, NamesAndAttrs).
 
+encode_name(Vsn, {{NameUC,LongNameUC},Attr}, Len) when Vsn =< 3 ->
+    Name = binary_to_list(unicode:characters_to_binary(NameUC)),
+    NLen = length(Name),
+	LongName = binary_to_list(unicode:characters_to_binary(LongNameUC)),
+    LNLen = length(LongName),
+	EncAttr = encode_ATTR(Vsn, Attr),
+    ALen = byte_size(EncAttr),
+    NewLen = Len + NLen + LNLen + 4 + 4 + ALen,
+    {[<<?UINT32(NLen)>>, Name, <<?UINT32(LNLen)>>, LongName, EncAttr], NewLen};
 encode_name(Vsn, {NameUC,Attr}, Len) when Vsn =< 3 ->
     Name = binary_to_list(unicode:characters_to_binary(NameUC)),
     NLen = length(Name),
     EncAttr = encode_ATTR(Vsn, Attr),
-    ALen = size(EncAttr),
+    ALen = byte_size(EncAttr),
     NewLen = Len + NLen*2 + 4 + 4 + ALen,
     {[<<?UINT32(NLen)>>, Name, <<?UINT32(NLen)>>, Name, EncAttr], NewLen};
 encode_name(Vsn, {NameUC,Attr}, Len) when Vsn >= 4 ->
     Name = binary_to_list(unicode:characters_to_binary(NameUC)),
     NLen = length(Name),
     EncAttr = encode_ATTR(Vsn, Attr),
-    ALen = size(EncAttr),
+    ALen = byte_size(EncAttr),
     {[<<?UINT32(NLen)>>, Name, EncAttr],
      Len + 4 + NLen + ALen}.
 

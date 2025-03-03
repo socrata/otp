@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -568,10 +568,10 @@ set_remote_where_to_read(Tab, Ignore) ->
 	end,    
     Available = mnesia_lib:intersect(val({current, db_nodes}), Valid -- Ignore),    
     DiscOnlyC = val({Tab, disc_only_copies}),
-    Prefered  = Available -- DiscOnlyC,
+    Preferred  = Available -- DiscOnlyC,
     if
-	Prefered /= [] ->
-	    set({Tab, where_to_read}, hd(Prefered));
+	Preferred /= [] ->
+	    set({Tab, where_to_read}, hd(Preferred));
 	Available /= [] ->
 	    set({Tab, where_to_read}, hd(Available));
 	true ->
@@ -936,7 +936,7 @@ error_desc(mnesia_down) -> "A transaction involving objects at some remote "
                            "node which died while transaction was executing"
                            "*and* object(s) are no longer available elsewhere"
                            "in the network";
-error_desc(not_a_db_node) -> "A node which is non existant in "
+error_desc(not_a_db_node) -> "A node which is non existent in "
                               "the schema was mentioned";
 error_desc(bad_type)            -> "Bad type on some provided arguments";
 error_desc(node_not_running)    -> "Node not running";
@@ -950,7 +950,7 @@ error_desc({error, Reason}) ->
     error_desc(Reason);
 error_desc({aborted, Reason}) ->
     error_desc(Reason);
-error_desc(Reason) when is_tuple(Reason), size(Reason) > 0 ->
+error_desc(Reason) when tuple_size(Reason) > 0 ->
     setelement(1, Reason, error_desc(element(1, Reason)));
 error_desc(Reason) ->
     Reason.
@@ -1065,7 +1065,7 @@ save2(DbgInfo) ->
     Key = {'$$$_report', current_pos},
     P =
 	case ?ets_lookup_element(mnesia_gvar, Key, 2) of
-	    30 -> -1;
+            100 -> -1;
 	    I -> I
 	end,
     set({'$$$_report', current_pos}, P+1),

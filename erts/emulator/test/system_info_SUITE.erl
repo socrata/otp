@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -62,8 +62,8 @@ init_per_testcase(_, Config) ->
 
 end_per_testcase(procs_bug, Config) ->
     procs_bug(end_per_testcase, Config);
-end_per_testcase(_, _) ->
-    ok.
+end_per_testcase(_, Config) ->
+    erts_test_utils:ept_check_leaked_nodes(Config).
 
 %%%
 %%% The test cases -------------------------------------------------------------
@@ -451,55 +451,56 @@ cmp_memory(MWs, Str) ->
     garbage_collect(),
     erts_debug:set_internal_state(wait, deallocations),
 
-    EDM = erts_debug:get_internal_state(memory),
-    EM = erlang:memory(),
+    retry(3, fun() ->
+                     EDM = erts_debug:get_internal_state(memory),
+                     EM = erlang:memory(),
 
-    io:format("~s:~n"
-	      "erlang:memory() = ~p~n"
-	      "crash dump memory = ~p~n",
-	      [Str, EM, EDM]),
+                     io:format("~s:~n"
+                               "erlang:memory() = ~p~n"
+                               "crash dump memory = ~p~n",
+                               [Str, EM, EDM]),
 
-    check_sane_memory(EM),
-    check_sane_memory(EDM),
+                     check_sane_memory(EM),
+                     check_sane_memory(EDM),
 
-    %% We expect these to always give us exactly the same result
+                     %% We expect these to always give us exactly the same result
 
-    cmp_memory(atom, EM, EDM, 1),
-    cmp_memory(atom_used, EM, EDM, 1),
-    cmp_memory(binary, EM, EDM, 1),
-    cmp_memory(code, EM, EDM, 1),
-    cmp_memory(ets, EM, EDM, 1),
+                     cmp_memory(atom, EM, EDM, 1),
+                     cmp_memory(atom_used, EM, EDM, 1),
+                     cmp_memory(binary, EM, EDM, 1),
+                     cmp_memory(code, EM, EDM, 1),
+                     cmp_memory(ets, EM, EDM, 1),
 
-    %% Total, processes, processes_used, and system will seldom
-    %% give us exactly the same result since the two readings
-    %% aren't taken atomically.
-    %%
-    %% Torerance is scaled according to the number of schedulers
-    %% to match spawn_mem_workers.
+                     %% Total, processes, processes_used, and system will seldom
+                     %% give us exactly the same result since the two readings
+                     %% aren't taken atomically.
+                     %%
+                     %% Torerance is scaled according to the number of schedulers
+                     %% to match spawn_mem_workers.
 
-    Tolerance = 1.05 + 0.01 * erlang:system_info(schedulers_online),
+                     Tolerance = 1.05 + 0.01 * erlang:system_info(schedulers_online),
 
-    cmp_memory(total, EM, EDM, Tolerance),
-    cmp_memory(processes, EM, EDM, Tolerance),
-    cmp_memory(processes_used, EM, EDM, Tolerance),
-    cmp_memory(system, EM, EDM, Tolerance),
+                     cmp_memory(total, EM, EDM, Tolerance),
+                     cmp_memory(processes, EM, EDM, Tolerance),
+                     cmp_memory(processes_used, EM, EDM, Tolerance),
+                     cmp_memory(system, EM, EDM, Tolerance)
+             end),
 
     ok.
     
+retry(N, Fun) ->
+    try Fun()
+    catch
+        error:Error:Stack when N > 1 ->
+            io:format("Test failed: ~p\nat: ~p\nRetry max ~p more times\n",
+                      [Error, Stack, N-1]),
+            retry(N-1, Fun)
+    end.
+
 mapn(_Fun, 0) ->
     [];
 mapn(Fun, N) ->
     [Fun(N) | mapn(Fun, N-1)].
-
-
-get_node_name(Config) ->
-    list_to_atom(atom_to_list(?MODULE)
-		 ++ "-"
-		 ++ atom_to_list(proplists:get_value(testcase, Config))
-		 ++ "-"
-		 ++ integer_to_list(erlang:system_time(second))
-		 ++ "-"
-		 ++ integer_to_list(erlang:unique_integer([positive]))).
 
 ets_count(Config) when is_list(Config) ->
     [ets_count_do([Type | Named])
@@ -519,77 +520,33 @@ ets_count_do(Opts) ->
 
 %% Verify system_info(ets_limit) reflects max ETS table settings.
 ets_limit(Config0) when is_list(Config0) ->
-    Config = [{testcase,ets_limit}|Config0],
-    true = is_integer(get_ets_limit(Config)),
-    12345 = get_ets_limit(Config, 12345),
+    true = is_integer(get_ets_limit(0)),
+    12345 = get_ets_limit(12345),
     ok.
 
-get_ets_limit(Config) ->
-    get_ets_limit(Config, 0).
-get_ets_limit(Config, EtsMax) ->
+get_ets_limit(EtsMax) ->
     Envs = case EtsMax of
                0 -> [];
-               _ -> [{"ERL_MAX_ETS_TABLES", integer_to_list(EtsMax)}]
+               _ -> ["-env", "ERL_MAX_ETS_TABLES", integer_to_list(EtsMax)]
            end,
-    {ok, Node} = start_node_ets(Config, Envs),
-    Me = self(),
-    Ref = make_ref(),
-    spawn_link(Node,
-               fun() ->
-                       Res = erlang:system_info(ets_limit),
-                       unlink(Me),
-                       Me ! {Ref, Res}
-               end),
-    receive
-        {Ref, Res} ->
-            Res
-    end,
-    stop_node(Node),
+    {ok, Peer, Node} = ?CT_PEER(Envs),
+    Res = rpc:call(Node, erlang, system_info, [ets_limit]),
+    peer:stop(Peer),
     Res.
-
-start_node_ets(Config, Envs) when is_list(Config) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    test_server:start_node(get_node_name(Config), peer,
-			   [{args, "-pa "++Pa}, {env, Envs}]).
-
-start_node_atm(Config, AtomsMax) when is_list(Config) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    test_server:start_node(get_node_name(Config), peer,
-			   [{args, "-pa "++ Pa ++ AtomsMax}]).
-
-stop_node(Node) ->
-    test_server:stop_node(Node).
 
 
 %% Verify system_info(atom_limit) reflects max atoms settings
 %% (using " +t").
 atom_limit(Config0) when is_list(Config0) ->
-    Config = [{testcase,atom_limit}|Config0],
-    2186042 = get_atom_limit(Config, " +t 2186042 "),
-    ok.
-
-get_atom_limit(Config, AtomsMax) ->
-    {ok, Node} = start_node_atm(Config, AtomsMax),
-    Me = self(),
-    Ref = make_ref(),
-    spawn_link(Node,
-        fun() ->
-            Res = erlang:system_info(atom_limit),
-            unlink(Me),
-            Me ! {Ref, Res}
-        end),
-    receive
-        {Ref, Res} ->
-            Res
-    end,
-    stop_node(Node),
-    Res.
+    {ok, Peer, Node} = ?CT_PEER(["+t", "2186042"]),
+    2186042 = rpc:call(Node, erlang, system_info, [atom_limit]),
+    peer:stop(Peer).
 
 %% Verify that system_info(atom_count) works.
 atom_count(Config) when is_list(Config) ->
     Limit = erlang:system_info(atom_limit),
     Count1 = erlang:system_info(atom_count),
-    list_to_atom(integer_to_list(erlang:unique_integer())),
+    _ = list_to_atom(integer_to_list(erlang:unique_integer())),
     Count2 = erlang:system_info(atom_count),
     true = Limit >= Count2,
     true = Count2 > Count1,

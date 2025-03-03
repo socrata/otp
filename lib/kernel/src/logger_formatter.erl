@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@
                     template        => template(),
                     time_designator => byte(),
                     time_offset     => integer() | [byte()]}.
--type template() :: [metakey() | {metakey(),template(),template()} | string()].
+-type template() :: [metakey() | {metakey(),template(),template()} | unicode:chardata()].
 -type metakey() :: atom() | [atom()].
 
 %%%-----------------------------------------------------------------
@@ -48,7 +48,8 @@ format(#{level:=Level,msg:=Msg0,meta:=Meta},Config0)
     Config = add_default_config(Config0),
     Meta1 = maybe_add_legacy_header(Level,Meta,Config),
     Template = maps:get(template,Config),
-    {BT,AT0} = lists:splitwith(fun(msg) -> false; (_) -> true end, Template),
+    LinearTemplate = linearize_template(Meta1,Template),
+    {BT,AT0} = lists:splitwith(fun(msg) -> false; (_) -> true end, LinearTemplate),
     {DoMsg,AT} =
         case AT0 of
             [msg|Rest] -> {true,Rest};
@@ -89,6 +90,18 @@ format(#{level:=Level,msg:=Msg0,meta:=Meta},Config0)
         end,
     truncate(B,MsgStr,A,maps:get(max_size,Config)).
 
+linearize_template(Data,[{Key,IfExist,Else}|Format]) ->
+    BranchForUse =
+        case value(Key,Data) of
+            {ok,_Value} -> linearize_template(Data,IfExist);
+            error -> linearize_template(Data,Else)
+        end,
+    BranchForUse ++ linearize_template(Data,Format);
+linearize_template(Data,[StrOrKey|Format]) ->
+    [StrOrKey|linearize_template(Data,Format)];
+linearize_template(_Data,[]) ->
+    [].
+
 trim([H|T],Rev) when H==$\s; H==$\r; H==$\n ->
     trim(T,Rev);
 trim([H|T],false) when is_list(H) ->
@@ -110,13 +123,6 @@ trim(String,_) ->
 
 do_format(Level,Data,[level|Format],Config) ->
     [to_string(level,Level,Config)|do_format(Level,Data,Format,Config)];
-do_format(Level,Data,[{Key,IfExist,Else}|Format],Config) ->
-    String =
-        case value(Key,Data) of
-            {ok,Value} -> do_format(Level,Data#{Key=>Value},IfExist,Config);
-            error -> do_format(Level,Data,Else,Config)
-        end,
-    [String|do_format(Level,Data,Format,Config)];
 do_format(Level,Data,[Key|Format],Config)
   when is_atom(Key) orelse
        (is_list(Key) andalso is_atom(hd(Key))) ->
@@ -530,6 +536,11 @@ check_template([Str|T]) when is_list(Str) ->
     case io_lib:printable_unicode_list(Str) of
         true -> check_template(T);
         false -> error
+    end;
+check_template([Bin|T]) when is_binary(Bin) ->
+    case unicode:characters_to_list(Bin) of
+        Str when is_list(Str) -> check_template([Str|T]);
+        _Error -> error
     end;
 check_template([]) ->
     ok;

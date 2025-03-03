@@ -11,7 +11,7 @@
 %% limitations under the License.
 %%
 %% Copyright (c) 2001-2016 Richard Carlsson. Parts written by Ericsson
-%% are Copyright (c) Ericsson AB 2001-2017. All Rights Reserved.
+%% are Copyright (c) Ericsson AB 2001-2020. All Rights Reserved.
 %%
 
 -module(docgen_edoc_xml_cb).
@@ -185,7 +185,7 @@ chapter_title(#xmlElement{content=Es}) -> % name = h3 | h4
 %%   Es1 = Es2 = [#xmlElement{} | #xmlText{}]
 %% Fix things that are allowed in XHTML but not in chapter/erlref DTDs.
 %% 1)  lists (<ul>, <ol>, <dl>) and code snippets (<pre>) cannot occur
-%%     within a <p>, such a <p> must be splitted into a sequence of <p>,
+%%     within a <p>, such a <p> must be split into a sequence of <p>,
 %%     <ul>, <ol>, <dl> and <pre>.
 %% 2)  <a> must only have either a href attribute (corresponds to a
 %%     <seealso> or <url> in the XML code) in which case its content
@@ -282,7 +282,7 @@ otp_xmlify_es([E | Es]) ->
 		    otp_xmlify_e(E) ++ otp_xmlify_es(Es);
 
 		%% paragraph contained dl, ul and/or pre and has been
-		%% splitted
+		%% split
 		SubEs ->
 		    lists:flatmap(fun otp_xmlify_e/1, SubEs) ++
 			otp_xmlify_es(Es)
@@ -452,7 +452,7 @@ otp_xmlify_e(E) ->
 %%--Tags with special handling------------------------------------------
 
 %% otp_xmlify_a(A1) -> [A2]
-%% Takes an <a> element and filters the attributes to decide wheather
+%% Takes an <a> element and filters the attributes to decide whether
 %% its a seealso/url or a marker.
 %% In the case of a seealso/url, the href part is checked, making
 %% sure a .xml/.html file extension is removed.
@@ -807,7 +807,7 @@ label_anchor(Content, E) ->
 		   {em, Content}]}
     end.
 
-signature(Es, Name) -> 
+signature(Es, Name) ->
     [Name, "("] ++ seq(fun arg/1, Es) ++ [") -> term()", ?NL].
 
 arg(#xmlElement{content = Es}) ->
@@ -898,7 +898,7 @@ local_defs(Es) ->
 
 localdef(E = #xmlElement{content = Es}) ->
     Var = case get_elem(typevar, Es) of
-	      [] -> 
+	      [] ->
 		  [label_anchor(t_abstype(get_content(abstype, Es)), E)];
 	      [V] ->
 		  t_var(V)
@@ -954,7 +954,7 @@ see(#xmlElement{content=Es0} = E) ->
     Href0 = get_attrval(href, E),
     {Href, Es} = otp_xmlify_a_href(Href0, Es0),
     [makesee(Href, Es)].
-    
+
 equiv(Es) ->
     case get_content(equiv, Es) of
 	[] -> ["\s"];
@@ -990,7 +990,7 @@ makesee(Ref) ->
             {seeguide,"chapter#" ++ Anchor};
         [Mod,"type-"++Anchor] ->
             {seeerl,Mod ++ "#type-" ++ Anchor};
-        ["",Anchor] ->
+        ["",_Anchor] ->
             case get(type) of
                 chapter ->
                     {seeguide, Ref};
@@ -1258,7 +1258,7 @@ get_content(Name, Es) ->
     end.
 
 %% get_text(Tag, Es) -> string()
-%% If there is one element in Es with name Tag, and its content is 
+%% If there is one element in Es with name Tag, and its content is
 %% a single xmlText, return the value of this xmlText.
 %% Otherwise return "".
 get_text(Name, Es) ->

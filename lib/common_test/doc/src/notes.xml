@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2004</year><year>2020</year>
+      <year>2004</year><year>2024</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -32,6 +32,755 @@
     <rev>A</rev>
     <file>notes.xml</file>
     </header>
+
+<section><title>Common_Test 1.26.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Common test will now not crash when running tests with
+	    OTP-26 and earlier, while having previous test results
+	    from OTP-27.</p>
+          <p>
+	    Own Id: OTP-19385 Aux Id: ERIERL-1166, PR-9155, PR-9156 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>With this change, cth_surefire hook module handles
+	    group path reduction for a skipped group. This fixes a
+	    bug manifesting with improper group path for a group
+	    executed after a group which was skipped.</p>
+          <p>
+	    Own Id: OTP-19365 Aux Id: ERIERL-1157, PR-9080 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>With this change, prefix option can be specified in
+	    cth_conn_log option list. Option allows to specify how
+	    much of additional information is added in raw log
+	    output.</p>
+          <p>
+	    Own Id: OTP-19293 Aux Id: ERIERL-1139, PR-8924, PR-8931 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, HTML reports include jQuery version
+	    3.7.1.</p>
+          <p>
+	    Own Id: OTP-19252 Aux Id: PR-8858 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, jquery and tablesorter licenses are
+	    added to COPYRIGHT file. Also tablesorter is updated to
+	    version 2.32.</p>
+          <p>
+	    Own Id: OTP-19265 Aux Id: PR-8876 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed a bug where the sum of testcases' execution time in
+	    HTML logs was sometimes miscalculated, and the table was
+	    not fully printed.</p>
+          <p>
+	    Own Id: OTP-19284 Aux Id: ERIERL-1093, PR-8909 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, the last column in common_test testcase
+	    log file is modified to now show the total sum of each
+	    time in the table rows, and Elapsed Time which is a clock
+	    time spent to run above functions. The Elapsed Time is
+	    the same time that was previously a total.</p>
+          <p>
+	    Own Id: OTP-18960 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix how CT finds Erlang/OTP releases for compatability
+	    testing. This functionality is only used to test
+	    Erlang/OTP.</p>
+          <p>
+	    Own Id: OTP-18932 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, common_test returns an error when suite
+	    with a badly defined group is executed.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18728 Aux Id: PR-7487, PR-7674 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, stylesheet option is applied to all
+	    HTML report pages.</p>
+          <p>
+	    Own Id: OTP-18760</p>
+        </item>
+        <item>
+          <p>
+	    Update all &lt;tt&gt; html tags to be &lt;code&gt;
+	    instead.</p>
+          <p>
+	    Own Id: OTP-18799 Aux Id: PR-7695 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    This change fixes docs, so that historically deprecated
+	    ?config macro is no longer recommended to be used.</p>
+          <p>
+	    Own Id: OTP-18858 Aux Id: PR-7825 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.25.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, ct_hooks manual refers to CTH execution
+	    order section in user guide.</p>
+          <p>
+	    Own Id: OTP-14480 Aux Id: ERIERL-43, OTP-11894, PR-7455 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, Config data from pre_end_per_testcase
+	    hook is delivered to post_end_per_testcase callback in
+	    case of testcase timetrap or linked process crash.</p>
+          <p>
+	    Own Id: OTP-18579 Aux Id: GH-7119 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, remaining references to not supported
+	    vts tool in ct_run are removed (mainly relates to docs
+	    and ct_run help message).</p>
+          <p>
+	    Own Id: OTP-18615 Aux Id: PR-7234 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, prompt search functionality in
+	    ct_telnet handles unicode input.</p>
+          <p>
+	    Own Id: OTP-18664 Aux Id: ERIERL-959 </p>
+        </item>
+        <item>
+          <p>
+	    Expanded the documentation about how to use the
+	    <c>standard_io</c>, <c>standard_error</c> and <c>user</c>
+	    I/O devices.</p>
+          <p>
+	    Added the types <c>io:standard_io/0</c>,
+	    <c>io:standard:error/0</c> and <c>io:user/0</c>.</p>
+          <p>
+	    Own Id: OTP-18676 Aux Id: PR-7473 GH-7459 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.25</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    This change improves Common Test docs (CT hook example
+	    code) and adds Emacs skeleton with hook code.</p>
+          <p>
+	    Own Id: OTP-18377 Aux Id: PR-6437 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Updated common_test with a more robust way to fetch old
+	    releases, while ignoring the current release.</p>
+          <p>
+	    Own Id: OTP-18259 Aux Id: PR-5924 </p>
+        </item>
+        <item>
+          <p>
+	    - re-write the XML <c>ct</c> module documentation into
+	    erlang types to make Dialyzer able to catch more precise
+	    errors</p>
+          <p>
+	    Own Id: OTP-18340</p>
+        </item>
+        <item>
+          <p>
+	    Deprecates <c>dbg:stop_clear/0</c> because it is simply a
+	    function alias to <c>dbg:stop/0</c></p>
+          <p>
+	    Own Id: OTP-18478 Aux Id: GH-6903 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.24.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix how CT finds Erlang/OTP releases for compatability
+	    testing. This functionality is only used to test
+	    Erlang/OTP.</p>
+          <p>
+	    Own Id: OTP-18932 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.24.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, prompt search functionality in
+	    ct_telnet handles unicode input.</p>
+          <p>
+	    Own Id: OTP-18664 Aux Id: ERIERL-959 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.24</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Renamed undocumented macro <c>CT_PEER/3</c> to
+	    <c>CT_PEER_REL/3</c>.</p>
+          <p>
+	    Own Id: OTP-18460</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.23.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Change timeout to infinity for gen_server calls in
+	    cth_log_redirect</p>
+          <p>
+	    Own Id: OTP-18363 Aux Id: ERIERL-879 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.23.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix starting of peer nodes on old releases when the
+	    compile server was active and the current Erlang
+	    installation contained non-latin1 characters in its path.</p>
+          <p>
+	    Own Id: OTP-18255 Aux Id: PR-6314 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.23.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix cth_surefire to handle when a suite is not compiled
+	    with <c>debug_info</c>. This bug has been present since
+	    Erlang/OTP 25.0.</p>
+          <p>
+	    Own Id: OTP-18208 Aux Id: ERIERL-852 PR-6229 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Common Test now preserves stack traces for throws.</p>
+          <p>
+	    Own Id: OTP-18138 Aux Id: GH-5719, PR-6029 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.23</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug when running parallel test cases and together
+	    with one or more ct hooks that would cause the hook lock
+	    process to crash and produce printouts in the ct logs.</p>
+          <p>
+	    Own Id: OTP-17881 Aux Id: PR-5581 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Input for <c>configure</c> scripts adapted to
+	    <c>autoconf</c> 2.71.</p>
+          <p>
+	    Own Id: OTP-17414 Aux Id: PR-4967 </p>
+        </item>
+        <item>
+          <p>
+	    Remove unused and undocumented tracer node functionality.</p>
+          <p>
+	    Own Id: OTP-17676 Aux Id: PR-5021 </p>
+        </item>
+        <item>
+          <p>
+	    The new module <c>peer</c> supersedes the <c>slave</c>
+	    module. The <c>slave</c> module is now deprecated and
+	    will be removed in OTP 27.</p>
+          <p>
+	    <c>peer</c> contains an extended and more robust API for
+	    starting erlang nodes.</p>
+          <p>
+	    Own Id: OTP-17720 Aux Id: PR-5162 </p>
+        </item>
+        <item>
+          <p>
+	    The cth_surefire ct hook has been updated to include the
+	    file and line number of the executed test case in the xml
+	    output.</p>
+          <p>
+	    The performance of the hook has also been improved
+	    greatly for test runs with many test cases.</p>
+          <p>
+	    Own Id: OTP-17882 Aux Id: PR-5581 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.22.1.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix how CT finds Erlang/OTP releases for compatability
+	    testing. This functionality is only used to test
+	    Erlang/OTP.</p>
+          <p>
+	    Own Id: OTP-18932 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.22.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Change timeout to infinity for gen_server calls in
+	    cth_log_redirect</p>
+          <p>
+	    Own Id: OTP-18363 Aux Id: ERIERL-879 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.22.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    OTP internal test fix.</p>
+          <p>
+	    Own Id: OTP-17888</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.22</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Before this change, group handling grammar was ambiguous
+	    and also group paths did not support test specs.</p>
+          <p>
+	    Own Id: OTP-17664 Aux Id: GH-5088, PR-5242 </p>
+        </item>
+        <item>
+          <p>
+	    Before this change, it was not possible to link to a
+	    particular header entry in Common Test log. Change adds
+	    right aligned anchor icons in HTML test logs.</p>
+          <p>
+	    Own Id: OTP-17790 Aux Id: PR-5375 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.21</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Float allowed as multiply_timetraps parameter.</p>
+          <p>
+	    Own Id: OTP-17413 Aux Id: PR-4767 </p>
+        </item>
+        <item>
+          <p>
+	    Remove usage of legacy API macro and functions.</p>
+          <p>
+	    Own Id: OTP-17632 Aux Id: PR-5022 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    An incoming NETCONF notification received before a call
+	    to ct_netconfc:create_subscription/* caused the
+	    connection process to fail with badarg. Unexpected
+	    notifications are now logged in the same way as other
+	    unexpected messages.</p>
+          <p>
+	    Own Id: OTP-17506</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add 'receiver' option to ct_netconfc</p>
+          <p>
+	    To allow a destination for incoming NETCONF notifications
+	    to be specified at sessions creation. Previously, a
+	    caller of create_subscription/* became the destination,
+	    but RFC 5277 create-subscription is no longer the only
+	    way in which NETCONF notifications can be ordered.</p>
+          <p>
+	    Own Id: OTP-17509</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The option <c>release_shell</c> could crash when used
+	    together with the <c>spec</c> option.</p>
+          <p>
+	    Own Id: OTP-16940 Aux Id: ERL-1335 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>The experimental HiPE application has been removed,
+	    together with all related functionality in other
+	    applications.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16963</p>
+        </item>
+        <item>
+          <p>
+	    Fixed warnings in code matching on underscore prefixed
+	    variables.</p>
+          <p>
+	    Own Id: OTP-17385 Aux Id: OTP-17123 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    OTP internal test fix.</p>
+          <p>
+	    Own Id: OTP-17888</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    An incoming NETCONF notification received before a call
+	    to ct_netconfc:create_subscription/* caused the
+	    connection process to fail with badarg. Unexpected
+	    notifications are now logged in the same way as other
+	    unexpected messages.</p>
+          <p>
+	    Own Id: OTP-17506</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add 'receiver' option to ct_netconfc</p>
+          <p>
+	    To allow a destination for incoming NETCONF notifications
+	    to be specified at sessions creation. Previously, a
+	    caller of create_subscription/* became the destination,
+	    but RFC 5277 create-subscription is no longer the only
+	    way in which NETCONF notifications can be ordered.</p>
+          <p>
+	    Own Id: OTP-17509</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Before this change Config leaked between test groups in
+	    case of a subgroup was skipped (GH-3480).</p>
+          <p>
+	    Own Id: OTP-17347 Aux Id: GH-3480,ERL-1439 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A race condition could cause ct_netconfc:open/* to return
+	    a dysfunctional handle, resulting in errors when invoking
+	    other api functions on it, and making it impossible to
+	    establish a new connection to the server in question.
+	    Similar symptoms were possible with open/* in modules
+	    ct_ssh and ct_telnet.</p>
+          <p>
+	    Internal messages from common_test processes could be
+	    left in the caller's message queue after a timeout when
+	    invoking call/* in modules ct_netconfc and ct_ssh. An
+	    internal process used by module ct_telnet could leak
+	    memory due to stray messages.</p>
+          <p>
+	    Calls to ct_telnet:open/* and ct_telnet:get_data/1 could
+	    hang indefinitely if the TCP connection to the server was
+	    lost.</p>
+          <p>
+	    Own Id: OTP-17328 Aux Id: ERIERL-631 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.20</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Various address sanitizer support.</p>
+          <p>
+	    Own Id: OTP-16959 Aux Id: PR-2965 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.19.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add behaviour for test suites</p>
+          <p>
+	    Own Id: OTP-17070</p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Common_Test 1.19</title>
 
@@ -65,6 +814,36 @@
 	    marker="crypto:new_api#the-new-api">substitutions</seeguide>.</p>
           <p>
 	    Own Id: OTP-16346</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.18.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    OTP internal test fix.</p>
+          <p>
+	    Own Id: OTP-17888</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.18.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
         </item>
       </list>
     </section>
@@ -1979,7 +2758,7 @@
 	    <c>{end_per_group,GroupName}</c>.</item> <item>When
 	    <c>require</c> fails in an info function, such as suite/0
 	    or group/1, the init configuration function is now
-	    reported as <c>auto_skipped</c> intead of <c>skipped</c>,
+	    reported as <c>auto_skipped</c> instead of <c>skipped</c>,
 	    with the <c>tc_done</c> event.</item> <item>When
 	    <c>require</c> fails in an info function because of a
 	    configuration name already in use, the <c>tc_done</c>
@@ -2280,7 +3059,7 @@
       <list>
         <item>
           <p>
-	    Removed depricated run_test program, use ct_run instead.</p>
+	    Removed deprecated run_test program, use ct_run instead.</p>
           <p>
 	    *** POTENTIAL INCOMPATIBILITY ***</p>
           <p>
@@ -2773,7 +3552,7 @@
 	    reference manual pages for details about which keys are
 	    allowed.</p>
           <p>
-	    This change introduces a backwards incompatability in the
+	    This change introduces a backwards incompatibility in the
 	    <c>ct:require/2</c> interface. Previously when doing
 	    <c>ct:require(a_name,{key,subkey})</c>, a_name would be
 	    associated with key. This has been changed to that
@@ -3120,7 +3899,7 @@
 	    Common Test will now print error information (with a time
 	    stamp) in the test case log file immediately when a test
 	    case fails. This makes it easier to see when, in time,
-	    the fault actually occured, and aid the job of locating
+	    the fault actually occurred, and aid the job of locating
 	    relevant trace and debug printouts in the log.</p>
           <p>
 	    Own Id: OTP-9904 Aux Id: seq11985, OTP-9900 </p>
@@ -3406,7 +4185,7 @@
         </item>
         <item>
           <p>
-	    If a timetrap timeout occured during execution of of a
+	    If a timetrap timeout occurred during execution of a
 	    function in a lib module (i.e. a function called directly
 	    or indirectly from a test case), the Suite argument in
 	    the end_tc/3 framework callback function would not
@@ -3673,11 +4452,11 @@
         <item>
           <p>
 	    Alpha release of Common Test Hooks (CTH). CTHs allow the
-	    users of common test to abtract out common behaviours
+	    users of common test to abstract out common behaviours
 	    from test suites in a much more elegant and flexible way
 	    than was possible before. Note that the addition of this
 	    feature may introduce minor changes in the undocumented
-	    behaviour of the interface inbetween common_test and
+	    behaviour of the interface between common_test and
 	    test_server.</p>
           <p>
 	    *** POTENTIAL INCOMPATIBILITY ***</p>
@@ -3825,7 +4604,7 @@
           <p>
 	    It is now possible for the user to provide specific
 	    callback modules that handle test configuration data, so
-	    that data on arbitray form can be accessed (e.g. by
+	    that data on arbitrary form can be accessed (e.g. by
 	    reading files or by communicating with a configuration
 	    server process). Two default callback modules have been
 	    introduced in Common Test: ct_config_plain and
@@ -4246,7 +5025,7 @@
 	    definitions). The properties make it possible to execute
 	    test cases in parallel, in sequence and in shuffled
 	    order. It is also possible to repeat test cases according
-	    to different criterias. The properties can be combined,
+	    to different criteria. The properties can be combined,
 	    making it possible to e.g. repeat a conf case a certain
 	    number of times and execute the test cases in different
 	    (random) order every time. Available properties are:
@@ -4497,7 +5276,7 @@
         <item>
           <p>
 	    The rx library, included with common_test, failed to
-	    build on on some architectures because the -fPIC compiler
+	    build on some architectures because the -fPIC compiler
 	    option was missing.</p>
           <p>
 	    Own Id: OTP-7111</p>

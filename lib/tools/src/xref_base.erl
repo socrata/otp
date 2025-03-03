@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2000-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2021. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -401,8 +401,8 @@ analysis(locals_not_used, functions) ->
     %% But then we only get locals that make some calls, so we add
     %% locals that are not used at all: "L * (UU + XU - LU)".
     %% We also need to exclude functions with the -on_load() attribute:
-    %% (L - OL) is used rather than just L.
-    "(L - OL) * ((UU + XU - LU) + domain EE + range EE)";
+    %% (L - (OL + range (closure LC | OL))) is used rather than just L.
+    "(L - (OL + range (closure LC | OL))) * ((UU + XU - LU) + domain EE + range EE)";
 analysis(exports_not_used, _) ->
     %% Local calls are not considered here. "X * UU" would do otherwise.
     "X - XU";

@@ -1,8 +1,8 @@
 %%
 %% %CopyrightBegin%
-%% 
-%% Copyright Ericsson AB 1996-2020. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 1996-2022. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -14,7 +14,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 -module(systools_make).
@@ -45,18 +45,13 @@
 
 -compile({inline,[{badarg,2}]}).
 
--ifdef(USE_ESOCK).
 -define(ESOCK_MODS, [prim_net,prim_socket,socket_registry]).
--else.
--define(ESOCK_MODS, []).
--endif.
-
 
 %%-----------------------------------------------------------------
 %% Create a boot script from a release file.
 %% Options is a list of {path, Path} | silent | local
 %%         | warnings_as_errors
-%% where path sets the search path, silent supresses error message
+%% where path sets the search path, silent suppresses error message
 %% printing on console, local generates a script with references
 %% to the directories there the applications are found,
 %% and warnings_as_errors treats warnings as errors.
@@ -195,7 +190,7 @@ do_make_hybrid_boot(TmpVsn, OldBoot, NewBoot, Args) ->
     {script,{_RelName1,_RelVsn1},OldScript} = binary_to_term(OldBoot),
     {script,{NewRelName,_RelVsn2},NewScript} = binary_to_term(NewBoot),
 
-    %% Everyting upto kernel_load_completed must come from the new script
+    %% Everything up to kernel_load_completed must come from the new script
     Fun1 = fun({progress,kernel_load_completed}) -> false;
               (_) -> true
            end,
@@ -345,7 +340,7 @@ add_apply_upgrade(Script,Args) ->
 %% Create a release package from a release file.
 %% Options is a list of {path, Path} | silent |
 %%    {dirs, [src,include,examples,..]} | {erts, ErtsDir} where path
-%% sets the search path, silent supresses error message printing,
+%% sets the search path, silent suppresses error message printing,
 %% dirs includes the specified directories (per application) in the
 %% release package and erts specifies that the erts-Vsn/bin directory
 %% should be included in the release package and there it can be found.
@@ -642,10 +637,10 @@ read_application(_Name, _, [], _, _, FirstError) ->
 parse_application({application, Name, Dict}, File, Vsn, Incls)
   when is_atom(Name),
        is_list(Dict) ->
-    Items = [vsn,id,description,modules,registered,
-	     applications,included_applications,mod,start_phases,env,maxT,maxP],
+    Items = [vsn,id,description,modules,registered,applications,
+	     optional_applications,included_applications,mod,start_phases,env,maxT,maxP],
     case catch get_items(Items, Dict) of
-	[Vsn,Id,Desc,Mods,Regs,Apps,Incs0,Mod,Phases,Env,MaxT,MaxP] ->
+	[Vsn,Id,Desc,Mods,Regs,Apps,Opts,Incs0,Mod,Phases,Env,MaxT,MaxP] ->
 	    case override_include(Name, Incs0, Incls) of
 		{ok, Incs} ->
 		    {ok, #application{name=Name,
@@ -654,6 +649,7 @@ parse_application({application, Name, Dict}, File, Vsn, Incls)
 				      description=Desc,
 				      modules=Mods,
 				      uses=Apps,
+				      optional=Opts,
 				      includes=Incs,
 				      regs=Regs,
 				      mod=Mod,
@@ -665,7 +661,7 @@ parse_application({application, Name, Dict}, File, Vsn, Incls)
 		{error, IncApps} ->
 		    {error, {override_include, IncApps}}
 	    end;
-	[OtherVsn,_,_,_,_,_,_,_,_,_,_,_] ->
+	[OtherVsn,_,_,_,_,_,_,_,_,_,_,_,_] ->
 	    {error, {no_valid_version, {Vsn, OtherVsn}}};
 	Err ->
 	    {error, {Err, {application, Name, Dict}}}
@@ -673,7 +669,7 @@ parse_application({application, Name, Dict}, File, Vsn, Incls)
 parse_application(Other, _, _, _) ->
     {error, {badly_formatted_application, Other}}.
 
-%% Test if all included applications specifed in the .rel file
+%% Test if all included applications specified in the .rel file
 %% exists in the {included_applications,Incs} specified in the
 %% .app file.
 override_include(Name, Incs, Incls) ->
@@ -700,7 +696,15 @@ specified([], _) ->
     [].
 
 get_items([H|T], Dict) ->
-    Item = check_item(keysearch(H, 1, Dict),H),
+    Item = case check_item(keysearch(H, 1, Dict),H) of
+        [Atom|_]=Atoms when is_atom(Atom), is_list(Atoms) ->
+            %% Check for duplicate entries in lists
+            case Atoms =/= lists:uniq(Atoms) of
+                true -> throw({dupl_entry, H, lists:subtract(Atoms, lists:uniq(Atoms))});
+                false -> Atoms
+            end;
+        X -> X
+    end,
     [Item|get_items(T, Dict)];
 get_items([], _Dict) ->
     [].
@@ -725,6 +729,11 @@ check_item({_,{description,Desc}},I) ->
 	_ -> throw({bad_param, I})
     end;
 check_item({_,{applications,Apps}},I) ->
+    case a_list_p(Apps) of
+	true -> Apps;
+	_ -> throw({bad_param, I})
+    end;
+check_item({_,{optional_applications,Apps}},I) ->
     case a_list_p(Apps) of
 	true -> Apps;
 	_ -> throw({bad_param, I})
@@ -768,6 +777,8 @@ check_item({_,{maxP,MaxP}},I) ->
 	infinity -> infinity;
 	_ -> throw({bad_param, I})
     end;
+check_item(false, optional_applications) -> % optional !
+    [];
 check_item(false, included_applications) -> % optional !
     [];
 check_item(false, mod) -> % mod is optional !
@@ -905,7 +916,8 @@ find_top_app(App, InclApps) ->
 
 undefined_applications(Appls) ->
     Uses = append(map(fun({_,A}) ->
-			      A#application.uses ++ A#application.includes
+			      (A#application.uses -- A#application.optional) ++
+				       A#application.includes
 		      end, Appls)),
     Defined = map(fun({{X,_},_}) -> X end, Appls),
     filter(fun(X) -> not member(X, Defined) end, Uses).
@@ -958,7 +970,9 @@ find_pos([], _OrderedAppls) ->
 find_pos(N, Name, [{Name,_Vsn,_Type}|_OrderedAppls]) ->
     {N, Name};
 find_pos(N, Name, [_OtherAppl|OrderedAppls]) ->
-    find_pos(N+1, Name, OrderedAppls).
+    find_pos(N+1, Name, OrderedAppls);
+find_pos(_N, Name, []) ->
+    {optional, Name}.
 
 %%______________________________________________________________________
 %% check_modules(Appls, Path, TestP) ->
@@ -1066,35 +1080,13 @@ check_xref([]) ->
     R = case xref:analyze(?XREF_SERVER, undefined_functions) of
 	    {ok, []} ->
 		[];
-	    {ok, Undefined} -> 
-		%% This clause is a (temporary?) fix for hipe.
-		adjust_for_hipe(Undefined);
+	    {ok, Undefined} ->
+		[{warning, {exref_undef, Undefined}}];
 	    Error ->
 		[{error, Error}]
 	end,
     xref:stop(?XREF_SERVER),
     R.
-
-adjust_for_hipe(Undef) ->
-    case erlang:system_info(hipe_architecture) of
-	undefined ->
-	    U = lists:filter(fun ({hipe_bifs,_,_}) -> false;
-				 ({hipe,_,_}) -> false;
-				 (_) -> true
-			     end, Undef),
-	    if 
-		[] == U ->
-		    [];
-		true ->
-		    [{warning, {exref_undef, U}}]
-	    end;
-	_Arch -> 
-	    %% Some BIFs are not always available on all versions of HiPE.
-	    U = lists:filter(fun ({hipe_bifs,write_u64,2}) -> false;
-				 (_) -> true
-			     end, Undef),
-	    [{warning, {exref_undef, U}}]
-    end.
 
 %% Perform cross reference checks between all modules specified
 %% in .app files.
@@ -1173,9 +1165,33 @@ smart_guess(Dir,IncPath) ->
 	    D1 = reverse(D),
 	    Dirs = [filename:join(D1 ++ ["src"]),
 		    filename:join(D1 ++ ["src", "e_src"])],
-	    {Dirs,Dirs ++ IncPath};
+	    RecurseDirs = add_subdirs(Dirs),
+	    {RecurseDirs,RecurseDirs ++ IncPath};
 	_ ->
 	    {[Dir],[Dir] ++ IncPath}
+    end.
+
+%%______________________________________________________________________
+%% add_subdirs([Dirs]) -> [Dirs]
+%% Take the directories that were used for a guess, and search them
+%% recursively. This is required for applications relying on varying
+%% nested directories. One example within OTP is the `wx' application,
+%% which has auto-generated modules in `src/gen/' and then fail any
+%% systools check.
+
+add_subdirs([]) ->
+    [];
+add_subdirs([Dir|Dirs]) ->
+    case filelib:is_dir(Dir) of
+        false ->
+            %% Keep the bad guess, but put it last in the search order
+            %% since we won't find anything there. Handling of errors
+            %% for unfound file is done in `locate_src/2'
+            add_subdirs(Dirs) ++ [Dir];
+        true ->
+            SubDirs = [File || File <- filelib:wildcard(filename:join(Dir, "**")),
+                               filelib:is_dir(File)],
+            [Dir|SubDirs] ++ add_subdirs(Dirs)
     end.
 
 %%______________________________________________________________________
@@ -1209,8 +1225,8 @@ generate_script(Output, Release, Appls, Flags) ->
     ScriptFile = Output ++ ".script",
     case file:open(ScriptFile, [write,{encoding,utf8}]) of
 	{ok, Fd} ->
-	    io:format(Fd, "%% ~s\n%% script generated at ~w ~w\n~tp.\n",
-		      [epp:encoding_to_string(utf8), date(), time(), Script]),
+	    io:format(Fd, "%% ~s\n~tp.\n",
+		      [epp:encoding_to_string(utf8), Script]),
 	    case file:close(Fd) of
 		ok ->
 		    BootFile = Output ++ ".boot",
@@ -1321,7 +1337,7 @@ sort_appls([{N, A}|T], Missing, Circular, Visited) ->
 				   T, Visited, [], []),
     {Incs, T2, NotFnd2} = find_all(Name, lists:reverse(A#application.includes),
 				   T1, Visited, [], []),
-    Missing1 = NotFnd1 ++ NotFnd2 ++ Missing,
+    Missing1 = (NotFnd1 -- A#application.optional) ++ NotFnd2 ++ Missing,
     case Uses ++ Incs of
 	[] -> 
 	    %% No more app that must be started before this one is
@@ -1357,7 +1373,7 @@ find_all(CheckingApp, [Name|T], L, Visited, Found, NotFound) ->
     case find_app(Name, L) of
 	{value, App} ->
 	    {_A,R} = App,
-	    %% It is OK to have a dependecy like
+	    %% It is OK to have a dependency like
 	    %% X includes Y, Y uses X.
 	    case lists:member(CheckingApp, R#application.includes) of
 		true ->
@@ -1397,7 +1413,7 @@ del_apps([], L) ->
 %%______________________________________________________________________
 %% Create the load path used in the generated script.
 %% If PathFlag is true a script intended to be used as a complete
-%% system (e.g. in an embbeded system), i.e. all applications are
+%% system (e.g. in an embedded system), i.e. all applications are
 %% located under $ROOT/lib.
 %% Otherwise all paths are set according to dir per application.
 
@@ -1492,7 +1508,7 @@ load_commands(Mods, Path) ->
 %% Pack an application to an application term.
 
 pack_app(#application{name=Name,vsn=V,id=Id,description=D,modules=M,
-		      uses=App,includes=Incs,regs=Regs,mod=Mod,start_phases=SF,
+		      uses=App,optional=Opts,includes=Incs,regs=Regs,mod=Mod,start_phases=SF,
 		      env=Env,maxT=MaxT,maxP=MaxP}) ->
     {application, Name,
      [{description,D},
@@ -1501,6 +1517,7 @@ pack_app(#application{name=Name,vsn=V,id=Id,description=D,modules=M,
       {modules, M},
       {registered, Regs},
       {applications, App},
+      {optional_applications, Opts},
       {included_applications, Incs},
       {env, Env},
       {maxT, MaxT},
@@ -1765,7 +1782,7 @@ add_system_files(Tar, RelName, Release, Path1) ->
     %% (well, actually the boot file was looked for in the same
     %% directory as RelName, which is not necessarily the same as cwd)
     %% --
-    %% but also in the path specfied as an option to systools:make_tar
+    %% but also in the path specified as an option to systools:make_tar
     %% (but make sure to search the RelName directory and cwd first)
     Path = case filename:dirname(RelName) of
 	       "." ->
@@ -2427,6 +2444,8 @@ form_reading({read,File}) ->
     io_lib:format("Cannot read ~tp~n",[File]);
 form_reading({{bad_param, P},_}) ->
     io_lib:format("Bad parameter in .app file: ~tp~n",[P]);
+form_reading({{dupl_entry, P, DE},_}) ->
+    io_lib:format("~tp parameter contains duplicates of: ~tp~n", [P, DE]);
 form_reading({{missing_param,P},_}) ->
     io_lib:format("Missing parameter in .app file: ~p~n",[P]);
 form_reading({badly_formatted_application,_}) ->

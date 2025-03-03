@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,14 +22,126 @@
 %%----------------------------------------------------------------------
 -module(ssh_test_lib).
 
-%% Note: This directive should only be used in test suites.
--compile(export_all).
+-export([
+connect/2,
+connect/3,
+daemon/1,
+daemon/2,
+daemon/3,
+daemon_port/1,
+daemon_port/2,
+gen_tcp_connect/2,
+gen_tcp_connect/3,
+open_sshc/3,
+open_sshc/4,
+open_sshc_cmd/3,
+open_sshc_cmd/4,
+std_daemon/2,
+std_daemon1/2,
+std_connect/4,
+std_simple_sftp/3,
+std_simple_sftp/4,
+std_simple_exec/3,
+std_simple_exec/4,
+start_shell/2,
+start_shell/3,
+start_io_server/0,
+init_io_server/1,
+loop_io_server/2,
+io_request/5,
+io_reply/3,
+reply/2,
+rcv_expected/3,
+rcv_lingering/1,
+receive_exec_result/1,
+receive_exec_result_or_fail/1,
+receive_exec_end/2,
+receive_exec_end/3,
+receive_exec_result/3,
+failfun/2,
+hostname/0,
+del_dirs/1,
+del_dir_contents/1,
+do_del_files/2,
+openssh_sanity_check/1,
+verify_sanity_check/1,
+default_algorithms/1,
+default_algorithms/3,
+default_algorithms/2,
+run_fake_ssh/1,
+extract_algos/1,
+get_atoms/1,
+intersection/2,
+intersect/2,
+intersect_bi_dir/1,
+some_empty/1,
+sort_spec/1,
+sshc/1,
+ssh_type/0,
+ssh_type1/0,
+installed_ssh_version/1,
+algo_intersection/2,
+to_atoms/1,
+ssh_supports/2,
+has_inet6_address/0,
+open_port/1,
+open_port/2,
+sleep_millisec/1,
+sleep_microsec/1,
+busy_wait/2,
+get_kex_init/1,
+get_kex_init/3,
+expected_state/1,
+random_chars/1,
+create_random_dir/1,
+match_ip/2,
+match_ip0/2,
+match_ip1/2,
+mangle_connect_address/1,
+mangle_connect_address/2,
+loopback/1,
+mangle_connect_address1/2,
+ntoa/1,
+try_enable_fips_mode/0,
+is_cryptolib_fips_capable/0,
+report/2,
+lc_name_in/1,
+ptty_supported/0,
+has_WSL/0,
+winpath_to_linuxpath/1,
+copy_recursive/2,
+mk_dir_path/1,
+setup_all_user_host_keys/1,
+setup_all_user_host_keys/2,
+setup_all_user_host_keys/3,
+setup_all_host_keys/1,
+setup_all_host_keys/2,
+setup_all_user_keys/2,
+setup_user_key/3,
+setup_host_key_create_dir/3,
+setup_host_key/3,
+setup_known_host/3,
+get_addr_str/0,
+file_base_name/2,
+kex_strict_negotiated/2,
+event_logged/3
+        ]).
+%% logger callbacks and related helpers
+-export([log/2,
+         get_log_level/0, set_log_level/1, add_log_handler/0,
+         rm_log_handler/0, get_log_events/1]).
 
--include_lib("public_key/include/public_key.hrl").
 -include_lib("common_test/include/ct.hrl").
--include_lib("ssh/src/ssh_transport.hrl").
+-include("ssh_transport.hrl").
 -include_lib("kernel/include/file.hrl").
 -include("ssh_test_lib.hrl").
+
+-define(SANITY_CHECK_NOTE,
+        "For enabling test, make sure following commands work:~n"
+        "ok = ssh:start(), "
+        "{ok, _} = ssh:connect(\"localhost\", 22, "
+        "[{password,\"\"},{silently_accept_hosts, true}, "
+        "{save_accepted_host, false}, {user_interaction, false}]).").
 
 %%%----------------------------------------------------------------
 connect(Port, Options) when is_integer(Port) ->
@@ -37,11 +149,42 @@ connect(Port, Options) when is_integer(Port) ->
 
 connect(any, Port, Options) ->
     connect(hostname(), Port, Options);
-connect(Host, Port, Options) ->
+
+connect(Host, ?SSH_DEFAULT_PORT, Options0) ->
+    Options =
+        set_opts_if_not_set([{silently_accept_hosts, true},
+                             {save_accepted_host, false},
+                             {user_interaction, false}
+                            ], Options0),
+    do_connect(Host, ?SSH_DEFAULT_PORT, Options);
+
+connect(Host, Port, Options0) ->
+    Options =
+        case proplists:get_value(user_dir,Options0) of
+            undefined ->
+                %% Avoid uppdating the known_hosts if it is the default one
+                set_opts_if_not_set([{save_accepted_host, false}], Options0);
+            _ ->
+                Options0
+        end,
+    do_connect(Host, Port, Options).
+
+
+do_connect(Host, Port, Options) ->
     R = ssh:connect(Host, Port, Options),
     ct:log("~p:~p ssh:connect(~p, ~p, ~p)~n -> ~p",[?MODULE,?LINE,Host, Port, Options, R]),
     {ok, ConnectionRef} = R,
     ConnectionRef.
+
+set_opts_if_not_set(OptsToSet, Options0) ->
+    lists:foldl(fun({K,V}, Opts) ->
+                        case proplists:get_value(K, Opts) of
+                            undefined ->
+                                [{K,V} | Opts];
+                            _ ->
+                                Opts
+                        end
+                end, Options0, OptsToSet).
 
 %%%----------------------------------------------------------------
 daemon(Options) ->
@@ -77,6 +220,9 @@ daemon_port(0, Pid) -> {ok,Dinf} = ssh:daemon_info(Pid),
 daemon_port(Port, _) -> Port.
 
 %%%----------------------------------------------------------------
+gen_tcp_connect(Port, Options) ->
+    gen_tcp_connect("localhost", Port, Options).
+
 gen_tcp_connect(Host0, Port, Options) ->
     Host = ssh_test_lib:ntoa(ssh_test_lib:mangle_connect_address(Host0)),
     ct:log("~p:~p gen_tcp:connect(~p, ~p, ~p)~nHost0 = ~p",
@@ -147,8 +293,7 @@ std_simple_sftp(Host, Port, Config, Opts) ->
     Data = crypto:strong_rand_bytes(proplists:get_value(std_simple_sftp_size,Config,10)),
     ok = ssh_sftp:write_file(ChannelRef, DataFile, Data),
     {ok,ReadData} = file:read_file(DataFile),
-    ok = ssh:close(ConnectionRef),
-    Data == ReadData.
+    {Data == ReadData, ConnectionRef}.
 
 %%%----------------------------------------------------------------
 std_simple_exec(Host, Port, Config) ->
@@ -184,11 +329,46 @@ start_shell(Port, IOServer) ->
 start_shell(Port, IOServer, ExtraOptions) ->
     spawn_link(
       fun() ->
-	      Host = hostname(),
+              ct:log("~p:~p:~p ssh_test_lib:start_shell(~p, ~p, ~p)",
+                     [?MODULE,?LINE,self(), Port, IOServer, ExtraOptions]),
 	      Options = [{user_interaction, false},
-			 {silently_accept_hosts,true} | ExtraOptions],
-	      group_leader(IOServer, self()),
-	      ssh:shell(Host, Port, Options)
+			 {silently_accept_hosts,true},
+                         {save_accepted_host,false}
+                         | ExtraOptions],
+              try
+                  group_leader(IOServer, self()),
+                  case Port of
+                      22 ->
+                          Host = hostname(),
+                          ct:log("Port==22 Call ssh:shell(~p, ~p)",
+                                 [Host, Options]),
+                          ssh:shell(Host, Options);
+                      _ when is_integer(Port) ->
+                          Host = hostname(),
+                          ct:log("is_integer(Port) Call ssh:shell(~p, ~p, ~p)",
+                                 [Host, Port, Options]),
+                          ssh:shell(Host, Port, Options);
+                      ConnRef when is_pid(ConnRef) ->
+                          ct:log("is_pid(ConnRef) Call ssh:shell(~p)",
+                                 [ConnRef]),
+                          ssh:shell(ConnRef); % Options were given in ssh:connect
+                      Socket ->
+                          receive
+                              start -> ok
+                          end,
+                          ct:log("Socket Call ssh:shell(~p, ~p)",
+                                 [Socket, Options]),
+                          ssh:shell(Socket, Options)
+                  end
+              of
+                  R ->
+                      ct:log("~p:~p ssh_test_lib:start_shell(~p, ~p, ~p) -> ~p",
+                             [?MODULE,?LINE,Port, IOServer, ExtraOptions, R])
+              catch
+                  C:E:S ->
+                      ct:log("Exception ~p:~p~n~p", [C,E,S]),
+                      ct:fail("Exception",[])
+              end
       end).
 
 
@@ -209,6 +389,7 @@ loop_io_server(TestCase, Buff0) ->
              %%ct:log("io_server ~p:~p ~p got ~p",[?MODULE,?LINE,self(),_REQ]),
 	     {ok, Reply, Buff} = io_request(Request, TestCase, From,
 					    ReplyAs, Buff0),
+             %%ct:log("io_server ~p:~p ~p going to reply ~p",[?MODULE,?LINE,self(),Reply]),
 	     io_reply(From, ReplyAs, Reply),
 	     loop_io_server(TestCase, Buff);
 	 {'EXIT',_, _} = _Exit ->
@@ -218,6 +399,12 @@ loop_io_server(TestCase, Buff0) ->
 	30000 -> ct:fail("timeout ~p:~p",[?MODULE,?LINE])
     end.
 
+io_request(getopts,_TestCase, _, _, Buff) ->
+    {ok, [], Buff};
+io_request({get_geometry,columns},_TestCase, _, _, Buff) ->
+    {ok, 80, Buff};
+io_request({get_geometry,rows},_TestCase, _, _, Buff) ->
+    {ok, 24, Buff};
 io_request({put_chars, Chars}, TestCase, _, _, Buff) ->
     reply(TestCase, Chars),
     {ok, ok, Buff};
@@ -225,7 +412,7 @@ io_request({put_chars, unicode, Chars}, TestCase, _, _, Buff) when is_binary(Cha
     reply(TestCase, Chars),
     {ok, ok, Buff};
 io_request({put_chars, unicode, io_lib, format, [Fmt,Args]}, TestCase, _, _, Buff) ->
-    reply(TestCase, io_lib:format(Fmt,Args)),
+    reply(TestCase,  unicode:characters_to_binary(io_lib:format(Fmt,Args))),
     {ok, ok, Buff};
 io_request({put_chars, Enc, Chars}, TestCase, _, _, Buff) ->
     reply(TestCase, unicode:characters_to_binary(Chars,Enc,latin1)),
@@ -240,6 +427,7 @@ io_request({get_line, _Enc, _Prompt} = Request, _, From, ReplyAs, [] = Buff) ->
 
 io_request({get_line, _Enc,_}, _, _, _, [Line | Buff]) ->
     {ok, Line, Buff}.
+
 
 io_reply(_, _, []) ->
     ok;
@@ -306,11 +494,11 @@ receive_exec_result(Msgs) when is_list(Msgs) ->
                 false ->
                     case Msg of
                         {ssh_cm,_,{data,_,1, Data}} ->
-                            ct:log("~p:~p StdErr: ~p~n", [?MODULE,?FUNCTION_NAME,Data]),
+                            ct:log("~p:~p unexpected StdErr: ~p~n~p~n", [?MODULE,?FUNCTION_NAME,Data,Msg]),
                             receive_exec_result(Msgs);
                         Other ->
-                            ct:log("~p:~p Other ~p", [?MODULE,?FUNCTION_NAME,Other]),
-                            {unexpected_msg, Other}
+                            ct:log("~p:~p unexpected Other ~p", [?MODULE,?FUNCTION_NAME,Other]),
+                            receive_exec_result(Msgs)
                     end
             end
     after 
@@ -337,9 +525,12 @@ receive_exec_result_or_fail(Msg) ->
     end.
 
 receive_exec_end(ConnectionRef, ChannelId) ->
+    receive_exec_end(ConnectionRef, ChannelId, 0).
+
+receive_exec_end(ConnectionRef, ChannelId, ExitStatus) ->
     receive_exec_result(
       [{ssh_cm, ConnectionRef, {eof, ChannelId}},
-       {optional, {ssh_cm, ConnectionRef, {exit_status, ChannelId, 0}}},
+       {optional, {ssh_cm, ConnectionRef, {exit_status, ChannelId, ExitStatus}}},
        {ssh_cm, ConnectionRef, {closed, ChannelId}}
       ]).
 
@@ -385,21 +576,35 @@ do_del_files(Dir, Files) ->
                           end
                   end, Files).
 
-
 openssh_sanity_check(Config) ->
     ssh:start(),
-    case ssh:connect("localhost", 22, [{password,""},
-                                       {silently_accept_hosts, true},
-                                       {user_interaction, false}
-                                      ]) of
+    case ssh:connect("localhost", ?SSH_DEFAULT_PORT,
+                     [{password,""},
+                      {silently_accept_hosts, true},
+                      {save_accepted_host, false},
+                      {user_interaction, false}
+                     ]) of
 	{ok, Pid} ->
 	    ssh:close(Pid),
 	    ssh:stop(),
-	    Config;
+	    [{sanity_check_result, ok} | Config];
 	Err ->
 	    Str = lists:append(io_lib:format("~p", [Err])),
+            ct:log("Error = ~p", [Err]),
+            ct:log(?SANITY_CHECK_NOTE),
 	    ssh:stop(),
-	    {skip, Str}
+	    [{sanity_check_result, Str} | Config]
+    end.
+
+verify_sanity_check(Config) ->
+    SanityCheckResult = proplists:get_value(sanity_check_result, Config, ok),
+    case SanityCheckResult of
+        ok ->
+            Config;
+        Err ->
+            ct:log("Error = ~p", [Err]),
+            ct:log(?SANITY_CHECK_NOTE),
+            {fail, passwordless_connection_failed}
     end.
 
 %%%--------------------------------------------------------------------
@@ -415,6 +620,7 @@ default_algorithms(sshd, Host, Port) ->
     try run_fake_ssh(
 	  ssh_trpt_test_lib:exec(
 	    [{connect,Host,Port, [{silently_accept_hosts, true},
+                                  {save_accepted_host, false},
 				  {user_interaction, false}]}]))
     catch
 	_C:_E ->
@@ -447,14 +653,14 @@ default_algorithms(sshc, DaemonOptions) ->
 	{hostport,Srvr,{_Host,Port}} ->
 	    spawn(fun()-> os:cmd(lists:concat(["ssh -o \"StrictHostKeyChecking no\" -p ",Port," localhost"])) end)
     after ?TIMEOUT ->
-	    ct:fail("No server respons (timeout) 1")
+	    ct:fail("No server response (timeout) 1")
     end,
 
     receive
 	{result,Srvr,L} ->
 	    L
     after ?TIMEOUT ->
-	    ct:fail("No server respons (timeout) 2")
+	    ct:fail("No server response (timeout) 2")
     end.
 
 run_fake_ssh({ok,InitialState}) ->
@@ -728,12 +934,14 @@ get_kex_init(Conn, Ref, TRef) ->
 	    end;
 
 	false ->
-	    ct:log("~p:~p Not in 'connected' state: ~p",[?MODULE,?LINE,State]),
 	    receive
 		{reneg_timeout,Ref} -> 
+                    ct:log("~p:~p Not in 'connected' state: ~p but reneg_timeout received. Fail.",
+                           [?MODULE,?LINE,State]),
 		    ct:log("S = ~p", [S]),
 		    ct:fail(reneg_timeout)
 	    after 0 ->
+                    ct:log("~p:~p Not in 'connected' state: ~p, Will try again after 100ms",[?MODULE,?LINE,State]),
 		    timer:sleep(100), % If renegotiation is complete we do not
 				      % want to exit on the reneg_timeout
 		    get_kex_init(Conn, Ref, TRef)
@@ -758,7 +966,7 @@ create_random_dir(Config) ->
 	    Name;
 	{error,eexist} ->
 	    %% The Name already denotes an existing file system object, try again.
-	    %% The likelyhood of always generating an existing file name is low
+	    %% The likelihood of always generating an existing file name is low
 	    create_random_dir(Config)
     end.
 
@@ -989,6 +1197,24 @@ setup_all_host_keys(DataDir, SysDir) ->
                         end
                 end, [], ssh_transport:supported_algorithms(public_key)).
 
+
+setup_all_user_keys(DataDir, UserDir) ->
+    lists:foldl(fun(Alg, OkAlgs) ->
+                        try
+                            ok = ssh_test_lib:setup_user_key(Alg, DataDir, UserDir)
+                        of
+                            ok -> [Alg|OkAlgs]
+                        catch
+                            error:{badmatch, {error,enoent}} ->
+                                OkAlgs;
+                            C:E:S ->
+                                ct:log("Exception in ~p:~p for alg ~p:  ~p:~p~n~p",
+                                       [?MODULE,?FUNCTION_NAME,Alg,C,E,S]),
+                                OkAlgs
+                        end
+                end, [], ssh_transport:supported_algorithms(public_key)).
+
+
 setup_user_key(SshAlg, DataDir, UserDir) ->
     file:make_dir(UserDir),
     %% Copy private user key to user's dir
@@ -1067,3 +1293,82 @@ file_base_name(system_src, 'ecdsa-sha2-nistp521') -> "ssh_host_ecdsa_key521";
 file_base_name(system_src, Alg) -> file_base_name(system, Alg).
 
 %%%----------------------------------------------------------------
+-define(SEARCH_FUN(EXP),
+        begin
+            fun(#{msg := {string, EXP},
+                  level := debug}) ->
+                    true;
+               (_) ->
+                    false
+            end
+        end).
+-define(SEARCH_SUFFIX, " will use strict KEX ordering").
+
+kex_strict_negotiated(client, Events) ->
+    kex_strict_negotiated(?SEARCH_FUN("client" ++ ?SEARCH_SUFFIX), Events);
+kex_strict_negotiated(server, Events) ->
+    kex_strict_negotiated(?SEARCH_FUN("server" ++ ?SEARCH_SUFFIX), Events);
+kex_strict_negotiated(SearchFun, Events) when is_function(SearchFun) ->
+    %% FIXME use event_logged?
+    case lists:search(SearchFun, Events) of
+        {value, _} -> true;
+        _ -> false
+    end.
+
+event_logged(Role, Events, Reason) ->
+    SearchF =
+        fun(#{msg := {report, #{args := Args}}}) ->
+                AnyF = fun (E) when is_list(E) ->
+                               case string:find(E, Reason) of
+                                   nomatch -> false;
+                                   _ -> true
+                               end;
+                           (_) ->
+                               false
+                       end,
+                lists:member(Role, Args) andalso
+                    lists:any(AnyF, Args);
+           (_Event) ->
+                false
+        end,
+    case lists:search(SearchF, Events) of
+        {value, _} -> true;
+        _ -> false
+    end.
+
+get_log_level() ->
+    #{level := Level} = logger:get_primary_config(),
+    Level.
+
+set_log_level(Level) ->
+    ok = logger:set_primary_config(level, Level).
+
+add_log_handler() ->
+    TestRef = make_ref(),
+    ok = logger:add_handler(?MODULE, ?MODULE,
+                            #{level => debug,
+                              filter_default => log,
+                              recipient => self(),
+                              test_ref => TestRef}),
+    {ok, TestRef}.
+
+rm_log_handler() ->
+    ok = logger:remove_handler(?MODULE).
+
+get_log_events(TestRef) ->
+    {ok, get_log_events(TestRef, [])}.
+
+get_log_events(TestRef, Acc) ->
+    receive
+        {TestRef, Event} ->
+            get_log_events(TestRef, [Event | Acc])
+    after
+        500 ->
+            Acc
+    end.
+
+%% logger callbacks
+log(LogEvent = #{level:=_Level,msg:=_Msg,meta:=_Meta},
+    #{test_ref := TestRef, recipient := Recipient}) ->
+    Recipient ! {TestRef, LogEvent},
+    ok.

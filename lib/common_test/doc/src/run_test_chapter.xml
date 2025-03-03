@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2003</year><year>2020</year>
+      <year>2003</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -763,7 +763,7 @@
 	finally function <c>end_per_group</c>. Also, if particular
 	test cases in a group are specified, <c>init_per_group</c>
 	and <c>end_per_group</c>, for the group in question, are
-	called. If a group defined (in <c>Suite:group/0</c>) as
+	called. If a group defined (in <c>Suite:groups/0</c>) as
 	a subgroup of another group, is specified (or if particular test
 	cases of a subgroup are), <c>Common Test</c> calls the configuration
 	functions for the top-level groups and for the subgroup
@@ -955,9 +955,9 @@
  Dir             = string()
  Suites          = atom() | [atom()] | all
  Suite           = atom()
- Groups          = GroupPath | [GroupPath] | GroupSpec | [GroupSpec] | all
- GroupPath       = [GroupName]
- GroupSpec       = GroupName | {GroupName,Properties} | {GroupName,Properties,GroupSpec}
+ Groups          = GroupPath | GroupSpec | [GroupSpec] | all
+ GroupPath       = [[GroupSpec]]
+ GroupSpec       = GroupName | {GroupName,Properties} | {GroupName,Properties,[GroupSpec]}
  GroupName       = atom()
  GroupNames      = GroupName | [GroupName]
  Cases           = atom() | [atom()] | all
@@ -1169,7 +1169,7 @@
 	<item>A confirmation when the test run is complete.</item>
 	<item>Some special information, such as error reports, progress
 	  reports, and printouts written with <c>erlang:display/1</c>, or <c>io:format/3</c>
-	  specifically addressed to a receiver other than <c>standard_io</c>
+	  specifically addressed to a receiver other than <seetype marker="stdlib:io#standard_io"><c>standard_io</c></seetype>
 	  (for example, the default group leader process <c>user</c>).</item>
       </list>
 
@@ -1608,5 +1608,3 @@ div.error pre { color:white }</pre>
       
   </section>
 </chapter>
-
-

@@ -1,7 +1,7 @@
 %% 
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2003-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -163,7 +163,7 @@ init_per_testcase(Case, Config0) when is_list(Config0) ->
     Config1    = ?LIB:fix_data_dir(Config0),
     CaseTopDir = ?LIB:init_testcase_top_dir(Case, Config1), 
     DbDir      = join(CaseTopDir, "db_dir/"),
-    ?line ok   = file:make_dir(DbDir),
+    ok   = file:make_dir(DbDir),
     init_per_testcase2(Case, [{db_dir,       DbDir}, 
 			      {case_top_dir, CaseTopDir} | Config1]).
 
@@ -189,7 +189,7 @@ init_per_testcase2(size_check_mnesia, Config) when is_list(Config) ->
     Config;
 init_per_testcase2(cache_test, Config) when is_list(Config) ->
     Factor = ?config(snmp_factor, Config),
-    ct:timetrap(?MINS(5 + (Factor div 2))),
+    ct:timetrap(?MINS(10 + (Factor div 2))),
     Config;
 init_per_testcase2(_Case, Config) when is_list(Config) ->
     Factor = ?config(snmp_factor, Config),
@@ -206,8 +206,6 @@ end_per_testcase1(size_check_mnesia, Config) when is_list(Config) ->
     mnesia_stop(),
     Config;
 end_per_testcase1(cache_test, Config) when is_list(Config) ->
-    Dog = ?config(watchdog, Config),
-    test_server:timetrap_cancel(Dog),
     Config;
 end_per_testcase1(_Case, Config) when is_list(Config) ->
     Config.
@@ -217,7 +215,6 @@ end_per_testcase1(_Case, Config) when is_list(Config) ->
 %% Test functions
 %%======================================================================
 
-start_and_stop(suite) -> [];
 start_and_stop(Config) when is_list(Config) ->
     tc_try(start_and_start,
            fun() -> do_start_and_stop(Config) end).
@@ -226,20 +223,19 @@ do_start_and_stop(_Config) ->
     Prio      = normal,
     Verbosity = trace,
 
-    ?line sym_start(Prio, Verbosity),
-    ?line MibsPid = mibs_start(Prio, Verbosity),
+    sym_start(Prio, Verbosity),
+    MibsPid = mibs_start(Prio, Verbosity),
 
-    ?line mibs_info(MibsPid),
+    mibs_info(MibsPid),
 
-    ?line mibs_stop(MibsPid),
-    ?line sym_stop(),
+    mibs_stop(MibsPid),
+    sym_stop(),
 
     ok.
 
 
 %% ---------------------------------------------------------------------
 
-load_unload(suite) -> [];
 load_unload(Config) when is_list(Config) ->
     tc_try(load_unload,
            fun() -> do_load_unload(Config) end).
@@ -252,44 +248,44 @@ do_load_unload(Config) ->
     MibDir     = ?config(data_dir, Config),
 
     ?DBG("load_unload -> start symbolic store", []),
-    ?line sym_start(Prio, Verbosity),
+    sym_start(Prio, Verbosity),
 
     ?DBG("load_unload -> start mib server", []),
-    ?line MibsPid = mibs_start(Prio, Verbosity),
+    MibsPid = mibs_start(Prio, Verbosity),
     
     ?DBG("load_unload -> load one not already loaded mib", []),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, []),
-    ?line ok = load_mibs(MibsPid, MibDir, ["Test2"]),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, ["Test2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir, []),
+    ok = load_mibs(MibsPid, MibDir, ["Test2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir, ["Test2"]),
     
     ?DBG("load_unload -> try load one *already loaded* mib", []),
     EMib = join(MibDir, "Test2"), 
-    ?line {error, {'load aborted at', EMib, already_loaded}} = 
+    {error, {'load aborted at', EMib, already_loaded}} =
 	load_mibs(MibsPid, MibDir, ["Test2"]),
 
     ?DBG("load_unload -> load 2 not already loaded mibs", []),
-    ?line ok = load_mibs(MibsPid, MibDir, ["TestTrap", "TestTrapv2"]),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, 
+    ok = load_mibs(MibsPid, MibDir, ["TestTrap", "TestTrapv2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir,
 				  ["Test2", "TestTrap", "TestTrapv2"]),
     
     ?DBG("load_unload -> unload one loaded mib", []),
-    ?line ok = unload_mibs(MibsPid, ["Test2"]),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, ["TestTrap", "TestTrapv2"]),
+    ok = unload_mibs(MibsPid, ["Test2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir, ["TestTrap", "TestTrapv2"]),
     
     ?DBG("load_unload -> try unload two loaded mibs and one not loaded", []),
-    ?line {error, {'unload aborted at', "Test2", not_loaded}} = 
+    {error, {'unload aborted at', "Test2", not_loaded}} =
 	   unload_mibs(MibsPid, ["TestTrap","Test2","TestTrapv2"]),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, ["TestTrapv2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir, ["TestTrapv2"]),
     
     ?DBG("load_unload -> unload the remaining loaded mib", []),
-    ?line ok = unload_mibs(MibsPid, ["TestTrapv2"]),
-    ?line ok = verify_loaded_mibs(MibsPid, MibDir, []),
+    ok = unload_mibs(MibsPid, ["TestTrapv2"]),
+    ok = verify_loaded_mibs(MibsPid, MibDir, []),
     
     ?DBG("load_unload -> stop mib server", []),
-    ?line mibs_stop(MibsPid),
+    mibs_stop(MibsPid),
 
     ?DBG("load_unload -> stop symbolic store", []),
-    ?line sym_stop(),
+    sym_stop(),
 
     ?DBG("load_unload -> done", []),
     ok.
@@ -298,15 +294,11 @@ do_load_unload(Config) ->
 %% ---------------------------------------------------------------------
 
 
-size_check_ets1(suite) ->
-    [];
 size_check_ets1(Config) when is_list(Config) ->
     MibStorage = [{module, snmpa_mib_storage_ets}], 
     do_size_check(size_check_ets1,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_ets2(suite) ->
-    [];
 size_check_ets2(Config) when is_list(Config) ->
     Dir = ?config(db_dir, Config),    
     MibStorage = [{module,  snmpa_mib_storage_ets}, 
@@ -314,8 +306,6 @@ size_check_ets2(Config) when is_list(Config) ->
     do_size_check(size_check_ets2,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_ets2_bad_file1(suite) ->
-    [];
 size_check_ets2_bad_file1(Config) when is_list(Config) ->
     Dir = ?config(db_dir, Config),    
     %% Ensure that the bad file does not cause any problems (action = clear)
@@ -325,8 +315,6 @@ size_check_ets2_bad_file1(Config) when is_list(Config) ->
     do_size_check(size_check_ets2_bad_file1,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_ets3(suite) ->
-    [];
 size_check_ets3(Config) when is_list(Config) ->
     Dir = ?config(db_dir, Config),    
     MibStorage = [{module,  snmpa_mib_storage_ets}, 
@@ -335,8 +323,6 @@ size_check_ets3(Config) when is_list(Config) ->
     do_size_check(size_check_ets3,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_ets3_bad_file1(suite) ->
-    [];
 size_check_ets3_bad_file1(Config) when is_list(Config) ->
     Dir = ?config(db_dir, Config),    
     %% Ensure that the bad file does not cause any problems (action = clear)
@@ -347,8 +333,6 @@ size_check_ets3_bad_file1(Config) when is_list(Config) ->
     do_size_check(size_check_ets3_bad_file1,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_dets(suite) ->
-    [];
 size_check_dets(Config) when is_list(Config) ->
     Dir = ?config(db_dir, Config),
     MibStorage = [{module,  snmpa_mib_storage_dets}, 
@@ -356,8 +340,6 @@ size_check_dets(Config) when is_list(Config) ->
     do_size_check(size_check_dets,
                   [{mib_storage, MibStorage}|Config]).
 
-size_check_mnesia(suite) ->
-    [];
 size_check_mnesia(Config) when is_list(Config) ->
     MibStorage = [{module,  snmpa_mib_storage_mnesia}, 
                   {options, [{nodes, []}]}],
@@ -382,14 +364,14 @@ do_size_check(Config) ->
     Verbosity = trace,
 
     MibStorage = ?config(mib_storage, Config),
-    ?DBG("do_size_check -> MibStorage: ~p", [MibStorage]),
+    ?IPRINT("do_size_check -> MibStorage: ~p", [MibStorage]),
     MibDir     = ?config(data_dir, Config),
     StdMibDir  = filename:join(code:priv_dir(snmp), "mibs") ++ "/",
     
-    ?DBG("do_size_check -> start symbolic store", []),
-    ?line sym_start(Prio, MibStorage, Verbosity),
-    ?DBG("do_size_check -> start mib server", []),
-    ?line MibsPid = mibs_start(Prio, MibStorage, Verbosity),
+    ?IPRINT("do_size_check -> start symbolic store", []),
+    sym_start(Prio, MibStorage, Verbosity),
+    ?IPRINT("do_size_check -> start mib server", []),
+    MibsPid = mibs_start(Prio, MibStorage, Verbosity),
 
     Mibs    = ["Test2", "TestTrap", "TestTrapv2"],
     StdMibs = ["OTP-SNMPEA-MIB",
@@ -404,24 +386,24 @@ do_size_check(Config) ->
 	       "SNMPv2-TC",
 	       "SNMPv2-TM"],
 
-    ?DBG("do_size_check -> load mibs", []),
-    ?line load_mibs(MibsPid, MibDir, Mibs),
-    ?DBG("do_size_check -> load std mibs", []),
-    ?line load_mibs(MibsPid, StdMibDir, StdMibs),
+    ?IPRINT("do_size_check -> load std mibs", []),
+    load_mibs(MibsPid, StdMibDir, StdMibs),
+    ?IPRINT("do_size_check -> load (own) mibs", []),
+    load_mibs(MibsPid, MibDir, Mibs),
 
     ?SLEEP(2000),
-    ?DBG("do_size_check -> display mem usage", []),
-    ?line display_memory_usage(MibsPid),
+    ?IPRINT("do_size_check -> display mem usage", []),
+    display_memory_usage(MibsPid),
     
-    ?DBG("do_size_check -> unload std mibs", []),
-    ?line unload_mibs(MibsPid, StdMibs),
-    ?DBG("do_size_check -> unload mibs", []),
-    ?line unload_mibs(MibsPid, Mibs),
+    ?IPRINT("do_size_check -> unload (own) mibs", []),
+    unload_mibs(MibsPid, Mibs),
+    ?IPRINT("do_size_check -> unload std mibs", []),
+    unload_mibs(MibsPid, StdMibs),
 
-    ?DBG("do_size_check -> stop mib server", []),
-    ?line mibs_stop(MibsPid),
-    ?DBG("do_size_check -> stop symbolic store", []),
-    ?line sym_stop(),
+    ?IPRINT("do_size_check -> stop mib server", []),
+    mibs_stop(MibsPid),
+    ?IPRINT("do_size_check -> stop symbolic store", []),
+    sym_stop(),
 
     ?IPRINT("do_size_check -> done", []),
     ok.
@@ -429,7 +411,6 @@ do_size_check(Config) ->
 
 %% ---------------------------------------------------------------------
 
-me_lookup(suite) -> [];
 me_lookup(Config) when is_list(Config) ->
     tc_try(me_lookup,
            fun() -> do_me_lookup(Config) end).
@@ -453,40 +434,39 @@ do_me_lookup(Config) ->
 	       "SNMPv2-TM"],
 
     ?DBG("me_lookup -> start symbolic store", []),
-    ?line sym_start(Prio, Verbosity),
+    sym_start(Prio, Verbosity),
 
     ?DBG("me_lookup -> start mib server", []),
-    ?line MibsPid = mibs_start(Prio, Verbosity),
+    MibsPid = mibs_start(Prio, Verbosity),
     
     ?DBG("me_lookup -> load mibs", []),
-    ?line load_mibs(MibsPid, MibDir, Mibs),
+    load_mibs(MibsPid, MibDir, Mibs),
     ?DBG("me_lookup -> load std mibs", []),
-    ?line load_mibs(MibsPid, StdMibDir, StdMibs),
+    load_mibs(MibsPid, StdMibDir, StdMibs),
 
     ?DBG("me_lookup -> find ~w from SNMP-COMMUNITY-MIB", 
 	 [?snmpTrapCommunity_instance]),
-    ?line ok = me_lookup(MibsPid, ?snmpTrapCommunity_instance),
+    ok = me_lookup(MibsPid, ?snmpTrapCommunity_instance),
     
     ?DBG("me_lookup -> find ~w from SNMP-VIEW-BASED-ACM-MIB", 
 	 [?vacmViewSpinLock_instance]),
-    ?line ok = me_lookup(MibsPid, ?vacmViewSpinLock_instance),
+    ok = me_lookup(MibsPid, ?vacmViewSpinLock_instance),
     
     ?DBG("me_lookup -> find ~w from SNMP-USER-BASED-SM-MIB", 
 	 [?usmStatsNotInTimeWindows_instance]),
-    ?line {error, _} = me_lookup(MibsPid, ?usmStatsNotInTimeWindows_instance),
+    {error, _} = me_lookup(MibsPid, ?usmStatsNotInTimeWindows_instance),
     
     ?DBG("me_lookup -> stop mib server", []),
-    ?line mibs_stop(MibsPid),
+    mibs_stop(MibsPid),
 
     ?DBG("me_lookup -> stop symbolic store", []),
-    ?line sym_stop(),
+    sym_stop(),
 
     ok.
 
 
 %% ---------------------------------------------------------------------
 
-which_mib(suite) -> [];
 which_mib(Config) when is_list(Config) ->
     tc_try(which_mib,
            fun() -> do_which_mib(Config) end).
@@ -510,51 +490,51 @@ do_which_mib(Config) ->
 	       "SNMPv2-TM"],
 
     ?DBG("which_mib -> start symbolic store", []),
-    ?line sym_start(Prio, Verbosity),
+    sym_start(Prio, Verbosity),
 
     ?DBG("which_mib -> start mib server", []),
-    ?line MibsPid = mibs_start(Prio, Verbosity),
+    MibsPid = mibs_start(Prio, Verbosity),
     
     ?DBG("which_mib -> load mibs", []),
-    ?line load_mibs(MibsPid, MibDir, Mibs),
+    load_mibs(MibsPid, MibDir, Mibs),
     ?DBG("which_mib -> load std mibs", []),
-    ?line load_mibs(MibsPid, StdMibDir, StdMibs),
+    load_mibs(MibsPid, StdMibDir, StdMibs),
 
     ?DBG("which_mib -> find ~w from SNMP-COMMUNITY-MIB", 
 	 [?snmpTrapCommunity_instance]),
-    ?line ok = which_mib(MibsPid, ?snmpTrapCommunity_instance, 
+    ok = which_mib(MibsPid, ?snmpTrapCommunity_instance,
 			 "SNMP-COMMUNITY-MIB"),
     
     ?DBG("which_mib -> find ~w from SNMP-VIEW-BASED-ACM-MIB", 
 	 [?vacmViewSpinLock_instance]),
-    ?line ok = which_mib(MibsPid, ?vacmViewSpinLock_instance, 
+    ok = which_mib(MibsPid, ?vacmViewSpinLock_instance,
 			 "SNMP-VIEW-BASED-ACM-MIB"),
     
     ?DBG("which_mib -> find ~w from SNMP-USER-BASED-SM-MIB (not loaded)", 
 	 [?usmStatsNotInTimeWindows_instance]),
-    ?line {error, _} = which_mib(MibsPid, ?usmStatsNotInTimeWindows_instance,
+    {error, _} = which_mib(MibsPid, ?usmStatsNotInTimeWindows_instance,
 				"SNMP-USER-BASED-SM-MIB"),
     
     ?DBG("which_mib -> stop mib server", []),
-    ?line mibs_stop(MibsPid),
+    mibs_stop(MibsPid),
 
     ?DBG("which_mib -> stop symbolic store", []),
-    ?line sym_stop(),
+    sym_stop(),
 
     ok.
 
 
 %% ---------------------------------------------------------------------
 
-cache_test(suite) -> [];
 cache_test(Config) when is_list(Config) ->
     tc_try(cache_test,
            fun() -> do_cache_test(Config) end).
 
 do_cache_test(Config) ->
-    ?DBG("do_cache_test -> start", []),
+    ?IPRINT("cache_test -> start"),
     Prio       = normal,
-    Verbosity  = trace,
+    %% Verbosity  = trace,
+    Verbosity  = info,
     MibStorage = [{module, snmpa_mib_storage_ets}],
     MibDir     = ?config(data_dir, Config),
     StdMibDir  = filename:join(code:priv_dir(snmp), "mibs") ++ "/",
@@ -565,77 +545,213 @@ do_cache_test(Config) ->
 		  "SNMP-MPD-MIB",
 		  "SNMP-NOTIFICATION-MIB",
 		  "SNMP-TARGET-MIB",
-		  %% "SNMP-USER-BASED-SM-MIB",
+		  "SNMP-USER-BASED-SM-MIB",
 		  "SNMP-VIEW-BASED-ACM-MIB",
 		  "SNMPv2-MIB",
 		  "SNMPv2-TC",
 		  "SNMPv2-TM"],
 
-    ?DBG("cache_test -> start symbolic store", []),
-    ?line sym_start(Prio, MibStorage, Verbosity),
+    ?IPRINT("cache_test -> start symbolic store"),
+    sym_start(Prio, MibStorage, silence), % Verbosity),
 
-    ?DBG("cache_test -> start mib server", []),
-    GcLimit   = 2, 
-    Age       = timer:seconds(10), 
-    CacheOpts = [{autogc, false}, {age, Age}, {gclimit, GcLimit}],
-    ?line MibsPid = mibs_start(Prio, MibStorage, [], Verbosity, CacheOpts), 
+    ?IPRINT("cache_test -> start mib server"),
+    GcLimit   = 3,
+    Age       = timer:seconds(10),
+    CacheOpts = [{autogc,    false},
+                 {age,       Age},
+                 {gclimit,   GcLimit},
+                 {gcverbose, true}],
+    MibsPid = mibs_start(Prio, MibStorage, [], Verbosity, CacheOpts),
     
-    ?DBG("cache_test -> load mibs", []),
-    ?line load_mibs(MibsPid, MibDir, Mibs),
-    ?DBG("cache_test -> load std mibs", []),
-    ?line load_mibs(MibsPid, StdMibDir, StdMibs),
+    ?NPRINT("Info before load mibs: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
 
-    ?DBG("cache_test -> do a simple walk to populate the cache", []),
-    ?line ok = walk(MibsPid),
-     
-    {ok, Sz1} = snmpa_mib:which_cache_size(MibsPid),
-    ?DBG("cache_test -> Size1: ~p", [Sz1]),
+    ?IPRINT("cache_test -> load mibs"),
+    load_mibs(MibsPid, MibDir, Mibs),
 
-    ?DBG("cache_test -> sleep 5 secs", []),
+    ?NPRINT("Info before load std mibs: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> load std mibs"),
+    load_mibs(MibsPid, StdMibDir, StdMibs),
+
+    ?NPRINT("Info (after mibs load but) before populate: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> populate the cache"),
+    ok = populate(MibsPid),
+
+    ?NPRINT("Info after populate: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    Sz1 = cache_sz_verify(1, MibsPid, any),
+
+    ?IPRINT("cache_test -> sleep 5 secs"),
     ?SLEEP(timer:seconds(5)),
 
-    ?DBG("cache_test -> perform gc, expect nothing", []),
-    {ok, 0} = snmpa_mib:gc_cache(MibsPid),
+    _ = cache_gc_verify(1, MibsPid),
 
-    ?DBG("cache_test -> sleep 10 secs", []),
+    ?NPRINT("Info after 5 sec sleep: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> sleep 10 secs"),
     ?SLEEP(timer:seconds(10)),
 
-    ?DBG("cache_test -> perform gc, expect GcLimit", []),
-    GcLimit1 = GcLimit + 1, 
-    {ok, GcLimit1} = snmpa_mib:gc_cache(MibsPid, Age, GcLimit1),
+    ?NPRINT("Info after 10 sec sleep: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
 
-    Sz2 = Sz1 - GcLimit1, 
-    {ok, Sz2} = snmpa_mib:which_cache_size(MibsPid),
-    ?DBG("cache_test -> Size2: ~p", [Sz2]),
+    GcLimit1 = cache_gc_verify(2, MibsPid, Age, GcLimit + 1),
 
-    ?DBG("cache_test -> enable cache autogc", []),
-    ?line ok = snmpa_mib:enable_cache_autogc(MibsPid),
+    Sz2 = cache_sz_verify(2, MibsPid, Sz1 - GcLimit1),
 
-    ?DBG("cache_test -> wait 65 seconds to allow gc to happen", []),
+
+    ?IPRINT("cache_test -> subscribe to GC events"),
+    ok = snmpa_mib:subscribe_gc_events(MibsPid),
+
+    ?IPRINT("cache_test -> enable cache autogc"),
+    ok = snmpa_mib:enable_cache_autogc(MibsPid),
+
+    ?IPRINT("cache_test -> wait 65 seconds to allow gc to happen"),
     ?SLEEP(timer:seconds(65)),
-    Sz3 = Sz2 - GcLimit, 
-    {ok, Sz3} = snmpa_mib:which_cache_size(MibsPid),
-    ?DBG("cache_test -> Size3: ~p", [Sz3]),
 
-    ?DBG("cache_test -> "
-	 "wait 2 minutes to allow gc to happen, expect empty cache", []),
+    ?NPRINT("Info after 65 sec sleep: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> [1] flush expected GC events"),
+    {NumEvents1, TotGC1} = cache_flush_gc_events(MibsPid),
+    ?IPRINT("cache_test -> GC events: "
+            "~n      Number of Events:    ~p"
+            "~n      Total elements GCed: ~p", [NumEvents1, TotGC1]),
+
+    _ = cache_sz_verify(3, MibsPid, Sz2 - GcLimit),
+
+    ?IPRINT("cache_test -> "
+            "wait 2 minutes to allow gc to happen, expect empty cache"),
     ?SLEEP(timer:minutes(2)),
-    {ok, 0} = snmpa_mib:which_cache_size(MibsPid),
 
-    ?DBG("cache_test -> stop mib server", []),
-    ?line mibs_stop(MibsPid),
+    ?NPRINT("Info after 2 min sleep: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
 
-    ?DBG("cache_test -> stop symbolic store", []),
-    ?line sym_stop(),
+    _ = cache_sz_verify(4, MibsPid, 0),
+
+
+    ?IPRINT("cache_test -> change gclimit to infinity"),
+    snmpa_mib:update_cache_gclimit(MibsPid, infinity),
+
+    ?IPRINT("cache_test -> change age to ~w mins", [3]),
+    snmpa_mib:update_cache_age(MibsPid, ?MINS(3)),
+
+    ?IPRINT("cache_test -> [2] flush expected GC events"),
+    {NumEvents2, TotGC2} = cache_flush_gc_events(MibsPid),
+    ?IPRINT("cache_test -> GC events: "
+            "~n      Number of Events:    ~p"
+            "~n      Total elements GCed: ~p", [NumEvents2, TotGC2]),
+
+    ?IPRINT("cache_test -> populate the cache again"),
+    populate(MibsPid),
+
+    ?IPRINT("cache_test -> validate cache size"),
+    {ok, Sz4} = snmpa_mib:which_cache_size(MibsPid),
+    if (Sz4 > 0) ->
+            ?IPRINT("cache_test -> expected cache size: ~w > 0", [Sz4]);
+       true      ->
+            ?EPRINT("cache_test -> cache *not* populated"),
+            ?FAIL(cache_not_populated)
+    end,    
+
+    ?NPRINT("Info after poulated: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> wait 2 mins - before tuching some entries"),
+    ?SLEEP(?MINS(2)),
+
+    %% There should not be anything GC:ed
+
+    receive
+        {MibsPid, gc_result, {ok, NGC1}} ->
+            ?EPRINT("cache_test -> unexpected GC of ~w elements", [NGC1]),
+            exit({unexpected_gc_result, NGC1})
+    after 0 ->
+            ok
+    end,
+
+    ?IPRINT("cache_test -> touch some elements again (update the cache)"),
+    populate_lookup(MibsPid),
+
+    ?IPRINT("cache_test -> await partial GC"),
+    NumGC2 =
+        receive
+            {MibsPid, gc_result, {ok, NGC2}} 
+              when (NGC2 > 0) andalso (Sz4 > NGC2) ->
+                ?NPRINT("cache_test -> "
+                        "received partial GC result of ~w elements", [NGC2]),
+                NGC2
+        end,
+
+    ?NPRINT("Info after partial GC: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+
+    ?IPRINT("cache_test -> await final GC"),
+    receive
+        {MibsPid, gc_result, {ok, NGC3}} 
+          when (NGC3 > 0) andalso ((Sz4 - NumGC2) =:= NGC3) ->
+            ?NPRINT("cache_test -> "
+                    "received final GC result of ~w elements", [NGC3]),
+            NGC3;
+        Any ->
+            ?EPRINT("cache_test -> unexpected message: "
+                    "~n      ~p", [Any]),
+            ?FAIL({unexpected, Any})
+    end,
+
+    ?NPRINT("Info after final GC: "
+            "~n      ~p", [snmpa_mib:info(MibsPid)]),
+
+    ?IPRINT("cache_test -> validate cache size (expect empty)"),
+    {ok, Sz5} = snmpa_mib:which_cache_size(MibsPid),
+    if (Sz5 =:= 0) ->
+            ?IPRINT("cache_test -> expected cache size: 0");
+       true      ->
+            ?EPRINT("cache_test -> cache *not* empty (~w)", [Sz5]),
+            ?FAIL({cache_populated, Sz5})
+    end,
+
+
+    ?IPRINT("cache_test -> stop mib server"),
+    mibs_stop(MibsPid),
+
+    ?IPRINT("cache_test -> stop symbolic store"),
+    sym_stop(),
+
+    ?IPRINT("cache_test -> end"),
     ok.
 
-walk(MibsPid) ->
+populate(MibsPid) ->
+    %% Make some lookups
+    populate_lookup(MibsPid),
+    %% Make some walk's
+    populate_walk(MibsPid).
+
+populate_lookup(MibsPid) ->    
+    {variable, _} = snmpa_mib:lookup(MibsPid, ?snmpTrapCommunity_instance),
+    {variable, _} = snmpa_mib:lookup(MibsPid, ?vacmViewSpinLock_instance),
+    {variable, _} = snmpa_mib:lookup(MibsPid, ?usmStatsNotInTimeWindows_instance),
+    {variable, _} = snmpa_mib:lookup(MibsPid, ?tDescr_instance),
+    ok.
+
+populate_walk(MibsPid) ->
     MibView = snmpa_acm:get_root_mib_view(),
-    do_walk(MibsPid, ?snmpTrapCommunity_instance, MibView),
-    do_walk(MibsPid, ?vacmViewSpinLock_instance, MibView),
-    do_walk(MibsPid, ?usmStatsNotInTimeWindows_instance, MibView),
-    do_walk(MibsPid, ?tDescr_instance, MibView).
-    
+    walk(MibsPid, ?snmpTrapCommunity_instance,        MibView),
+    walk(MibsPid, ?vacmViewSpinLock_instance,         MibView),
+    walk(MibsPid, ?usmStatsNotInTimeWindows_instance, MibView),
+    walk(MibsPid, ?tDescr_instance,                   MibView),
+    ok.
+
+walk(MibsPid, Oid, MibView) ->
+    ?IPRINT("walk -> entry with"
+            "~n      Oid: ~p", [Oid]),
+    do_walk(MibsPid, Oid, MibView).
 
 do_walk(MibsPid, Oid, MibView) ->
     ?IPRINT("do_walk -> entry with"
@@ -646,12 +762,85 @@ do_walk(MibsPid, Oid, MibView) ->
             ?IPRINT("do_walk -> done for table (~p)", [Oid]),
 	    ok;
 	{table, _, _, #me{oid = Next}} ->
+            ?IPRINT("do_walk -> table next ~p", [Next]),
 	    do_walk(MibsPid, Next, MibView);
 	{variable, #me{oid = Oid}, _} ->
             ?IPRINT("do_walk -> done for variable (~p)", [Oid]),
 	    ok;
 	{variable, #me{oid = Next}, _} ->
+            ?IPRINT("do_walk -> variable next ~p", [Next]),
 	    do_walk(MibsPid, Next, MibView)
+    end.
+
+
+cache_gc_verify(ID, MibsPid) ->
+    GC = fun() -> snmpa_mib:gc_cache(MibsPid) end,
+    cache_gc_verify(ID, GC, 0).
+
+cache_gc_verify(ID, MibsPid, Age, ExpectedGcLimit) ->
+    GC = fun() -> snmpa_mib:gc_cache(MibsPid, Age, ExpectedGcLimit) end,
+    cache_gc_verify(ID, GC, ExpectedGcLimit).
+
+cache_gc_verify(ID, GC, ExpectedGc) ->
+    ?IPRINT("cache_gc_verify -> [~w] perform gc, expect ~w", [ID, ExpectedGc]),
+    case GC() of
+        {ok, ExpectedGc} ->
+            ?IPRINT("cache_gc_verify -> [~w] gc => ok", [ID]),
+            ExpectedGc;
+        {ok, OtherGc} ->
+            ?IPRINT("cache_gc_verify -> [~w] invalid GC limit: "
+                    "~n      Expected: ~p"
+                    "~n      Got:      ~p",
+                    [ID, ExpectedGc, OtherGc]),
+            exit({ID, invalid_gc_limit, {ExpectedGc, OtherGc}});
+        Unexpected ->
+            ?IPRINT("cache_gc_verify -> [~w] unexpected: "
+                    "~n      ~p",
+                    [ID, Unexpected]),
+            exit({ID, unexpected, Unexpected})
+    end.
+
+
+cache_sz_verify(ID, MibsPid, ExpectedSz) ->
+    ?IPRINT("cache_sz_verify -> [~w] expect size ~w", [ID, ExpectedSz]),
+    case snmpa_mib:which_cache_size(MibsPid) of
+        {ok, ExpectedSz} ->
+            ?IPRINT("cache_sz_verify -> [~w] sz => ok", [ID]),
+            ExpectedSz;
+        {ok, UnexpectedSz} when (ExpectedSz =:= any) ->
+            ?IPRINT("cache_sz_verify -> [~w] sz => ok (~w)", [ID, UnexpectedSz]),
+            UnexpectedSz;
+        {ok, UnexpectedSz} ->
+            ?IPRINT("cache_sz_verify -> [~w] invalid size: "
+                    "~n      Expected: ~p"
+                    "~n      Got:      ~p",
+                    [ID, ExpectedSz, UnexpectedSz]),
+            exit({ID, invalid_size, {ExpectedSz, UnexpectedSz}});
+        Unexpected ->
+            ?IPRINT("cache_sz_verify -> [~w] unexpected: "
+                    "~n      ~p",
+                    [ID, Unexpected]),
+            exit({ID, unexpected, Unexpected})
+    end.
+
+
+cache_flush_gc_events(MibServer) ->
+    cache_flush_gc_events(MibServer, 0, 0).
+
+cache_flush_gc_events(MibServer, NumEvents, TotGC) ->
+    receive
+        {MibServer, gc_result, {ok, NumGC}} ->
+            ?IPRINT("cache_flush_gc_events -> GC event ~w (~w)",
+                    [NumGC, NumEvents]),
+            cache_flush_gc_events(MibServer, NumEvents+1, TotGC+NumGC)
+    after 0 ->
+            if
+                (NumEvents =:= 0) andalso (TotGC =:= 0) ->
+                    ?IPRINT("cache_flush_gc_events -> no GC events"),
+                    exit(no_gc_events);
+                true ->
+                    {NumEvents, TotGC}
+            end
     end.
 
 
@@ -665,13 +854,13 @@ mnesia_start(Opts) ->
     mnesia_start(Opts, [node()]).
 
 mnesia_start(Opts, Nodes) ->
-    %% We can accept mnesia beeing loaded but *not* started.
+    %% We can accept mnesia being loaded but *not* started.
     %% If its started it *may* contain data that will invalidate
     %% this test case.
     ?IPRINT("mnesia_start -> try load mnesia when:"
             "~n   Loaded:  ~p"
             "~n   Running: ~p", [apps_loaded(), apps_running()]),
-    ?line ok = case application:load(mnesia) of
+    ok = case application:load(mnesia) of
                    ok ->
                        ok;
                    {error, {already_loaded, mnesia}} ->
@@ -682,11 +871,11 @@ mnesia_start(Opts, Nodes) ->
     F = fun({Key, Val}) ->
 		?IPRINT("mnesia_start -> try set mnesia env: "
                         "~n   ~p -> ~p", [Key, Val]),
-		?line application_controller:set_env(mnesia, Key, Val)
+		application_controller:set_env(mnesia, Key, Val)
 	end,
     lists:foreach(F, Opts),
     ?IPRINT("mnesia_start -> create mnesia schema on ~p", [Nodes]),
-    ?line case mnesia:create_schema(Nodes) of
+    case mnesia:create_schema(Nodes) of
               ok ->
                   ok;
               {error, {_, {already_exist, _}}} ->
@@ -696,7 +885,7 @@ mnesia_start(Opts, Nodes) ->
                          ?F("Failed create mnesia schema: ~p", [SchemaReason])})
           end,
     ?IPRINT("mnesia_start -> start mnesia", []),
-    ?line case application:start(mnesia) of
+    case application:start(mnesia) of
               ok ->
                   ok;
               {error, {already_started, mnesia}} ->
@@ -780,13 +969,13 @@ mibs_info(Pid) ->
 
 load_mibs(Pid, Dir, Mibs0) ->
     Mibs = [join(Dir, Mib) || Mib <- Mibs0],
-    Res = snmpa_mib:load_mibs(Pid, Mibs),
+    Res = snmpa_mib:load_mibs(Pid, Mibs, false),
     %% ?DBG("load_mibs -> "
     %% 	 "~n   Res: ~p", [Res]),
     Res.
 
 unload_mibs(Pid, Mibs) ->
-    Res = snmpa_mib:unload_mibs(Pid, Mibs),
+    Res = snmpa_mib:unload_mibs(Pid, Mibs, false),
     %% ?DBG("unload_mibs -> "
     %% 	 "~n   Res: ~p", [Res]),
     Res.
@@ -885,35 +1074,52 @@ tc_try(Name, TC) ->
 tc_try(Name, Init, TC)
   when is_atom(Name) andalso is_function(Init, 0) andalso is_function(TC, 0) ->
     Pre = fun() ->
-                  {ok, Node} = ?ALIB:start_node(unique(Name)),
+                  {ok, Peer, Node} = ?START_PEER(atom_to_list(Name)),
                   ok = run_on(Node, Init),
-                  Node
+                  {Peer, Node}
           end,
-    Case = fun(Node) ->
+    Case = fun({_Peer, Node}) ->
                    monitor_node(Node, true),
                    Pid = spawn_link(Node, TC),
                    receive
+                       %% No test case could/would provoke a nodedown => SKIP
                        {nodedown, Node} = N ->
-                           exit(N);
+                           ?NPRINT("unexpected node down ~p", [Node]),
+                           exit({skip, N});
                        {'EXIT', Pid, normal} ->
                            monitor_node(Node, false),                           
                            ok;
                        {'EXIT', Pid, ok} ->
                            monitor_node(Node, false),                           
                            ok;
+                       %% This is a node down.
+                       %% Its just a race that this came before the actual
+                       %% 'nodedown'.
+                       %% Also, there is no normal test case that could provoke
+                       %% a node down, so this is *not* our fault => SKIP
+                       {'EXIT', Pid, noconnection = Reason} ->
+                           ?NPRINT("unexpected '~p' termination", [Reason]),
+                           monitor_node(Node, false), % Just in case
+                           exit({skip, Reason});
                        {'EXIT', Pid, Reason} ->
-                           monitor_node(Node, false),                           
+                           monitor_node(Node, false),
                            exit(Reason)
                    end
            end,
-    Post = fun(Node) ->
-                   monitor_node(Node, true),
-                   ?NPRINT("try stop node ~p", [Node]),
-                   ?STOP_NODE(Node),
+    Post = fun({Peer, Node}) ->
                    receive
                        {nodedown, Node} ->
-                           ?NPRINT("node ~p stopped", [Node]),
+                           ?NPRINT("node ~p (already) stopped", [Node]),
                            ok
+                   after 0 ->
+                           monitor_node(Node, true),
+                           ?NPRINT("try stop node ~p", [Node]),
+                           peer:stop(Peer),
+                           receive
+                               {nodedown, Node} ->
+                                   ?NPRINT("node ~p stopped", [Node]),
+                                   ok
+                           end
                    end
            end,
     ?TC_TRY(Name, Pre, Case, Post).
@@ -931,9 +1137,6 @@ run_on(Node, F) when is_atom(Node) andalso is_function(F, 0) ->
             monitor_node(Node, false),                           
             Reason
     end.
-    
-unique(PreName) ->
-    list_to_atom(?F("~w_~w", [PreName, erlang:system_time(millisecond)])).
 
 
 %% -- 

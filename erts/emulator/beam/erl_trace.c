@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1999-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@
 #include "erl_thr_progress.h"
 #include "erl_bif_unique.h"
 #include "erl_map.h"
+#include "erl_global_literals.h"
 
 #if 0
 #define DEBUG_PRINTOUTS
@@ -684,7 +685,7 @@ trace_sched_aux(Process *p, ErtsProcLocks locks, Eterm what)
 	curr_func = 0;
     else {
 	if (!p->current)
-	    p->current = find_function_from_pc(p->i);
+	    p->current = erts_find_function_from_pc(p->i);
 	curr_func = p->current != NULL;
     }
 
@@ -948,11 +949,10 @@ seq_trace_output_generic(Eterm token, Eterm msg, Uint type,
  * or   {trace, Pid, return_to, {Mod, Func, Arity}}
  */
 void 
-erts_trace_return_to(Process *p, BeamInstr *pc)
+erts_trace_return_to(Process *p, ErtsCodePtr pc)
 {
+    const ErtsCodeMFA *cmfa = erts_find_function_from_pc(pc);
     Eterm mfa;
-
-    ErtsCodeMFA *cmfa = find_function_from_pc(pc);
 
     if (!cmfa) {
 	mfa = am_undefined;
@@ -1122,7 +1122,7 @@ erts_call_trace(Process* p, ErtsCodeInfo *info, Binary *match_spec,
 	 *     use process flags
 	 */
 	tracee_flags = &ERTS_TRACE_FLAGS(p);
-        /* Is is not ideal at all to call this check twice,
+        /* It is not ideal at all to call this check twice,
            it should be optimized so that only one call is made. */
         if (!is_tracer_enabled(p, ERTS_PROC_LOCK_MAIN, &p->common, &tnif,
                                TRACE_FUN_ENABLED, am_trace_status)
@@ -1246,7 +1246,7 @@ erts_call_trace(Process* p, ErtsCodeInfo *info, Binary *match_spec,
     ASSERT(!ERTS_TRACER_IS_NIL(*tracer));
 
     /*
-     * Build the the {M,F,A} tuple in the local heap.
+     * Build the {M,F,A} tuple in the local heap.
      * (A is arguments or arity.)
      */
 
@@ -1363,6 +1363,7 @@ trace_gc(Process *p, Eterm what, Uint size, Eterm msg)
     Eterm* hp;
     Uint sz = 0;
     Eterm tup;
+    ErtsThrPrgrDelayHandle dhndl = erts_thr_progress_unmanaged_delay();
 
     if (is_tracer_enabled(p, ERTS_PROC_LOCK_MAIN, &p->common, &tnif,
                           TRACE_FUN_E_GC, what)) {
@@ -1382,11 +1383,12 @@ trace_gc(Process *p, Eterm what, Uint size, Eterm msg)
         if (o_hp)
             erts_free(ERTS_ALC_T_TMP, o_hp);
     }
+    erts_thr_progress_unmanaged_continue(dhndl);
 }
 
 void 
-monitor_long_schedule_proc(Process *p, ErtsCodeMFA *in_fp,
-                           ErtsCodeMFA *out_fp, Uint time)
+monitor_long_schedule_proc(Process *p, const ErtsCodeMFA *in_fp,
+                           const ErtsCodeMFA *out_fp, Uint time)
 {
     ErlHeapFragment *bp;
     ErlOffHeap *off_heap;
@@ -1939,7 +1941,7 @@ profile_runnable_proc(Process *p, Eterm status){
     Eterm *hp, msg;
     Eterm where = am_undefined;
     ErlHeapFragment *bp = NULL;
-    ErtsCodeMFA *cmfa = NULL;
+    const ErtsCodeMFA *cmfa = NULL;
 
     ErtsThrPrgrDelayHandle dhndl;
     Uint hsz = 4 + 6 + patch_ts_size(erts_system_profile_ts_type)-1;
@@ -1953,7 +1955,7 @@ profile_runnable_proc(Process *p, Eterm status){
         if (p->current) {
             cmfa = p->current;
         } else {
-            cmfa = find_function_from_pc(p->i);
+            cmfa = erts_find_function_from_pc(p->i);
         }
     }
 
@@ -2243,7 +2245,7 @@ sys_msg_dispatcher_func(void *unused)
     callbacks.wait = sys_msg_dispatcher_wait;
     callbacks.finalize_wait = sys_msg_dispatcher_fin_wait;
 
-    tpd = erts_thr_progress_register_managed_thread(NULL, &callbacks, 0);
+    tpd = erts_thr_progress_register_managed_thread(NULL, &callbacks, 0, 0);
 
     while (1) {
 	int end_wait = 0;
@@ -2262,6 +2264,7 @@ sys_msg_dispatcher_func(void *unused)
 
 	/* Fetch current trace message queue ... */
 	if (!sys_message_queue) {
+            wait = 1;
 	    erts_mtx_unlock(&smq_mtx);
 	    end_wait = 1;
 	    erts_thr_progress_active(tpd, 0);
@@ -2269,8 +2272,23 @@ sys_msg_dispatcher_func(void *unused)
 	    erts_mtx_lock(&smq_mtx);
 	}
 
-	while (!sys_message_queue)
-	    erts_cnd_wait(&smq_cnd, &smq_mtx);
+	while (!sys_message_queue) {
+            if (wait)
+                erts_cnd_wait(&smq_cnd, &smq_mtx);
+            if (sys_message_queue)
+                break;
+            wait = 1;
+	    erts_mtx_unlock(&smq_mtx);
+            /*
+             * Ensure thread progress continue. We might have
+             * been the last thread to go to sleep. In that case
+             * erts_thr_progress_finalize_wait() will take care
+             * of it...
+             */
+	    erts_thr_progress_finalize_wait(tpd);
+	    erts_thr_progress_prepare_wait(tpd);
+	    erts_mtx_lock(&smq_mtx);
+        }
 
 	local_sys_message_queue = sys_message_queue;
 	sys_message_queue = NULL;
@@ -2455,7 +2473,7 @@ init_sys_msg_dispatcher(void)
 {
     erts_thr_opts_t thr_opts = ERTS_THR_OPTS_DEFAULT_INITER;
     thr_opts.detached = 1;
-    thr_opts.name = "sys_msg_dispatcher";
+    thr_opts.name = "erts_smsg_disp";
     init_smq_element_alloc();
     sys_message_queue = NULL;
     sys_message_queue_end = NULL;
@@ -2615,7 +2633,11 @@ lookup_tracer_nif(const ErtsTracer tracer)
 {
     ErtsTracerNif tnif_tmpl;
     ErtsTracerNif *tnif;
+    if (tracer == erts_tracer_nil) {
+        return NULL;
+    }
     tnif_tmpl.module = ERTS_TRACER_MODULE(tracer);
+    ERTS_LC_ASSERT(erts_thr_progress_lc_is_delaying() || erts_get_scheduler_id() > 0);
     erts_rwmtx_rlock(&tracer_mtx);
     if ((tnif = hash_get(tracer_hash, &tnif_tmpl)) == NULL) {
         erts_rwmtx_runlock(&tracer_mtx);
@@ -2775,8 +2797,12 @@ send_to_tracer_nif_raw(Process *c_p, Process *tracee,
             map_values[map_elem_count++] = am_monotonic;
 
         map->size = map_elem_count;
-        map->keys = make_tuple(local_heap);
-        local_heap[0] = make_arityval(map_elem_count);
+        if (map_elem_count == 0) {
+            map->keys = ERTS_GLOBAL_LIT_EMPTY_TUPLE;
+        } else {
+            map->keys = make_tuple(local_heap);
+            local_heap[0] = make_arityval(map_elem_count);
+        }
 
 #undef MAP_SIZE
         erts_nif_call_function(c_p, tracee ? tracee : c_p,
@@ -2846,6 +2872,8 @@ is_tracer_enabled(Process* c_p, ErtsProcLocks c_p_locks,
                   enum ErtsTracerOpt topt, Eterm tag) {
     Eterm nif_result;
 
+    ASSERT(t_p);
+
 #if defined(ERTS_ENABLE_LOCK_CHECK)
     if (c_p)
         ERTS_LC_ASSERT(erts_proc_lc_my_proc_locks(c_p) == c_p_locks
@@ -2880,6 +2908,7 @@ is_tracer_enabled(Process* c_p, ErtsProcLocks c_p_locks,
         ErtsProcLocks c_p_xlocks = 0;
         if (esdp && !ERTS_SCHEDULER_IS_DIRTY(esdp)) {
             if (is_internal_pid(t_p->id)) {
+                ERTS_ASSERT(c_p && "Silence GCC array out of bounds warning");
                 ERTS_LC_ASSERT(erts_proc_lc_my_proc_locks(c_p) & ERTS_PROC_LOCK_MAIN);
                 if (c_p_locks != ERTS_PROC_LOCKS_ALL) {
                     c_p_xlocks = ~c_p_locks & ERTS_PROC_LOCKS_ALL;
@@ -3051,7 +3080,7 @@ erts_tracer_update(ErtsTracer *tracer, const ErtsTracer new_tracer)
     }
 }
 
-static void init_tracer_nif()
+static void init_tracer_nif(void)
 {
     erts_rwmtx_opt_t rwmtx_opt = ERTS_RWMTX_OPT_DEFAULT_INITER;
     rwmtx_opt.type = ERTS_RWMTX_TYPE_EXTREMELY_FREQUENT_READ;
@@ -3064,7 +3093,7 @@ static void init_tracer_nif()
 
 }
 
-int erts_tracer_nif_clear()
+int erts_tracer_nif_clear(void)
 {
 
     erts_rwmtx_rlock(&tracer_mtx);

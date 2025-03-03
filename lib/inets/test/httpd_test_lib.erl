@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2001-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -307,12 +307,27 @@ validate(RequestStr, #state{status_line = {Version, StatusCode, _},
 	    check_body(RequestStr, StatusCode, 
 		       Headers#http_response_h.'content-type',
 		       list_to_integer(Headers#http_response_h.'content-length'),
-		       Body)
+		       Body),
+            case proplists:get_bool(fetch_hrefs, Options) of
+                true ->
+                    {ok, fetch_hrefs(Body)};
+                _ ->
+                    ok
+            end
     end.
 
 %--------------------------------------------------------------------
 %% Internal functions
 %%------------------------------------------------------------------
+fetch_hrefs(Body) ->
+    {match, Matches} = re:run(Body, <<"HREF.*\"">>, [global]),
+    Parse = fun(B, S, L) ->
+                    Sliced = string:slice(B, S, L),
+                    HrefBin = lists:nth(2, re:split(Sliced, <<"\"">>)),
+                    binary:bin_to_list(HrefBin)
+            end,
+    [Parse(Body, Start, Length) || [{Start, Length}] <- Matches].
+
 check_version(Version, Options) ->
     case lists:keysearch(version, 1, Options) of
 	{value, {version, Version}} ->
@@ -392,7 +407,7 @@ check_body("GET /cgi-bin/erl/httpd_example:get_bin HTTP/1.1\r\n\r\n", 200, "text
     ct:fail({content_length_error, Length});
 check_body("GET /cgi-bin/cgi_echo HTTP/1.0\r\n\r\n", 200, "text/plain", 
 	   _, Body) ->
-    case size(Body) of
+    case byte_size(Body) of
 	100 ->
 	    ok;
 	_ ->

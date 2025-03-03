@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2004</year><year>2020</year>
+      <year>2004</year><year>2024</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -30,6 +30,669 @@
     <file>notes.xml</file>
   </header>
   <p>This document describes the changes made to the Erl_interface application.</p>
+
+<section><title>Erl_Interface 5.5.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where the system installed openssl/md5.h would be
+	    confused with the vendored md5.h.</p>
+          <p>
+	    Own Id: OTP-18931 Aux Id: GH-7987 PR-7989 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed some benign compile warnings on Windows.</p>
+          <p>
+	    Own Id: OTP-18895</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add support to encode maps with <c>ei_x_format</c>.</p>
+          <p>
+	    Own Id: OTP-18764 Aux Id: PR-7602 </p>
+        </item>
+        <item>
+          <p>
+	    Replaced old md5 implementation with an implementation
+	    from OpenSSL.</p>
+          <p>
+	    Own Id: OTP-18877</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.4</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>As announced since the release of OTP 24, support
+	    for:</p> <list> <item><p> version 4 node container types
+	    in the external term format are now mandatory. That is,
+	    references supporting up to 5 32-bit integer identifiers,
+	    and process and port identifiers with support for 64-bit
+	    data storage. The distribution flag <seeguide
+	    marker="erts:erl_dist_protocol#DFLAG_V4_NC"><c>DFLAG_V4_NC</c></seeguide>
+	    is therefor now also mandatory. OTP has since OTP 24
+	    supported this. Also note that the external format
+	    produced by <c>term_to_binary()</c> and
+	    <c>term_to_iovec()</c> will unconditionally produce pids,
+	    ports, and references supporting this larger format.
+	    </p></item> <item><p> the <seeguide
+	    marker="erts:erl_dist_protocol#new_link_protocol">new
+	    link protocol</seeguide> introduced in OTP 23.3 is now
+	    mandatory. The distribution flag <seeguide
+	    marker="erts:erl_dist_protocol#DFLAG_UNLINK_ID"><c>DFLAG_UNLINK_ID</c></seeguide>
+	    is therefor now also mandatory. </p></item> </list>
+	    <p>Due to the above, OTP 26 nodes will refuse to connect
+	    to OTP nodes from releases prior to OTP 24.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18140 Aux Id: PR-6072 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.3.2.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Replaced old md5 implementation with an implementation
+	    from OpenSSL.</p>
+          <p>
+	    Own Id: OTP-18877</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.3.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed configure tests for a few ARM-specific
+	    instructions, which prevented the emulator from being
+	    built on some platforms.</p>
+          <p>
+	    Own Id: OTP-18554</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Accept connection setup from OTP 23 and 24 nodes that are
+	    not using epmd.</p>
+          <p>
+	    Own Id: OTP-18404 Aux Id: GH-6595, PR-6625 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    <c>erl_call</c> no longer links against <c>nsl</c> on
+	    platforms where <c>gethostbyname</c> is provided by libc.</p>
+          <p>
+	    Own Id: OTP-17846 Aux Id: PR-5558 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>The following distribution flags are now mandatory:
+	    <c>DFLAG_BIT_BINARIES</c>, <c>DFLAG_EXPORT_PTR_TAG</c>,
+	    <c>DFLAG_MAP_TAGS</c>, <c>DFLAG_NEW_FLOATS</c>, and
+	    <c>DFLAG_FUN_TAGS</c>. This mainly concerns libraries or
+	    application that implement the distribution protocol
+	    themselves.</p>
+          <p>
+	    Own Id: OTP-17318 Aux Id: PR-4972 </p>
+        </item>
+        <item>
+          <p>
+	    Input for <c>configure</c> scripts adapted to
+	    <c>autoconf</c> 2.71.</p>
+          <p>
+	    Own Id: OTP-17414 Aux Id: PR-4967 </p>
+        </item>
+        <item>
+          <p>
+	    Removed use of node creation value zero as a wildcard.
+	    Also prevent zero from being used as creation by
+	    <c>erl_interface</c> and <c>jinterface</c> nodes.</p>
+          <p>
+	    Own Id: OTP-17682 Aux Id: PR-5347 </p>
+        </item>
+        <item>
+          <p>
+	    Changed <c>creation</c> arguments, of function
+	    <c>ei_connect_init</c> and friends, from type
+	    <c>short</c> to <c>unsigned int</c> for full 32-bit
+	    range.</p>
+          <p>
+	    Own Id: OTP-17802 Aux Id: PR-5347 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.2.2.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Replaced old md5 implementation with an implementation
+	    from OpenSSL.</p>
+          <p>
+	    Own Id: OTP-18877</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Avoid attempt build dynamic libs if config option
+	    <c>--enable-ei-dynamic-lib</c> is not given.</p>
+          <p>
+	    Own Id: OTP-17987 Aux Id: GH-5781, PR-5787 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix compile error regarding <c>gethostbyaddr_r</c> on
+	    Android. Error introduced in OTP 24.3.</p>
+          <p>
+	    Own Id: OTP-17975 Aux Id: PR-5763 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add <c>--enable-ei-dynamic-lib</c> configure option that
+	    will make erl_interface also release a dynamic library
+	    version of libei.</p>
+          <p>
+	    Own Id: OTP-17883 Aux Id: PR-5601 ERIERL-724 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    erl_call now prints an error when the arguments cannot be
+	    parsed.</p>
+          <p>
+	    Own Id: OTP-17626</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 5.0</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Two options have been added to <c>erl_call</c>. The
+	    <c>-fetch_stdout</c> option fetches stdout data resulting
+	    from the code invoked by <c>erl_call</c>. The
+	    <c>-fetch_stdout</c> option disables printing of the
+	    result term. In order to implement the first of these two
+	    options a new function called <c>ei_xrpc_from</c> has
+	    been added to erl_interface. For details see the
+	    <c>erl_call</c> documentation and <c>erl_interface</c>
+	    documentation.</p>
+          <p>
+	    Own Id: OTP-17132</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Accept 64-bit process identifiers from external nodes.
+	    This is the first step in an upgrade path toward using
+	    64-bit pids in a future OTP release.</p>
+          <p>
+	    Own Id: OTP-16720 Aux Id: PR-2680 </p>
+        </item>
+        <item>
+	    <p>The experimental HiPE application has been removed,
+	    together with all related functionality in other
+	    applications.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16963</p>
+        </item>
+        <item>
+          <p>
+	    The <c>registry</c> functionality part of
+	    <c>erl_interface</c> has been removed. It was as of OTP
+	    23 deprecated and scheduled for removal in OTP 24.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16970</p>
+        </item>
+        <item>
+          <p>
+	    Accept references up to a size of 160-bits from remote
+	    nodes. This is the first step in an upgrade path toward
+	    using references up to 160-bits in a future OTP release.</p>
+          <p>
+	    Own Id: OTP-17005 Aux Id: OTP-16718 </p>
+        </item>
+        <item>
+          <p>
+	    Accept 64-bit port identifiers from external nodes. This
+	    is the first step in an upgrade path toward using 64-bit
+	    port identifiers in a future OTP release.</p>
+          <p>
+	    Own Id: OTP-17007</p>
+        </item>
+        <item>
+          <p>
+	    Support the new link protocol in order to be able to
+	    phase out the old link protocol in the future.
+	    <c>erl_interface</c> does not support setting up or
+	    removing links from the <c>erl_interface</c> side, so the
+	    bug present with the old protocol did not effect
+	    <c>erl_interface</c>. This since both participants of a
+	    link simultaneously needed to operate on the link in
+	    order to trigger the bug.</p>
+          <p>
+	    Own Id: OTP-17270 Aux Id: OTP-17127 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 4.0.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 4.0.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where sending of large data with ei_send_*/ei_rpc
+	    with infinite timeout could fail when the tcp buffer
+	    becomes full.</p>
+          <p>
+	    Fault has existed since OTP-21.</p>
+          <p>
+	    Own Id: OTP-17358 Aux Id: ERLERL-610 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 4.0.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where sending of large data with ei_send_*/ei_rpc
+	    with infinite timeout could fail when the tcp buffer
+	    becomes full.</p>
+          <p>
+	    Fault has existed since OTP-21.</p>
+          <p>
+	    Own Id: OTP-17358 Aux Id: ERLERL-610 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 4.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Integers outside of the range [-(1 bsl 32) - 1, (1 bsl
+	    32) -1] were previously intended to be printed in an
+	    internal bignum format by <c>ei_print_term()</c> and
+	    <c>ei_s_print_term()</c>. Unfortunately the
+	    implementation has been buggy since OTP R13B02 and since
+	    then produced results with random content which also
+	    could crash the calling program.</p>
+          <p>
+	    This fix replaces the printing of the internal format
+	    with printing in hexadecimal form and extend the range
+	    for printing in decimal form. Currently integers in the
+	    range [-(1 bsl 64), (1 bsl 64)] are printed in decimal
+	    form and integers outside of this range in Erlang
+	    hexadecimal form.</p>
+          <p>
+	    Own Id: OTP-17099 Aux Id: ERIERL-585 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 4.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix erl_interface on windows to be compiled with correct
+	    flags to make internal primitives reentrant.</p>
+          <p>
+	    Own Id: OTP-16740</p>
+        </item>
+        <item>
+          <p>
+	    Fixed <c>ei_get_type</c> to set <c>*size</c> to zero for
+	    floats, pids, port and refs according to documentation.</p>
+          <p>
+	    Own Id: OTP-16753 Aux Id: ERL-1288, PR-2678 </p>
+        </item>
+        <item>
+          <p>
+	    Fix ei_connect when using a dynamic node name to force
+	    usage of distribution version 6.</p>
+          <p>
+	    This bug caused <c>erl_call -R -address</c> to not work
+	    properly.</p>
+          <p>
+	    Own Id: OTP-16786</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Changes in order to build on the Haiku operating system.</p>
+          <p>
+	    Thanks to Calvin Buckley</p>
+          <p>
+	    Own Id: OTP-16707 Aux Id: PR-2638 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Erl_Interface 4.0</title>
 
@@ -165,8 +828,7 @@
 	    Own Id: OTP-16624</p>
         </item>
         <item>
-	    <p>The <c>erl_interface</c> <seecref
-	    marker="erl_interface:registry"><c>registry</c></seecref>
+	    <p>The <c>erl_interface</c> <c>registry</c>
 	    functionality is deprecated as of OTP 23, and will be
 	    removed in OTP 24. Reasonably new <c>gcc</c> compilers
 	    will issue deprecation warnings when using this
@@ -197,6 +859,89 @@
 	    GB cannot be handled.</p>
           <p>
 	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 3.13.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Commit of generated <c>configure</c> script.</p>
+          <p>
+	    Own Id: OTP-17420 Aux Id: OTP-17398, GH-4821 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 3.13.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where sending of large data with ei_send_*/ei_rpc
+	    with infinite timeout could fail when the tcp buffer
+	    becomes full.</p>
+          <p>
+	    Fault has existed since OTP-21.</p>
+          <p>
+	    Own Id: OTP-17358 Aux Id: ERLERL-610 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 3.13.2.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where sending of large data with ei_send_*/ei_rpc
+	    with infinite timeout could fail when the tcp buffer
+	    becomes full.</p>
+          <p>
+	    Fault has existed since OTP-21.</p>
+          <p>
+	    Own Id: OTP-17358 Aux Id: ERIERL-610 </p>
         </item>
       </list>
     </section>
@@ -342,6 +1087,73 @@
 	    *** POTENTIAL INCOMPATIBILITY ***</p>
           <p>
 	    Own Id: OTP-15712 Aux Id: OTP-15774 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 3.11.3.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where sending of large data with ei_send_*/ei_rpc
+	    with infinite timeout could fail when the tcp buffer
+	    becomes full.</p>
+          <p>
+	    Fault has existed since OTP-21.</p>
+          <p>
+	    Own Id: OTP-17358 Aux Id: ERLERL-610 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erl_Interface 3.11.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix link error "multiple definition of
+	    `ei_default_socket_callbacks'" for gcc version 10 or when
+	    built with gcc option -fno-common. Error exists since
+	    OTP-21.3.</p>
+          <p>
+	    Own Id: OTP-16412 Aux Id: PR-2503 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Known Bugs and Problems</title>
+      <list>
+        <item>
+          <p>
+	    The <c>ei</c> API for decoding/encoding terms is not
+	    fully 64-bit compatible since terms that have a
+	    representation on the external term format larger than 2
+	    GB cannot be handled.</p>
+          <p>
+	    Own Id: OTP-16607 Aux Id: OTP-16608 </p>
         </item>
       </list>
     </section>
@@ -1549,7 +2361,7 @@
         </item>
         <item>
           <p>
-	    In <c>send_exit.c</c> an errorneous size of memory
+	    In <c>send_exit.c</c> an erroneous size of memory
 	    allocation could occur when reallocating a buffer.</p>
           <p>
 	    In <c>ei_decode_trace.c</c> the index could be updated

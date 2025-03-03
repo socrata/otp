@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 %%
 %%----------------------------------------------------------------------
-%% Purpose: Record and constant defenitions for the SSL-record protocol
+%% Purpose: Record and constant definitions for the SSL-record protocol
 % see RFC 2246
 %%----------------------------------------------------------------------
 
@@ -58,9 +58,7 @@
           bulk_cipher_algorithm,
           cipher_type,
           iv_size,
-          key_size,				% unit 8
           key_material_length,			% unit 8 
-          expanded_key_material_length,		% unit 8 
           mac_algorithm,			% unit 8  
           prf_algorithm,			% unit 8
           hash_size,				% unit 8
@@ -68,9 +66,9 @@
           master_secret,			% opaque 48
           resumption_master_secret,
           application_traffic_secret,
+          client_early_data_secret,
           client_random,			% opaque 32
-          server_random,			% opaque 32
-          exportable				% boolean
+          server_random			        % opaque 32
        }). 
 
 -define(INITIAL_BYTES, 5).
@@ -99,8 +97,8 @@
 -define(AES_GCM, 8).
 -define(CHACHA20_POLY1305, 9).
 %% Following two are not defined in any RFC but we want to have the
-%% same type of handling internaly, all of these "bulk_cipher_algorithm"
-%% enums are only used internaly anyway.
+%% same type of handling internally, all of these "bulk_cipher_algorithm"
+%% enums are only used internally anyway.
 -define(AES_CCM, 10). 
 -define(AES_CCM_8, 11). 
 
@@ -162,9 +160,6 @@
 %% 	  minor   % unit 8
 %% 	 }).
 
--define(LOWEST_MAJOR_SUPPORTED_VERSION, 3).
-	
-
 -record(generic_stream_cipher, {
           content,  % opaque content[TLSCompressed.length];
           mac       % opaque MAC[CipherSpec.hash_size]; 
@@ -178,5 +173,34 @@
           padding_length, % uint8 padding_length;
           next_iv  % opaque IV[SecurityParameters.record_iv_length];
          }). 
+
+-define(PROTOCOL_TO_BINARY_VERSION(Version), (Version)).
+-define(BINARY_PROTOCOL_TO_INTERNAL_REPRESENTATION(Version), (Version)).
+
+-define(TLS_1_X(Version), (element(1,Version) == 3)).
+-define(DTLS_1_X(Version), (element(1,Version) == 254)).
+
+-define(TLS_GTE(Version1, Version2), (Version1 >= Version2)).
+-define(TLS_GT(Version1, Version2),  (Version1 > Version2)).
+-define(TLS_LTE(Version1, Version2), (Version1 =< Version2)).
+-define(TLS_LT(Version1, Version2),  (Version1 < Version2)).
+
+-define(DTLS_GTE(Version1, Version2), (Version1 =< Version2)).
+-define(DTLS_GT(Version1, Version2),  (Version1 < Version2)).
+-define(DTLS_LTE(Version1, Version2), (Version >= Version2)).
+-define(DTLS_LT(Version1, Version2),  (Version1 > Version2)).
+
+%% Atoms used to refer to protocols
+
+-define(TLS_1_3, {3,4}).
+-define(TLS_1_2, {3,3}).
+-define(TLS_1_1, {3,2}).
+-define(TLS_1_0, {3,1}).
+
+-define(DTLS_1_2, {254,253}).
+-define(DTLS_1_0, {254,255}).
+
+-define(SSL_3_0, {3,0}).
+-define(SSL_2_0, {2,0}).
 
 -endif. % -ifdef(ssl_record).

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,23 +42,26 @@
 	 key_exchange_init_msg/1,
 	 key_init/3, new_keys_message/1,
          ext_info_message/1,
-	 handle_kexinit_msg/3, handle_kexdh_init/2,
+	 handle_kexinit_msg/4, handle_kexdh_init/2,
 	 handle_kex_dh_gex_group/2, handle_kex_dh_gex_init/2, handle_kex_dh_gex_reply/2,
 	 handle_new_keys/2, handle_kex_dh_gex_request/2,
 	 handle_kexdh_reply/2, 
 	 handle_kex_ecdh_init/2,
 	 handle_kex_ecdh_reply/2,
          parallell_gen_key/1,
-	 extract_public_key/1,
 	 ssh_packet/2, pack/2,
          valid_key_sha_alg/3,
-	 sha/1, sign/3, verify/5,
+	 sign/3, sign/4,
+         verify/5,
+	 sha/1,
          get_host_key/2,
          call_KeyCb/3,
          public_algo/1]).
 
 -behaviour(ssh_dbg).
 -export([ssh_dbg_trace_points/0, ssh_dbg_flags/1, ssh_dbg_on/1, ssh_dbg_off/1, ssh_dbg_format/2]).
+
+-define(MIN_DH_KEY_SIZE, 400).
 
 %%% For test suites
 -export([pack/3, adjust_algs_for_peer_version/2]).
@@ -86,32 +89,44 @@ clear_default_algorithms_env() ->
                                   | no_return() %  error(Reason)
                                   .
 default_algorithms() ->
+    FipsMode = crypto:info_fips(),
     case application:get_env(ssh, ?DEFAULT_ALGS) of
         undefined ->
-            %% Not cached, have to build the default, connection independent
-            %% set of algorithms:
-            Opts = get_alg_conf(),
-            Algs1 =
-                case proplists:get_value(preferred_algorithms, Opts) of
-                    undefined ->
-                        [{K,default_algorithms1(K)} || K <- algo_classes()];
-                    Algs0 ->
-                        {true,Algs01} = ssh_options:check_preferred_algorithms(Algs0),
-                        Algs01
-                end,
-            Algs =
-                case proplists:get_value(modify_algorithms, Opts) of
-                    undefined ->
-                        Algs1;
-                    Modifications ->
-                        ssh_options:initial_default_algorithms(Algs1, Modifications)
-                end,
-            application:set_env(ssh, ?DEFAULT_ALGS, Algs),
+            Algs = build_cache(),
+            application:set_env(ssh, ?DEFAULT_ALGS, {FipsMode,Algs}),
             Algs;
 
-        {ok,Algs} ->
+        {ok,{FipsMode,Algs}} ->
+            %% Cached, and the FIPS mode is the same now as when it was cached.
+            Algs;
+
+        {ok,{_OtherFipsMode,_Algs}} ->
+            %% Cached, but the FIPS mode has changed.
+            Algs = build_cache(),
+            application:set_env(ssh, ?DEFAULT_ALGS, {FipsMode,Algs}),
             Algs
     end.
+
+build_cache() ->
+    Opts = get_alg_conf(),
+    Algs1 =
+        case proplists:get_value(preferred_algorithms, Opts) of
+            undefined ->
+                [{K,default_algorithms1(K)} || K <- algo_classes()];
+            Algs0 ->
+                {true,Algs01} = ssh_options:check_preferred_algorithms(Algs0),
+                Algs01
+        end,
+    Algs =
+        case proplists:get_value(modify_algorithms, Opts) of
+            undefined ->
+                Algs1;
+            Modifications ->
+                ssh_options:initial_default_algorithms(Algs1, Modifications)
+        end,
+    Algs.
+
+
 
 get_alg_conf() ->
     [{T,L} || T <- [preferred_algorithms, modify_algorithms],
@@ -137,10 +152,17 @@ algo_two_spec_class(_) -> false.
 
 
 default_algorithms(Tag) ->
+    FipsMode = crypto:info_fips(),
     case application:get_env(ssh, ?DEFAULT_ALGS) of
         undefined ->
             default_algorithms1(Tag);
-        {ok,Algs} ->
+        {ok,{FipsMode,Algs}} ->
+            %% Cached, and the FIPS mode is the same now as when it was cached.
+            proplists:get_value(Tag, Algs, []);
+        {ok,{_OtherFipsMode,_Algs}} ->
+            %% Cached, but the FIPS mode has changed.
+            Algs = build_cache(),
+            application:set_env(ssh, ?DEFAULT_ALGS, {FipsMode,Algs}),
             proplists:get_value(Tag, Algs, [])
     end.
     
@@ -166,6 +188,7 @@ default_algorithms1(mac) ->
 
 default_algorithms1(public_key) ->
     supported_algorithms(public_key, [
+                                      'ssh-rsa',
                                       %% Gone in OpenSSH 7.3.p1:
                                       'ssh-dss'
                                      ]);
@@ -179,18 +202,16 @@ supported_algorithms() -> [{K,supported_algorithms(K)} || K <- algo_classes()].
 supported_algorithms(kex) ->
     select_crypto_supported(
       [
-       {'ecdh-sha2-nistp384',                   [{public_keys,ecdh}, {curves,secp384r1}, {hashs,sha384}]},
+       {'curve25519-sha256',                    [{public_keys,ecdh}, {curves,x25519}, {hashs,sha256}]},
+       {'curve25519-sha256@libssh.org',         [{public_keys,ecdh}, {curves,x25519}, {hashs,sha256}]},
+       {'curve448-sha512',                      [{public_keys,ecdh}, {curves,x448},   {hashs,sha512}]},
        {'ecdh-sha2-nistp521',                   [{public_keys,ecdh}, {curves,secp521r1}, {hashs,sha512}]},
+       {'ecdh-sha2-nistp384',                   [{public_keys,ecdh}, {curves,secp384r1}, {hashs,sha384}]},
        {'ecdh-sha2-nistp256',                   [{public_keys,ecdh}, {curves,secp256r1}, {hashs,sha256}]},
        {'diffie-hellman-group-exchange-sha256', [{public_keys,dh},   {hashs,sha256}]},
        {'diffie-hellman-group16-sha512',        [{public_keys,dh},   {hashs,sha512}]}, % In OpenSSH 7.3.p1
        {'diffie-hellman-group18-sha512',        [{public_keys,dh},   {hashs,sha512}]}, % In OpenSSH 7.3.p1
        {'diffie-hellman-group14-sha256',        [{public_keys,dh},   {hashs,sha256}]}, % In OpenSSH 7.3.p1
-       %% https://tools.ietf.org/html/draft-ietf-curdle-ssh-curves
-       %% Secure Shell (SSH) Key Exchange Method using Curve25519 and Curve448
-       {'curve25519-sha256',                    [{public_keys,ecdh}, {curves,x25519}, {hashs,sha256}]},
-       {'curve25519-sha256@libssh.org',         [{public_keys,ecdh}, {curves,x25519}, {hashs,sha256}]},
-       {'curve448-sha512',                      [{public_keys,ecdh}, {curves,x448},   {hashs,sha512}]},
        {'diffie-hellman-group14-sha1',          [{public_keys,dh},   {hashs,sha}]},
        {'diffie-hellman-group-exchange-sha1',   [{public_keys,dh},   {hashs,sha}]},
        {'diffie-hellman-group1-sha1',           [{public_keys,dh},   {hashs,sha}]}
@@ -198,13 +219,13 @@ supported_algorithms(kex) ->
 supported_algorithms(public_key) ->
     select_crypto_supported(
       [
-       {'ecdsa-sha2-nistp384',  [{public_keys,ecdsa}, {hashs,sha384}, {curves,secp384r1}]},
-       {'ecdsa-sha2-nistp521',  [{public_keys,ecdsa}, {hashs,sha512}, {curves,secp521r1}]},
-       {'ecdsa-sha2-nistp256',  [{public_keys,ecdsa}, {hashs,sha256}, {curves,secp256r1}]},
        {'ssh-ed25519',          [{public_keys,eddsa}, {curves,ed25519}                    ]},
        {'ssh-ed448',            [{public_keys,eddsa}, {curves,ed448}                      ]},
-       {'rsa-sha2-256',         [{public_keys,rsa},   {hashs,sha256}                      ]},
+       {'ecdsa-sha2-nistp521',  [{public_keys,ecdsa}, {hashs,sha512}, {curves,secp521r1}]},
+       {'ecdsa-sha2-nistp384',  [{public_keys,ecdsa}, {hashs,sha384}, {curves,secp384r1}]},
+       {'ecdsa-sha2-nistp256',  [{public_keys,ecdsa}, {hashs,sha256}, {curves,secp256r1}]},
        {'rsa-sha2-512',         [{public_keys,rsa},   {hashs,sha512}                      ]},
+       {'rsa-sha2-256',         [{public_keys,rsa},   {hashs,sha256}                      ]},
        {'ssh-rsa',              [{public_keys,rsa},   {hashs,sha}                         ]},
        {'ssh-dss',              [{public_keys,dss},   {hashs,sha}                         ]} % Gone in OpenSSH 7.3.p1
       ]);
@@ -213,7 +234,6 @@ supported_algorithms(cipher) ->
     same(
       select_crypto_supported(
 	[
-         {'chacha20-poly1305@openssh.com', [{ciphers,chacha20}, {macs,poly1305}]},
          {'aes256-gcm@openssh.com', [{ciphers,aes_256_gcm}]},
          {'aes256-ctr',       [{ciphers,aes_256_ctr}]},
          {'aes192-ctr',       [{ciphers,aes_192_ctr}]},
@@ -221,6 +241,7 @@ supported_algorithms(cipher) ->
 	 {'aes128-ctr',       [{ciphers,aes_128_ctr}]},
 	 {'AEAD_AES_256_GCM', [{ciphers,aes_256_gcm}]},
 	 {'AEAD_AES_128_GCM', [{ciphers,aes_128_gcm}]},
+         {'chacha20-poly1305@openssh.com', [{ciphers,chacha20}, {macs,poly1305}]},
 	 {'aes256-cbc',       [{ciphers,aes_256_cbc}]},
 	 {'aes192-cbc',       [{ciphers,aes_192_cbc}]},
 	 {'aes128-cbc',       [{ciphers,aes_128_cbc}]},
@@ -230,15 +251,15 @@ supported_algorithms(cipher) ->
 supported_algorithms(mac) ->
     same(
       select_crypto_supported(
-	[{'hmac-sha2-256-etm@openssh.com', [{macs,hmac}, {hashs,sha256}]},
-         {'hmac-sha2-512-etm@openssh.com', [{macs,hmac}, {hashs,sha256}]},
-         {'hmac-sha2-256',    [{macs,hmac}, {hashs,sha256}]},
+	[{'hmac-sha2-512-etm@openssh.com', [{macs,hmac}, {hashs,sha256}]},
+         {'hmac-sha2-256-etm@openssh.com', [{macs,hmac}, {hashs,sha256}]},
 	 {'hmac-sha2-512',    [{macs,hmac}, {hashs,sha512}]},
+         {'hmac-sha2-256',    [{macs,hmac}, {hashs,sha256}]},
          {'hmac-sha1-etm@openssh.com', [{macs,hmac}, {hashs,sha256}]},
 	 {'hmac-sha1',        [{macs,hmac}, {hashs,sha}]},
 	 {'hmac-sha1-96',     [{macs,hmac}, {hashs,sha}]},
-	 {'AEAD_AES_128_GCM', [{ciphers,aes_128_gcm}]},
-	 {'AEAD_AES_256_GCM', [{ciphers,aes_256_gcm}]}
+         {'AEAD_AES_256_GCM', [{ciphers,aes_256_gcm}]},
+	 {'AEAD_AES_128_GCM', [{ciphers,aes_128_gcm}]}
 	]
        ));
 supported_algorithms(compression) ->
@@ -255,27 +276,19 @@ versions(server, Options) ->
     Vsn = ?GET_INTERNAL_OPT(vsn, Options, ?DEFAULT_SERVER_VERSION),
     {Vsn, format_version(Vsn, software_version(Options))}.
 
+format_version({Major,Minor}, "") ->
+    lists:concat(["SSH-",Major,".",Minor]);
+format_version({Major,Minor}, SoftwareVersion) ->
+    lists:concat(["SSH-",Major,".",Minor,"-",SoftwareVersion]).
+
 software_version(Options) -> 
     case ?GET_OPT(id_string, Options) of
-	undefined ->
-	    "Erlang"++ssh_vsn();
 	{random,Nlo,Nup} ->
 	    random_id(Nlo,Nup);
 	ID ->
 	    ID
     end.
 
-ssh_vsn() ->
-    try {ok,L} = application:get_all_key(ssh),
-	 proplists:get_value(vsn, L, "")
-    of 
-	"" -> "";
-	VSN when is_list(VSN) -> "/" ++ VSN;
-	_ -> ""
-    catch
-	_:_ -> ""
-    end.
-    
 random_id(Nlo, Nup) ->
     [$a + rand:uniform($z-$a+1) - 1 || _<- lists:duplicate(Nlo + rand:uniform(Nup-Nlo+1) - 1, x)].
 
@@ -285,16 +298,11 @@ hello_version_msg(Data) ->
 next_seqnum(SeqNum) ->
     (SeqNum + 1) band 16#ffffffff.
 
-
 is_valid_mac(_, _ , #ssh{recv_mac_size = 0}) ->
     true;
 is_valid_mac(Mac, Data, #ssh{recv_mac = Algorithm,
 			     recv_mac_key = Key, recv_sequence = SeqNum}) ->
-    crypto:equal_const_time(Mac, mac(Algorithm, Key, SeqNum, Data)).
-
-format_version({Major,Minor}, SoftwareVersion) ->
-    "SSH-" ++ integer_to_list(Major) ++ "." ++ 
-	integer_to_list(Minor) ++ "-" ++ SoftwareVersion.
+    ssh_lib:comp(Mac, mac(Algorithm, Key, SeqNum, Data)).
 
 handle_hello_version(Version) ->
     try
@@ -349,7 +357,8 @@ kexinit_message(Role, Random, Algs, HostKeyAlgs, Opts) ->
     #ssh_msg_kexinit{
 		  cookie = Random,
 		  kex_algorithms = to_strings( get_algs(kex,Algs) )
-                                   ++ kex_ext_info(Role,Opts),
+                                   ++ kex_ext_info(Role,Opts)
+                                   ++ kex_strict_alg(Role),
 		  server_host_key_algorithms = HostKeyAlgs,
 		  encryption_algorithms_client_to_server = c2s(cipher,Algs),
 		  encryption_algorithms_server_to_client = s2c(cipher,Algs),
@@ -366,7 +375,8 @@ s2c(Key, Algs) -> x2y(server2client, Key, Algs).
 
 x2y(DirectionKey, Key, Algs) -> to_strings(proplists:get_value(DirectionKey, get_algs(Key,Algs))).
 
-get_algs(Key, Algs) -> proplists:get_value(Key, Algs, default_algorithms(Key)).
+get_algs(Key, {_FipsMode,Algs}) when is_list(Algs) ->  proplists:get_value(Key, Algs, default_algorithms(Key));
+get_algs(Key, Algs) when is_list(Algs) -> proplists:get_value(Key, Algs, default_algorithms(Key)).
 
 to_strings(L) -> lists:map(fun erlang:atom_to_list/1, L).
 
@@ -377,10 +387,12 @@ new_keys_message(Ssh0) ->
 
 
 handle_kexinit_msg(#ssh_msg_kexinit{} = CounterPart, #ssh_msg_kexinit{} = Own,
-                   #ssh{role = client} = Ssh) ->
+                   #ssh{role = client} = Ssh, ReNeg) ->
     try
-        {ok, Algorithms} = select_algorithm(client, Own, CounterPart, Ssh#ssh.opts),
+        {ok, Algorithms} =
+            select_algorithm(client, Own, CounterPart, Ssh, ReNeg),
         true = verify_algorithm(Algorithms),
+        true = verify_kexinit_is_first_msg(Algorithms, Ssh, ReNeg),
         Algorithms
     of
 	Algos ->
@@ -388,28 +400,79 @@ handle_kexinit_msg(#ssh_msg_kexinit{} = CounterPart, #ssh_msg_kexinit{} = Own,
 				   Ssh#ssh{algorithms = Algos})
     catch
         Class:Error ->
-            ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
-                        io_lib:format("Kexinit failed in client: ~p:~p",
-                                      [Class,Error])
-                       )
-    end;
+            Msg = kexinit_error(Class, Error, client, Own, CounterPart),
+            ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED, Msg)
+        end;
 
 handle_kexinit_msg(#ssh_msg_kexinit{} = CounterPart, #ssh_msg_kexinit{} = Own,
-                   #ssh{role = server} = Ssh) ->
+                   #ssh{role = server} = Ssh, ReNeg) ->
     try
-        {ok, Algorithms} = select_algorithm(server, CounterPart, Own, Ssh#ssh.opts),
+        {ok, Algorithms} =
+            select_algorithm(server, CounterPart, Own, Ssh, ReNeg),
         true = verify_algorithm(Algorithms),
+        true = verify_kexinit_is_first_msg(Algorithms, Ssh, ReNeg),
         Algorithms
     of
 	Algos ->
             {ok, Ssh#ssh{algorithms = Algos}}
     catch
         Class:Error ->
-            ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
-                        io_lib:format("Kexinit failed in server: ~p:~p",
-                                      [Class,Error])
-                       )
+            Msg = kexinit_error(Class, Error, server, Own, CounterPart),
+            ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED, Msg)
     end.
+
+kexinit_error(Class, Error, Role, Own, CounterPart) ->
+    {Fmt,Args} =
+        case {Class,Error} of
+            {error, {badmatch,{false,Alg}}} ->
+                {Txt,W,C} = alg_info(Role, Alg),
+                {"No common ~s algorithm,~n"
+                 "  we have:~n    ~s~n"
+                 "  peer have:~n    ~s~n",
+                 [Txt,
+                  lists:join(", ", element(W,Own)),
+                  lists:join(", ", element(C,CounterPart))
+                 ]};
+            _ ->
+                {"Kexinit failed in ~p: ~p:~p", [Role,Class,Error]}
+        end,
+    try io_lib:format(Fmt, Args) of
+        R -> R
+    catch
+        _:_ ->
+            io_lib:format("Kexinit failed in ~p: ~p:~p", [Role, Class, Error])
+    end.
+
+alg_info(client, Alg) ->
+    alg_info(Alg);
+alg_info(server, Alg) ->
+    {Txt,C2s,S2c} = alg_info(Alg),
+    {Txt,S2c,C2s}.
+
+alg_info("kex") ->        {"key exchange",
+                           #ssh_msg_kexinit.kex_algorithms,
+                           #ssh_msg_kexinit.kex_algorithms};
+alg_info("hkey") ->       {"key",
+                           #ssh_msg_kexinit.server_host_key_algorithms,
+                           #ssh_msg_kexinit.server_host_key_algorithms};
+alg_info("send_mac") ->    {"mac",
+                           #ssh_msg_kexinit.mac_algorithms_client_to_server,
+                           #ssh_msg_kexinit.mac_algorithms_server_to_client};
+alg_info("recv_mac") ->    {"mac",
+                           #ssh_msg_kexinit.mac_algorithms_client_to_server,
+                           #ssh_msg_kexinit.mac_algorithms_server_to_client};
+alg_info("encrypt") ->   {"cipher",
+                           #ssh_msg_kexinit.encryption_algorithms_client_to_server,
+                           #ssh_msg_kexinit.encryption_algorithms_server_to_client};
+alg_info("decrypt") ->   {"cipher",
+                           #ssh_msg_kexinit.encryption_algorithms_client_to_server,
+                           #ssh_msg_kexinit.encryption_algorithms_server_to_client};
+alg_info("compress") ->   {"compress",
+                           #ssh_msg_kexinit.compression_algorithms_client_to_server,
+                           #ssh_msg_kexinit.compression_algorithms_server_to_client};
+alg_info("decompress") -> {"compress",
+                           #ssh_msg_kexinit.compression_algorithms_client_to_server,
+                           #ssh_msg_kexinit.compression_algorithms_server_to_client}.
 
 
 verify_algorithm(#alg{kex = undefined})       ->  {false, "kex"};
@@ -427,6 +490,21 @@ verify_algorithm(#alg{kex = Kex}) ->
         true -> true;
         false -> {false, "kex"}
     end.
+
+verify_kexinit_is_first_msg(#alg{kex_strict_negotiated = false}, _, _) ->
+    true;
+verify_kexinit_is_first_msg(#alg{kex_strict_negotiated = true}, _, renegotiate) ->
+    true;
+verify_kexinit_is_first_msg(#alg{kex_strict_negotiated = true},
+                            #ssh{send_sequence = 1, recv_sequence = 1},
+                            init) ->
+    true;
+verify_kexinit_is_first_msg(#alg{kex_strict_negotiated = true},
+                            #ssh{send_sequence = SendSequence,
+                                 recv_sequence = RecvSequence}, init) ->
+    error_logger:warning_report(
+      lists:concat(["KEX strict violation (", SendSequence, ", ", RecvSequence, ")."])),
+    {false, "kex_strict"}.
 
 %%%----------------------------------------------------------------
 %%%
@@ -499,19 +577,24 @@ handle_kexdh_init(#ssh_msg_kexdh_init{e = E},
 	    {Public, Private} = generate_key(dh, [P,G,2*Sz]),
 	    K = compute_key(dh, E, Private, [P,G]),
 	    MyPrivHostKey = get_host_key(SignAlg, Opts),
-	    MyPubHostKey = extract_public_key(MyPrivHostKey),
+	    MyPubHostKey = ssh_file:extract_public_key(MyPrivHostKey),
             H = kex_hash(Ssh0, MyPubHostKey, sha(Kex), {E,Public,K}),
-            H_SIG = sign(H, sha(SignAlg), MyPrivHostKey),
-	    {SshPacket, Ssh1} = 
-		ssh_packet(#ssh_msg_kexdh_reply{public_host_key = {MyPubHostKey,SignAlg},
-						f = Public,
-						h_sig = H_SIG
-					       }, Ssh0),
-	    {ok, SshPacket, Ssh1#ssh{keyex_key = {{Private, Public}, {G, P}},
-				     shared_secret = ssh_bits:mpint(K),
-				     exchanged_hash = H,
-				     session_id = sid(Ssh1, H)}};
-
+            case sign(H, SignAlg, MyPrivHostKey, Ssh0) of
+                {ok,H_SIG} ->
+                    {SshPacket, Ssh1} =
+                        ssh_packet(#ssh_msg_kexdh_reply{public_host_key = {MyPubHostKey,SignAlg},
+                                                        f = Public,
+                                                        h_sig = H_SIG
+                                                       }, Ssh0),
+                    {ok, SshPacket, Ssh1#ssh{keyex_key = {{Private, Public}, {G, P}},
+                                             shared_secret = ssh_bits:mpint(K),
+                                             exchanged_hash = H,
+                                             session_id = sid(Ssh1, H)}};
+                {error,unsupported_sign_alg} ->
+                    ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
+                                io_lib:format("Unsupported algorithm ~p", [SignAlg])
+                               )
+            end;
 	true ->
             ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
                         io_lib:format("Kexdh init failed, received 'e' out of bounds~n  E=~p~n  P=~p",
@@ -646,17 +729,23 @@ handle_kex_dh_gex_init(#ssh_msg_kex_dh_gex_init{e = E},
 	    if
 		1<K, K<(P-1) ->
 		    MyPrivHostKey = get_host_key(SignAlg, Opts),
-		    MyPubHostKey = extract_public_key(MyPrivHostKey),
+		    MyPubHostKey = ssh_file:extract_public_key(MyPrivHostKey),
                     H = kex_hash(Ssh0, MyPubHostKey, sha(Kex), {Min,NBits,Max,P,G,E,Public,K}),
-                    H_SIG = sign(H, sha(SignAlg), MyPrivHostKey),
-		    {SshPacket, Ssh} = 
-			ssh_packet(#ssh_msg_kex_dh_gex_reply{public_host_key = {MyPubHostKey,SignAlg},
-							     f = Public,
-							     h_sig = H_SIG}, Ssh0),
-		    {ok, SshPacket, Ssh#ssh{shared_secret = ssh_bits:mpint(K),
-					    exchanged_hash = H,
-					    session_id = sid(Ssh, H)
-					   }};
+                    case sign(H, SignAlg, MyPrivHostKey, Ssh0) of
+                        {ok,H_SIG} ->
+                            {SshPacket, Ssh} =
+                                ssh_packet(#ssh_msg_kex_dh_gex_reply{public_host_key = {MyPubHostKey,SignAlg},
+                                                                     f = Public,
+                                                                     h_sig = H_SIG}, Ssh0),
+                            {ok, SshPacket, Ssh#ssh{shared_secret = ssh_bits:mpint(K),
+                                                    exchanged_hash = H,
+                                                    session_id = sid(Ssh, H)
+                                                   }};
+                        {error,unsupported_sign_alg} ->
+                            ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
+                                        io_lib:format("Unsupported algorithm ~p", [SignAlg])
+                                       )
+                    end;
 		true ->
                     ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
                                 "Kexdh init failed, received 'k' out of bounds"
@@ -723,18 +812,24 @@ handle_kex_ecdh_init(#ssh_msg_kex_ecdh_init{q_c = PeerPublic},
     of
 	K ->
 	    MyPrivHostKey = get_host_key(SignAlg, Opts),
-	    MyPubHostKey = extract_public_key(MyPrivHostKey),
+	    MyPubHostKey = ssh_file:extract_public_key(MyPrivHostKey),
             H = kex_hash(Ssh0, MyPubHostKey, sha(Curve), {PeerPublic, MyPublic, K}),
-            H_SIG = sign(H, sha(SignAlg), MyPrivHostKey),
-	    {SshPacket, Ssh1} = 
-		ssh_packet(#ssh_msg_kex_ecdh_reply{public_host_key = {MyPubHostKey,SignAlg},
-						   q_s = MyPublic,
-						   h_sig = H_SIG},
-			   Ssh0),
-    	    {ok, SshPacket, Ssh1#ssh{keyex_key = {{MyPublic,MyPrivate},Curve},
-				     shared_secret = ssh_bits:mpint(K),
-				     exchanged_hash = H,
-				     session_id = sid(Ssh1, H)}}
+            case sign(H, SignAlg, MyPrivHostKey, Ssh0) of
+                {ok,H_SIG} ->
+                    {SshPacket, Ssh1} =
+                        ssh_packet(#ssh_msg_kex_ecdh_reply{public_host_key = {MyPubHostKey,SignAlg},
+                                                           q_s = MyPublic,
+                                                           h_sig = H_SIG},
+                                   Ssh0),
+                    {ok, SshPacket, Ssh1#ssh{keyex_key = {{MyPublic,MyPrivate},Curve},
+                                             shared_secret = ssh_bits:mpint(K),
+                                             exchanged_hash = H,
+                                             session_id = sid(Ssh1, H)}};
+                {error,unsupported_sign_alg} ->
+                    ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
+                                io_lib:format("Unsupported algorithm ~p", [SignAlg])
+                               )
+            end
     catch
         Class:Error ->
             ?DISCONNECT(?SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
@@ -790,6 +885,9 @@ handle_new_keys(#ssh_msg_newkeys{}, Ssh0) ->
                        )
     end. 
 
+%%%----------------------------------------------------------------
+kex_strict_alg(client) -> [?kex_strict_c];
+kex_strict_alg(server) -> [?kex_strict_s].
 
 %%%----------------------------------------------------------------
 kex_ext_info(Role, Opts) ->
@@ -852,32 +950,14 @@ get_host_key(SignAlg, Opts) ->
 
 call_KeyCb(F, Args, Opts) ->
     {KeyCb,KeyCbOpts} = ?GET_OPT(key_cb, Opts),
-    UserOpts = ?GET_OPT(user_options, Opts),
+    UserOpts = ?GET_OPT(key_cb_options, Opts),
     apply(KeyCb, F, Args ++ [[{key_cb_private,KeyCbOpts}|UserOpts]]).
-
-extract_public_key(#'RSAPrivateKey'{modulus = N, publicExponent = E}) ->
-    #'RSAPublicKey'{modulus = N, publicExponent = E};
-extract_public_key(#'DSAPrivateKey'{y = Y, p = P, q = Q, g = G}) ->
-    {Y,  #'Dss-Parms'{p=P, q=Q, g=G}};
-extract_public_key(#'ECPrivateKey'{parameters = {namedCurve,OID},
-				   publicKey = Q}) when is_tuple(OID) ->
-    {#'ECPoint'{point=Q}, {namedCurve,OID}};
-extract_public_key({ed_pri, Alg, Pub, _Priv}) ->
-    {ed_pub, Alg, Pub};
-extract_public_key(#{engine:=_, key_id:=_, algorithm:=Alg} = M) ->
-    case {Alg, crypto:privkey_to_pubkey(Alg, M)} of
-        {rsa, [E,N]} ->
-            #'RSAPublicKey'{modulus = N, publicExponent = E};
-        {dss, [P,Q,G,Y]} ->
-            {Y, #'Dss-Parms'{p=P, q=Q, g=G}}
-    end.
-
 
 
 verify_host_key(#ssh{algorithms=Alg}=SSH, PublicKey, Digest, {AlgStr,Signature}) ->
     case atom_to_list(Alg#alg.hkey) of
         AlgStr ->
-            case verify(Digest, sha(Alg#alg.hkey), Signature, PublicKey, SSH) of
+            case verify(Digest, Alg#alg.hkey, Signature, PublicKey, SSH) of
                 false ->
                     {error, bad_signature};
                 true ->
@@ -907,31 +987,31 @@ accepted_host(Ssh, PeerName, Port, Public, Opts) ->
                                    "~s host key fingerprint is ~s.~n"
                                    "New host ~p~p accept",
                                    [fmt_hostkey(HostKeyAlg),
-                                    public_key:ssh_hostkey_fingerprint(Alg,Public),
+                                    ssh:hostkey_fingerprint(Alg,Public),
                                     PeerName, PortStr]),
             yes == yes_no(Ssh, Prompt);
 
         %% Call-back alternatives: A user provided fun is called for the decision:
         F when is_function(F,2) ->
-            case catch F(PeerName, public_key:ssh_hostkey_fingerprint(Public)) of
+            case catch F(PeerName, ssh:hostkey_fingerprint(Public)) of
                 true -> true;
                 _ -> {error, fingerprint_check_failed}
             end;
 
         F when is_function(F,3) ->
-            case catch F(PeerName, Port, public_key:ssh_hostkey_fingerprint(Public)) of
+            case catch F(PeerName, Port, ssh:hostkey_fingerprint(Public)) of
                 true -> true;
                 _ -> {error, fingerprint_check_failed}
             end;
 
 	{DigestAlg,F} when is_function(F,2) ->
-            case catch F(PeerName, public_key:ssh_hostkey_fingerprint(DigestAlg,Public)) of
+            case catch F(PeerName, ssh:hostkey_fingerprint(DigestAlg,Public)) of
                 true -> true;
                 _ -> {error, {fingerprint_check_failed,DigestAlg}}
             end;
 
 	{DigestAlg,F} when is_function(F,3) ->
-            case catch F(PeerName, Port, public_key:ssh_hostkey_fingerprint(DigestAlg,Public)) of
+            case catch F(PeerName, Port, ssh:hostkey_fingerprint(DigestAlg,Public)) of
                 true -> true;
                 _ -> {error, {fingerprint_check_failed,DigestAlg}}
             end
@@ -998,7 +1078,34 @@ known_host_key(#ssh{opts = Opts, peer = {PeerName,{IP,Port}}} = Ssh,
 %%
 %%   The first algorithm in each list MUST be the preferred (guessed)
 %%   algorithm.  Each string MUST contain at least one algorithm name.
-select_algorithm(Role, Client, Server, Opts) ->
+select_algorithm(Role, Client, Server,
+                 #ssh{opts = Opts,
+                         kex_strict_negotiated = KexStrictNegotiated0},
+                 ReNeg) ->
+    KexStrictNegotiated =
+        case ReNeg of
+            %% KEX strict negotiated once per connection
+            init ->
+                Result =
+                    case Role of
+                        server ->
+                            lists:member(?kex_strict_c,
+                                         Client#ssh_msg_kexinit.kex_algorithms);
+                        client ->
+                            lists:member(?kex_strict_s,
+                                         Server#ssh_msg_kexinit.kex_algorithms)
+                    end,
+                case Result of
+                    true ->
+                        logger:debug(lists:concat([Role, " will use strict KEX ordering"]));
+                    _ ->
+                        ok
+                end,
+                Result;
+            _ ->
+                KexStrictNegotiated0
+        end,
+
     {Encrypt0, Decrypt0} = select_encrypt_decrypt(Role, Client, Server),
     {SendMac0, RecvMac0} = select_send_recv_mac(Role, Client, Server),
 
@@ -1049,7 +1156,8 @@ select_algorithm(Role, Client, Server, Opts) ->
               c_lng = C_Lng,
               s_lng = S_Lng,
               send_ext_info = SendExtInfo,
-              recv_ext_info = RecvExtInfo
+              recv_ext_info = RecvExtInfo,
+              kex_strict_negotiated = KexStrictNegotiated
              }}.
 
 
@@ -1147,7 +1255,8 @@ alg_setup(snd, SSH) ->
 	    c_lng = ALG#alg.c_lng,
 	    s_lng = ALG#alg.s_lng,
             send_ext_info = ALG#alg.send_ext_info,
-            recv_ext_info = ALG#alg.recv_ext_info
+            recv_ext_info = ALG#alg.recv_ext_info,
+            kex_strict_negotiated = ALG#alg.kex_strict_negotiated
 	   };
 
 alg_setup(rcv, SSH) ->
@@ -1159,22 +1268,23 @@ alg_setup(rcv, SSH) ->
 	    c_lng = ALG#alg.c_lng,
 	    s_lng = ALG#alg.s_lng,
             send_ext_info = ALG#alg.send_ext_info,
-            recv_ext_info = ALG#alg.recv_ext_info
+            recv_ext_info = ALG#alg.recv_ext_info,
+            kex_strict_negotiated = ALG#alg.kex_strict_negotiated
 	   }.
 
-
-alg_init(snd, SSH0) ->
+alg_init(Dir = snd, SSH0) ->
     {ok,SSH1} = send_mac_init(SSH0),
     {ok,SSH2} = encrypt_init(SSH1),
     {ok,SSH3} = compress_init(SSH2),
-    SSH3;
+    {ok,SSH4} = maybe_reset_sequence(Dir, SSH3),
+    SSH4;
 
-alg_init(rcv, SSH0) ->
+alg_init(Dir = rcv, SSH0) ->
     {ok,SSH1} = recv_mac_init(SSH0),
     {ok,SSH2} = decrypt_init(SSH1),
     {ok,SSH3} = decompress_init(SSH2),
-    SSH3.
-
+    {ok,SSH4} = maybe_reset_sequence(Dir, SSH3),
+    SSH4.
 
 alg_final(snd, SSH0) ->
     {ok,SSH1} = send_mac_final(SSH0),
@@ -1190,8 +1300,8 @@ alg_final(rcv, SSH0) ->
 
 
 select_all(CL, SL) when length(CL) + length(SL) < ?MAX_NUM_ALGORITHMS ->
-    %% algortihms only used by client
-    %% NOTE: an algorithm occuring more than once in CL will still be present
+    %% algorithms only used by client
+    %% NOTE: an algorithm occurring more than once in CL will still be present
     %%       in CLonly. This is not a problem for nice clients.
     CLonly = CL -- SL,
 
@@ -1251,9 +1361,9 @@ pack(common, rfc4253, PlainText, DeltaLenTst,
      #ssh{send_sequence = SeqNum,
           send_mac = MacAlg,
           send_mac_key = MacKey} = Ssh0) ->
-    PadLen = padding_length(4+1+size(PlainText), Ssh0),
+    PadLen = padding_length(4+1+byte_size(PlainText), Ssh0),
     Pad =  ssh_bits:random(PadLen),
-    TextLen = 1 + size(PlainText) + PadLen + DeltaLenTst,
+    TextLen = 1 + byte_size(PlainText) + PadLen + DeltaLenTst,
     PlainPkt = <<?UINT32(TextLen),?BYTE(PadLen), PlainText/binary, Pad/binary>>,
     {Ssh1, CipherPkt} = encrypt(Ssh0, PlainPkt),
     MAC0 = mac(MacAlg, MacKey, SeqNum, PlainPkt),
@@ -1264,9 +1374,9 @@ pack(common, enc_then_mac, PlainText, DeltaLenTst,
      #ssh{send_sequence = SeqNum,
           send_mac = MacAlg,
           send_mac_key = MacKey} = Ssh0) ->
-    PadLen = padding_length(1+size(PlainText), Ssh0),
+    PadLen = padding_length(1+byte_size(PlainText), Ssh0),
     Pad =  ssh_bits:random(PadLen),
-    PlainLen = 1 + size(PlainText) + PadLen + DeltaLenTst,
+    PlainLen = 1 + byte_size(PlainText) + PadLen + DeltaLenTst,
     PlainPkt = <<?BYTE(PadLen), PlainText/binary, Pad/binary>>,
     {Ssh1, CipherPkt} = encrypt(Ssh0, PlainPkt),
     EncPacketPkt = <<?UINT32(PlainLen), CipherPkt/binary>>,
@@ -1274,9 +1384,9 @@ pack(common, enc_then_mac, PlainText, DeltaLenTst,
     {<<?UINT32(PlainLen), CipherPkt/binary, MAC0/binary>>, Ssh1};
 
 pack(aead, _, PlainText, DeltaLenTst, Ssh0) ->
-    PadLen = padding_length(1+size(PlainText), Ssh0),
+    PadLen = padding_length(1+byte_size(PlainText), Ssh0),
     Pad =  ssh_bits:random(PadLen),
-    PlainLen = 1 + size(PlainText) + PadLen + DeltaLenTst,
+    PlainLen = 1 + byte_size(PlainText) + PadLen + DeltaLenTst,
     PlainPkt = <<?BYTE(PadLen), PlainText/binary, Pad/binary>>,
     {Ssh1, {CipherPkt,MAC0}} = encrypt(Ssh0, <<?UINT32(PlainLen),PlainPkt/binary>>),
     {<<CipherPkt/binary,MAC0/binary>>, Ssh1}.
@@ -1303,7 +1413,7 @@ handle_packet_part(<<>>, Encrypted0, AEAD0, undefined, #ssh{decrypt = CryptoAlg,
     end;
 
 handle_packet_part(DecryptedPfx, EncryptedBuffer, AEAD, TotalNeeded, Ssh0) 
-  when (size(DecryptedPfx)+size(EncryptedBuffer)) < TotalNeeded ->
+  when (byte_size(DecryptedPfx)+byte_size(EncryptedBuffer)) < TotalNeeded ->
     %% need more bytes to finalize the packet
     {get_more, DecryptedPfx, EncryptedBuffer, AEAD, TotalNeeded, Ssh0};
 
@@ -1322,7 +1432,7 @@ handle_packet_part(DecryptedPfx, EncryptedBuffer, AEAD, TotalNeeded, #ssh{decryp
 %%%----------------
 unpack(common, rfc4253, DecryptedPfx, EncryptedBuffer, _AEAD, TotalNeeded,
        #ssh{recv_mac_size = MacSize} = Ssh0) ->
-    MoreNeeded = TotalNeeded - size(DecryptedPfx) - MacSize,
+    MoreNeeded = TotalNeeded - byte_size(DecryptedPfx) - MacSize,
     <<EncryptedSfx:MoreNeeded/binary, Mac:MacSize/binary, NextPacketBytes/binary>> = EncryptedBuffer,
     {Ssh1, DecryptedSfx} = decrypt(Ssh0, EncryptedSfx),
     PlainPkt = <<DecryptedPfx/binary, DecryptedSfx/binary>>,
@@ -1339,7 +1449,7 @@ unpack(common, enc_then_mac, <<?UINT32(PlainLen)>>, EncryptedBuffer, _AEAD, _Tot
     case is_valid_mac(MAC0, <<?UINT32(PlainLen),Payload/binary>>, Ssh0) of
         true ->
             {Ssh1, <<?BYTE(PaddingLen), PlainRest/binary>>} = decrypt(Ssh0, Payload),
-            CompressedPlainTextLen = size(PlainRest) - PaddingLen,
+            CompressedPlainTextLen = byte_size(PlainRest) - PaddingLen,
             <<CompressedPlainText:CompressedPlainTextLen/binary, _Padding/binary>> = PlainRest,
             {ok, CompressedPlainText, NextPacketBytes, Ssh1};
         false ->
@@ -1349,7 +1459,7 @@ unpack(common, enc_then_mac, <<?UINT32(PlainLen)>>, EncryptedBuffer, _AEAD, _Tot
 unpack(aead, _, DecryptedPfx, EncryptedBuffer, AEAD, TotalNeeded, 
        #ssh{recv_mac_size = MacSize} = Ssh0) ->
     %% enough bytes to decode the packet.
-    MoreNeeded = TotalNeeded - size(DecryptedPfx) - MacSize,
+    MoreNeeded = TotalNeeded - byte_size(DecryptedPfx) - MacSize,
     <<EncryptedSfx:MoreNeeded/binary, Mac:MacSize/binary, NextPacketBytes/binary>> = EncryptedBuffer,
     case decrypt(Ssh0, {AEAD,EncryptedSfx,Mac}) of
         {Ssh1, error} ->
@@ -1361,7 +1471,7 @@ unpack(aead, _, DecryptedPfx, EncryptedBuffer, AEAD, TotalNeeded,
 
 %%%----------------------------------------------------------------
 get_length(common, rfc4253, EncryptedBuffer, #ssh{decrypt_block_size = BlockSize} = Ssh0) ->
-    case size(EncryptedBuffer) >= erlang:max(8, BlockSize) of
+    case byte_size(EncryptedBuffer) >= erlang:max(8, BlockSize) of
 	true ->
 	    <<EncBlock:BlockSize/binary, EncryptedRest/binary>> = EncryptedBuffer,
 	    {Ssh, 
@@ -1381,7 +1491,7 @@ get_length(common, enc_then_mac, EncryptedBuffer, Ssh) ->
     end;
 
 get_length(aead, _, EncryptedBuffer, Ssh) ->
-    case {size(EncryptedBuffer) >= 4, Ssh#ssh.decrypt} of
+    case {byte_size(EncryptedBuffer) >= 4, Ssh#ssh.decrypt} of
        {true, 'chacha20-poly1305@openssh.com'} ->
             <<EncryptedLen:4/binary, EncryptedRest/binary>> = EncryptedBuffer,
             {Ssh1,  PacketLenBin} = decrypt(Ssh, {length,EncryptedLen}),
@@ -1415,12 +1525,28 @@ payload(<<PacketLen:32, PaddingLen:8, PayloadAndPadding/binary>>) ->
     Payload.
 
 %%%----------------------------------------------------------------
+%% sign(SigData, SignAlg, Key, Opts) when is_list(SignAlg) ->
+%%     sign(SigData, list_to_existing_atom(SignAlg), Key, Opts);
+
+sign(SigData, SignAlg, Key, #ssh{opts=Opts}) when is_atom(SignAlg) ->
+    case lists:member(SignAlg,
+                      proplists:get_value(public_key,
+                                          ?GET_OPT(preferred_algorithms,Opts,[]))) of
+        true ->
+            {ok, sign(SigData, sha(SignAlg), Key)};
+        false ->
+            {error, unsupported_sign_alg}
+    end.
+
 sign(SigData, HashAlg, #{algorithm:=dss} = Key) ->
     mk_dss_sig(crypto:sign(dss, HashAlg, SigData, Key));
 sign(SigData, HashAlg, #{algorithm:=SigAlg} = Key) ->
     crypto:sign(SigAlg, HashAlg, SigData, Key);
 sign(SigData, HashAlg,  #'DSAPrivateKey'{} = Key) ->
     mk_dss_sig(public_key:sign(SigData, HashAlg, Key));
+sign(SigData, HashAlg, Key = #'ECPrivateKey'{parameters = {namedCurve, Curve}})
+  when (Curve == ?'id-Ed25519') orelse (Curve == ?'id-Ed448') ->
+    public_key:sign(SigData, HashAlg, Key);
 sign(SigData, HashAlg, Key = #'ECPrivateKey'{}) ->
     DerEncodedSign =  public_key:sign(SigData, HashAlg, Key),
     #'ECDSA-Sig-Value'{r=R, s=S} = public_key:der_decode('ECDSA-Sig-Value', DerEncodedSign),
@@ -1434,7 +1560,11 @@ mk_dss_sig(DerSignature) ->
     <<R:160/big-unsigned-integer, S:160/big-unsigned-integer>>.
 
 %%%----------------------------------------------------------------
-verify(PlainText, HashAlg, Sig, {_,  #'Dss-Parms'{}} = Key, _) ->
+verify(PlainText, Alg, Sig, Key, Ssh) ->
+    do_verify(PlainText, sha(Alg), Sig, Key, Ssh).
+
+
+do_verify(PlainText, HashAlg, Sig, {_,  #'Dss-Parms'{}} = Key, _) ->
     case Sig of
         <<R:160/big-unsigned-integer, S:160/big-unsigned-integer>> ->
             Signature = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
@@ -1442,7 +1572,7 @@ verify(PlainText, HashAlg, Sig, {_,  #'Dss-Parms'{}} = Key, _) ->
         _ ->
             false
     end;
-verify(PlainText, HashAlg, Sig, {#'ECPoint'{},_} = Key, _) ->
+do_verify(PlainText, HashAlg, Sig, {#'ECPoint'{},_} = Key, _) when HashAlg =/= undefined ->
     case Sig of
         <<?UINT32(Rlen),R:Rlen/big-signed-integer-unit:8,
           ?UINT32(Slen),S:Slen/big-signed-integer-unit:8>> ->
@@ -1453,14 +1583,14 @@ verify(PlainText, HashAlg, Sig, {#'ECPoint'{},_} = Key, _) ->
             false
     end;
 
-verify(PlainText, HashAlg, Sig, #'RSAPublicKey'{}=Key, #ssh{role = server,
-                                                            c_version = "SSH-2.0-OpenSSH_7."++_})
+do_verify(PlainText, HashAlg, Sig, #'RSAPublicKey'{}=Key, #ssh{role = server,
+                                                               c_version = "SSH-2.0-OpenSSH_7."++_})
   when HashAlg == sha256; HashAlg == sha512 ->
     %% Public key signing bug in in OpenSSH >= 7.2
     public_key:verify(PlainText, HashAlg, Sig, Key)
         orelse public_key:verify(PlainText, sha, Sig, Key);
 
-verify(PlainText, HashAlg, Sig, Key, _) ->
+do_verify(PlainText, HashAlg, Sig, Key, _) ->
     public_key:verify(PlainText, HashAlg, Sig, Key).
 
 
@@ -1710,7 +1840,7 @@ decrypt(#ssh{decrypt = 'chacha20-poly1305@openssh.com',
             %% The length is already decrypted and used to divide the input
             %% Check the mac (important that it is timing-safe):
             PolyKey = crypto:crypto_one_time(chacha20, K2, <<0:8/unit:8,Seq:8/unit:8>>, <<0:32/unit:8>>, false),
-            case crypto:equal_const_time(Ctag, crypto:mac(poly1305, PolyKey, <<AAD/binary,Ctext/binary>>)) of
+            case ssh_lib:comp(Ctag, crypto:mac(poly1305, PolyKey, <<AAD/binary,Ctext/binary>>)) of
                 true ->
                     %% MAC is ok, decode
                     IV2 = <<1:8/little-unit:8, Seq:8/unit:8>>,
@@ -1957,38 +2087,27 @@ valid_key_sha_alg(private, #'RSAPrivateKey'{}, 'ssh-rsa'     ) -> true;
 valid_key_sha_alg(public, {_, #'Dss-Parms'{}}, 'ssh-dss') -> true;
 valid_key_sha_alg(private, #'DSAPrivateKey'{},  'ssh-dss') -> true;
 
-valid_key_sha_alg(public, {ed_pub, ed25519,_},  'ssh-ed25519') -> true;
-valid_key_sha_alg(private, {ed_pri, ed25519,_,_},'ssh-ed25519') -> true;
-valid_key_sha_alg(public, {ed_pub, ed448,_},    'ssh-ed448') -> true;
-valid_key_sha_alg(private, {ed_pri, ed448,_,_},  'ssh-ed448') -> true;
-
-valid_key_sha_alg(public, {#'ECPoint'{},{namedCurve,OID}}, Alg) when is_tuple(OID) ->
+valid_key_sha_alg(public, {#'ECPoint'{},{namedCurve,OID}}, Alg) ->
     valid_key_sha_alg_ec(OID, Alg);
-valid_key_sha_alg(private, #'ECPrivateKey'{parameters = {namedCurve,OID}}, Alg) when is_tuple(OID) ->
+valid_key_sha_alg(private, #'ECPrivateKey'{parameters = {namedCurve,OID}}, Alg) ->
     valid_key_sha_alg_ec(OID, Alg);
 valid_key_sha_alg(_, _, _) -> false.
-    
-valid_key_sha_alg_ec(OID, Alg) ->
-    try
-        Curve = public_key:oid2ssh_curvename(OID),
-        Alg == list_to_existing_atom("ecdsa-sha2-" ++ binary_to_list(Curve))
-    catch
-        _:_ -> false
-    end.
+
+
+valid_key_sha_alg_ec(OID, Alg) when is_tuple(OID) ->
+    {SshCurveType, _} = ssh_message:oid2ssh_curvename(OID),
+    Alg == binary_to_atom(SshCurveType);
+valid_key_sha_alg_ec(_, _) -> false.
+
     
 
 -dialyzer({no_match, public_algo/1}).
 
 public_algo(#'RSAPublicKey'{}) ->   'ssh-rsa';  % FIXME: Not right with draft-curdle-rsa-sha2
 public_algo({_, #'Dss-Parms'{}}) -> 'ssh-dss';
-public_algo({ed_pub, ed25519,_}) -> 'ssh-ed25519';
-public_algo({ed_pub, ed448,_}) -> 'ssh-ed448';
 public_algo({#'ECPoint'{},{namedCurve,OID}}) when is_tuple(OID) -> 
-    SshName = public_key:oid2ssh_curvename(OID),
-    try list_to_existing_atom("ecdsa-sha2-" ++ binary_to_list(SshName))
-    catch
-        _:_ -> undefined
-    end.
+    {SshCurveType, _} = ssh_message:oid2ssh_curvename(OID),
+    binary_to_atom(SshCurveType).
 
 
 sha('ssh-rsa') -> sha;
@@ -2073,10 +2192,10 @@ parallell_gen_key(Ssh = #ssh{keyex_key = {x, {G, P}},
     Ssh#ssh{keyex_key = {{Private, Public}, {G, P}}}.
 
 
-generate_key(ecdh = Algorithm, Args) ->
-    crypto:generate_key(Algorithm, Args);
-generate_key(Algorithm, Args) ->
-    {Public,Private} = crypto:generate_key(Algorithm, Args),
+generate_key(ecdh, Args) ->
+    crypto:generate_key(ecdh, Args);
+generate_key(dh, [P,G,Sz2]) ->
+    {Public,Private} = crypto:generate_key(dh, [P, G, max(Sz2,?MIN_DH_KEY_SIZE)] ),
     {crypto:bytes_to_integer(Public), crypto:bytes_to_integer(Private)}.
 
 
@@ -2130,6 +2249,14 @@ crypto_name_supported(Tag, CryptoName, Supported) ->
 
 same(Algs) ->  [{client2server,Algs}, {server2client,Algs}].
 
+maybe_reset_sequence(snd, Ssh = #ssh{kex_strict_negotiated = true}) ->
+    {ok, Ssh#ssh{send_sequence = 0}};
+maybe_reset_sequence(rcv, Ssh = #ssh{kex_strict_negotiated = true}) ->
+    {ok, Ssh#ssh{recv_sequence = 0}};
+maybe_reset_sequence(_Dir, Ssh) ->
+    {ok, Ssh}.
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%
 %% Other utils
@@ -2156,14 +2283,14 @@ ssh_dbg_flags(raw_messages) -> ssh_dbg_flags(hello);
 ssh_dbg_flags(ssh_messages) -> ssh_dbg_flags(hello).
 
 
-ssh_dbg_on(alg) -> dbg:tpl(?MODULE,select_algorithm,4,x);
+ssh_dbg_on(alg) -> dbg:tpl(?MODULE,select_algorithm,5,x);
 ssh_dbg_on(hello) -> dbg:tp(?MODULE,hello_version_msg,1,x),
                      dbg:tp(?MODULE,handle_hello_version,1,x);
 ssh_dbg_on(raw_messages) -> ssh_dbg_on(hello);
 ssh_dbg_on(ssh_messages) -> ssh_dbg_on(hello).
 
 
-ssh_dbg_off(alg) -> dbg:ctpl(?MODULE,select_algorithm,4);
+ssh_dbg_off(alg) -> dbg:ctpl(?MODULE,select_algorithm,5);
 ssh_dbg_off(hello) -> dbg:ctpg(?MODULE,hello_version_msg,1),
                       dbg:ctpg(?MODULE,handle_hello_version,1);
 ssh_dbg_off(raw_messages) -> ssh_dbg_off(hello);
@@ -2186,9 +2313,9 @@ ssh_dbg_format(hello, {call,{?MODULE,handle_hello_version,[Hello]}}) ->
 ssh_dbg_format(hello, {return_from,{?MODULE,handle_hello_version,1},_Ret}) ->
     skip;
 
-ssh_dbg_format(alg, {call,{?MODULE,select_algorithm,[_,_,_,_]}}) ->
+ssh_dbg_format(alg, {call,{?MODULE,select_algorithm,[_,_,_,_,_]}}) ->
     skip;
-ssh_dbg_format(alg, {return_from,{?MODULE,select_algorithm,4},{ok,Alg}}) ->
+ssh_dbg_format(alg, {return_from,{?MODULE,select_algorithm,5},{ok,Alg}}) ->
     ["Negotiated algorithms:\n",
      wr_record(Alg)
     ];

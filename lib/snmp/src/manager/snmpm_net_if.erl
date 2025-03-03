@@ -1,7 +1,7 @@
 %% 
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -81,7 +81,11 @@
 
 -record(transport,
 	{socket,
-	 domain = snmpUDPDomain}).
+         port_info,
+         opts,
+	 domain       = snmpUDPDomain,
+         inet_backend = []
+        }).
 
 -define(DEFAULT_FILTER_MODULE, snmpm_net_if_filter).
 -define(DEFAULT_FILTER_OPTS,   [{module, ?DEFAULT_FILTER_MODULE}]).
@@ -285,15 +289,48 @@ do_init(Server, NoteStore) ->
     ?vdebug("Log: ~w", [Log]),
 
     {ok, DomainAddresses} = snmpm_config:system_info(transports),
-    ?vdebug("DomainAddresses: ~w",[DomainAddresses]),
+    ?vdebug("DomainAddresses: ~w", [DomainAddresses]),
     CommonSocketOpts = common_socket_opts(Opts),
-    BindTo = get_opt(Opts, bind_to,  false),
+    BindTo = get_opt(Opts, bind_to, false),
+    {RequireBind, InetBackend} =
+	case get_opt(Opts, inet_backend, use_default) of
+	    use_default ->
+		{false, []};
+	    IB when (IB =:= inet) ->
+		{false, [{inet_backend, IB}]};
+	    IB when (IB =:= socket) ->
+		{case os:type() of
+		     {win32, nt} ->
+			 true;
+		     _ ->
+			 false
+		 end,
+		 [{inet_backend, IB}]}
+	end,
     case
 	[begin
 	     {IpPort, SocketOpts} =
-		 socket_params(Domain, Address, BindTo, CommonSocketOpts),
-	     Socket = socket_open(IpPort, SocketOpts),
-	     #transport{socket = Socket, domain = Domain}
+		 socket_params(Domain, Address,
+			       RequireBind, BindTo, CommonSocketOpts),
+             %% The 'inet-backend' option has to be first,
+             %% so we might as well add it last.
+	     Socket = socket_open(IpPort, InetBackend ++ SocketOpts),
+	     PortInfoStr =
+		 case inet:port(Socket) of
+		     {ok, PortNo} when (IpPort =/= PortNo) ->
+			 lists:flatten(io_lib:format("~p (~w)", [IpPort, PortNo]));
+		     _ ->
+			 lists:flatten(io_lib:format("~p", [IpPort]))
+		 end,
+             ?vtrace("socket created: "
+                     "~n      Ip Port:     ~s"
+                     "~n      Socket Opts: ~p"
+                     "~n      Socket:      ~p", [PortInfoStr, SocketOpts, Socket]),
+	     #transport{socket       = Socket,
+                        port_info    = IpPort,
+                        opts         = SocketOpts,
+                        inet_backend = InetBackend,
+                        domain       = Domain}
 	 end || {Domain, Address} <- DomainAddresses]
     of
 	[] ->
@@ -318,17 +355,21 @@ do_init(Server, NoteStore) ->
     end.
 
 socket_open(IpPort, SocketOpts) ->
-    ?vtrace("socket_open -> entry with~n"
-	    "   IpPort:     ~p~n"
-	    "   SocketOpts: ~p", [IpPort, SocketOpts]),
+    ?vtrace("socket_open -> entry with"
+	    "~n      IpPort:     ~p"
+	    "~n      SocketOpts: ~p", [IpPort, SocketOpts]),
     case gen_udp:open(IpPort, SocketOpts) of
-	{error, _} = Error ->
+	{error, _Reason} = Error ->
+	    ?vlog("socket_open -> entry with"
+		  "~n      Options: ~p"
+		  "~n      Reason:  ~p", [SocketOpts, _Reason]),
 	    throw(Error);
 	{ok, Socket} ->
 	    Socket
     end.
 
-socket_params(Domain, {IpAddr, IpPort} = Addr, BindTo, CommonSocketOpts) ->
+socket_params(Domain, {IpAddr, IpPort} = Addr,
+	      RequireBind, BindTo, CommonSocketOpts) ->
     Family = snmp_conf:tdomain_to_family(Domain),
     SocketOpts =
 	case Family of
@@ -342,21 +383,22 @@ socket_params(Domain, {IpAddr, IpPort} = Addr, BindTo, CommonSocketOpts) ->
 	    case init:get_argument(snmpm_fd) of
 		{ok, [[FdStr]]} ->
 		    Fd = list_to_integer(FdStr),
-		    case BindTo of
+		    case RequireBind orelse BindTo of
 			true ->
 			    {IpPort, [{ip, IpAddr}, {fd, Fd} | SocketOpts]};
 			_ ->
 			    {0, [{fd, Fd} | SocketOpts]}
 		    end;
 		error ->
-		    socket_params(SocketOpts, Addr, BindTo)
+		    socket_params(SocketOpts, Addr, RequireBind, BindTo)
 	    end;
 	_ ->
-	    socket_params(SocketOpts, Addr, BindTo)
+	    socket_params(SocketOpts, Addr, RequireBind, BindTo)
     end.
+
 %%
-socket_params(SocketOpts, {IpAddr, IpPort}, BindTo) ->
-    case BindTo of
+socket_params(SocketOpts, {IpAddr, IpPort}, RequireBind, BindTo) ->
+    case RequireBind orelse BindTo of
 	true ->
 	    {IpPort, [{ip, IpAddr} | SocketOpts]};
 	_ ->
@@ -607,6 +649,19 @@ handle_info(
 	    {noreply, State}
     end;
 
+handle_info(
+  {udp_error, Socket, Error},
+  #state{transports = Transports} = State) ->
+    ?vinfo("got udp-error on ~p: ~w", [Socket, Error]),
+    case lists:keyfind(Socket, #transport.socket, Transports) of
+	#transport{socket = Socket} = Transport ->
+	    handle_udp_error(Transport, Error),
+	    {noreply, State};
+	false ->
+            handle_udp_error_unknown(Socket, Error),
+	    {noreply, State}
+    end;
+
 handle_info(inform_response_gc, State) ->
     ?vlog("received inform_response_gc message", []),
     State2 = handle_inform_response_gc(State),
@@ -637,6 +692,41 @@ handle_info({exec, F}, #state{allow_exec = true} = State) when is_function(F, 0)
 
 handle_info(Info, State) ->
     handle_info_unknown(Info, State).
+
+
+handle_udp_error(#transport{socket = Socket}, Error) ->
+    try inet:sockname(Socket) of
+        {ok, {IP, Port}} ->
+            error_msg("UDP Error for transport: "
+                      "~n      Socket: ~p (~p, ~p)"
+                      "~n      Error:  ~p", [Socket, IP, Port, Error]);
+        {error, _} ->
+            error_msg("UDP Error for transport: "
+                      "~n      Socket: ~p"
+                      "~n      Error:  ~p", [Socket, Error])
+    catch
+        _:_:_ ->
+            error_msg("UDP Error for transport: "
+                      "~n      Socket: ~p"
+                      "~n      Error:  ~p", [Socket, Error])
+    end.
+
+handle_udp_error_unknown(Socket, Error) ->
+    try inet:sockname(Socket) of
+        {ok, {IP, Port}} ->
+            warning_msg("UDP Error for unknown transport: "
+                        "~n      Socket: ~p (~p, ~p)"
+                        "~n      Error:  ~p", [Socket, IP, Port, Error]);
+        {error, _} ->
+            warning_msg("UDP Error for unknown transport: "
+                        "~n      Socket: ~p"
+                        "~n      Error:  ~p", [Socket, Error])
+    catch
+        _:_:_ ->
+            warning_msg("UDP Error for transport: "
+                        "~n      Socket: ~p"
+                        "~n      Error:  ~p", [Socket, Error])
+    end.
 
 
 handle_info_unknown(Info, State) ->
@@ -673,8 +763,18 @@ handle_info_down(Info, State) ->
 %% Purpose: Shutdown the server
 %% Returns: any (ignored by gen_server)
 %%--------------------------------------------------------------------
-terminate(Reason, #state{log = Log, irgc = IrGcRef}) ->
+terminate(Reason, #state{log        = Log,
+                         irgc       = IrGcRef,
+                         transports = Transports}) ->
     ?vdebug("terminate: ~p", [Reason]),
+    %% Close all transports:
+    Close =
+        fun(S) ->
+                ?vlog("try close socket ~p", [S]),
+                (catch gen_udp:close(S))
+        end,
+    _ = [Close(Socket) || #transport{socket = Socket} <- Transports],
+    %% Stop IR GC timer
     irgc_stop(IrGcRef),
     %% Close logs
     do_close_log(Log),
@@ -705,7 +805,7 @@ maybe_handle_recv_msg(Domain, Addr, Bytes, State) ->
        fun (Pid, Class, Reason, Stacktrace) ->
 	       warning_msg(
 		 "Worker process (~p) terminated "
-		 "while processing (incomming) message from %s:~n"
+		 "while processing (incoming) message from %s:~n"
 		 "~w:~w at ~p",
 		 [Pid, snmp_conf:mk_addr_string({Domain, Addr}),
 		  Class, Reason, Stacktrace])
@@ -727,7 +827,7 @@ maybe_handle_recv_msg_mt(
     
 
 handle_recv_msg(Domain, Addr, Bytes, #state{server = Pid})
-  when is_binary(Bytes) andalso (size(Bytes) =:= 0) ->
+  when is_binary(Bytes) andalso (byte_size(Bytes) =:= 0) ->
     Pid ! {snmp_error, {empty_message, Domain, Addr}, Domain, Addr};
 %%
 handle_recv_msg(
@@ -1205,9 +1305,9 @@ error_msg(F, A) ->
 
 %%%-------------------------------------------------------------------
 
-% get_opt(Key, Opts) ->
-%     ?vtrace("get option ~w", [Key]),
-%     snmp_misc:get_option(Key, Opts).
+%% get_opt(Key, Opts) ->
+%%     ?vtrace("get option ~w", [Key]),
+%%     snmp_misc:get_option(Key, Opts).
 
 get_opt(Opts, Key, Def) ->
     ?vtrace("get option ~w with default ~p", [Key, Def]),
@@ -1217,10 +1317,19 @@ get_opt(Opts, Key, Def) ->
 %% -------------------------------------------------------------------
 
 get_info(#state{transports = Transports}) ->
-    ProcSize = proc_mem(self()),
-    [{process_memory, ProcSize}
-     | [{port_info, get_port_info(Socket)}
-	|| #transport{socket = Socket} <- Transports]].
+    ProcSize      = proc_mem(self()),
+    Counters      = get_counters(),
+    TransportInfo = [#{tdomain     => Domain,
+                       port_info   => PI,
+                       opts        => Opts,
+                       socket_info => get_socket_info(Socket)} ||
+                        #transport{socket    = Socket,
+                                   port_info = PI,
+                                   opts      = Opts,
+                                   domain    = Domain} <- Transports],
+    [{counters,       Counters},
+     {process_memory, ProcSize},
+     {transport_info, TransportInfo}].
 
 proc_mem(P) when is_pid(P) ->
     case (catch erlang:process_info(P, memory)) of
@@ -1231,35 +1340,9 @@ proc_mem(P) when is_pid(P) ->
     end.
 
 
-get_port_info(Id) ->
-    PortInfo = 
-	case (catch erlang:port_info(Id)) of
-	    PI when is_list(PI) ->
-		[{port_info, PI}];
-	    _ ->
-		[]
-	end,
-    PortStatus = 
-	case (catch prim_inet:getstatus(Id)) of
-	    {ok, PS} ->
-		[{port_status, PS}];
-	    _ ->
-		[]
-	end,
-    PortAct = 
-	case (catch inet:getopts(Id, [active])) of
-	    {ok, PA} ->
-		[{port_act, PA}];
-	    _ ->
-		[]
-	end,
-    PortStats = 
-	case (catch inet:getstat(Id)) of
-	    {ok, Stat} ->
-		[{port_stats, Stat}];
-	    _ ->
-		[]
-	end,
+get_socket_info(Id) when is_port(Id) ->
+    Info = inet:info(Id),
+
     IfList = 
 	case (catch inet:getif(Id)) of
 	    {ok, IFs} ->
@@ -1267,6 +1350,7 @@ get_port_info(Id) ->
 	    _ ->
 		[]
 	end,
+
     BufSz = 
 	case (catch inet:getopts(Id, [recbuf, sndbuf, buffer])) of
 	    {ok, Sz} ->
@@ -1274,13 +1358,31 @@ get_port_info(Id) ->
 	    _ ->
 		[]
 	end,
-    [{socket, Id}] ++ 
-	IfList ++ 
-	PortStats ++ 
-	PortInfo ++ 
-	PortStatus ++ 
-	PortAct ++
-	BufSz.
+
+    [{socket, Id}, {info, Info}] ++ IfList ++ BufSz;
+
+get_socket_info(Id) ->
+    Info = inet:info(Id),
+
+    %% Does not exist for 'socket' ... yet
+    %% IfList = 
+    %%     case (catch inet:getif(Id)) of
+    %%         {ok, IFs} ->
+    %%     	[{interfaces, IFs}];
+    %%         _ ->
+    %%     	[]
+    %%     end,
+
+    BufSz = 
+	case (catch inet:getopts(Id, [recbuf, sndbuf, buffer])) of
+	    {ok, Sz} ->
+		[{buffer_size, Sz}];
+	    _ ->
+		[]
+	end,
+
+    [{socket, Id}, {info, Info}] ++ BufSz.
+
 
 
 %%-----------------------------------------------------------------
@@ -1307,6 +1409,20 @@ counters() ->
 
 inc(Name)    -> inc(Name, 1).
 inc(Name, N) -> snmpm_config:incr_stats_counter(Name, N).
+
+get_counters() ->
+    Counters = counters(),
+    get_counters(Counters, []).
+
+get_counters([], Acc) ->
+    lists:reverse(Acc);
+get_counters([Counter|Counters], Acc) ->
+    case snmpm_config:get_stats_counter(Counter) of
+	{ok, CounterVal} ->
+	    get_counters(Counters, [{Counter, CounterVal}|Acc]);
+	_ ->
+	    get_counters(Counters, Acc)
+    end.
 
 
 %% ----------------------------------------------------------------

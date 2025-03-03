@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 
 -behaviour(gen_server).
 
--include_lib("ssh/src/ssh.hrl").
--include_lib("ssh/src/ssh_agent.hrl").
+-include("ssh.hrl").
+-include("ssh_agent.hrl").
 
 -export([respond/1, check_mktemp/1]).
 -export([start_link/2, stop/1]).
@@ -149,7 +149,7 @@ check_mktemp(Config) ->
     end.
 
 extract_pubkey(PrivKey) ->
-    PubKey = ssh_transport:extract_public_key(PrivKey),
+    PubKey = ssh_file:extract_public_key(PrivKey),
     ssh_message:ssh2_pubkey_encode(PubKey).
 
 sig_format('ssh-rsa') -> <<"ssh-rsa">>;

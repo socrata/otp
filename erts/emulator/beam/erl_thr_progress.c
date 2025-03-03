@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2011-2018. All Rights Reserved.
+ * Copyright Ericsson AB 2011-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -320,20 +320,19 @@ tmp_thr_prgr_data(ErtsSchedulerData *esdp)
     ErtsThrPrgrData *tpd = perhaps_thr_prgr_data(esdp);
 
     if (!tpd) {
+
+#ifdef ERTS_ENABLE_LOCK_COUNT
+        /* We may land here as a result of unmanaged_delay being called from
+         * the lock counting module, which in turn might be called from within
+         * the allocator, so we use plain malloc to avoid deadlocks. */
+        tpd = malloc(sizeof(ErtsThrPrgrData));
+#else
         /*
          * We only allocate the part up to the wakeup_request field which is
          * the first field only used by registered threads
          */
         size_t alloc_size = offsetof(ErtsThrPrgrData, wakeup_request);
-
-        /* We may land here as a result of unmanaged_delay being called from
-         * the lock counting module, which in turn might be called from within
-         * the allocator, so we use plain malloc to avoid deadlocks. */
-        tpd =
-#ifdef ERTS_ENABLE_LOCK_COUNT
-            malloc(alloc_size);
-#else
-            erts_alloc(ERTS_ALC_T_T_THR_PRGR_DATA, alloc_size);
+        tpd = erts_alloc(ERTS_ALC_T_T_THR_PRGR_DATA, alloc_size);
 #endif
 
         init_tmp_thr_prgr_data(tpd);
@@ -554,11 +553,28 @@ erts_thr_progress_register_unmanaged_thread(ErtsThrPrgrCallbacks *callbacks)
     intrnl->unmanaged.callbacks[tpd->id] = *callbacks;
 }
 
+void
+erts_thr_progress_unregister_unmanaged_thread(void)
+{
+    /*
+     * If used, the previously registered wakeup callback
+     * must be prepared for NULL passed as argument. This since
+     * the callback might be called after this unregistration
+     * in case of an outstanding wakeup request when unregistration
+     * is made.
+     */
+    ErtsThrPrgrData* tpd = erts_thr_progress_data();
+    ASSERT(tpd->id >= 0);
+    intrnl->unmanaged.callbacks[tpd->id].arg = NULL;
+    erts_free(ERTS_ALC_T_THR_PRGR_DATA, tpd);
+}
+
 
 ErtsThrPrgrData *
 erts_thr_progress_register_managed_thread(ErtsSchedulerData *esdp,
 					  ErtsThrPrgrCallbacks *callbacks,
-					  int pref_wakeup)
+					  int pref_wakeup,
+                                          int deep_sleeper)
 {
     ErtsThrPrgrData *tpd = perhaps_thr_prgr_data(NULL);
     int is_blocking = 0, managed;
@@ -593,6 +609,7 @@ erts_thr_progress_register_managed_thread(ErtsSchedulerData *esdp,
     tpd->is_managed = 1;
     tpd->is_blocking = is_blocking;
     tpd->is_temporary = 0;
+    tpd->is_deep_sleeper = deep_sleeper;
 #ifdef ERTS_ENABLE_LOCK_CHECK
     tpd->is_delaying = 1;
 #endif
@@ -845,6 +862,12 @@ update(ErtsThrPrgrData *tpd)
 int
 erts_thr_progress_update(ErtsThrPrgrData *tpd)
 {
+#ifdef DEBUG
+    /* If we've run any code that requires a code barrier, it must have been
+     * scheduled prior to this point. */
+    erts_debug_check_code_barrier();
+#endif
+
     return update(tpd);
 }
 
@@ -877,7 +900,10 @@ erts_thr_progress_prepare_wait(ErtsThrPrgrData *tpd)
 	== ERTS_THR_PRGR_LFLG_NO_LEADER 
 	&& got_sched_wakeups()) {
 	/* Someone need to make progress */
-	wakeup_managed(tpd->id);
+        if (tpd->is_deep_sleeper)
+            wakeup_managed(1);
+        else
+            wakeup_managed(tpd->id);
     }
 }
 
@@ -906,10 +932,18 @@ erts_thr_progress_finalize_wait(ErtsThrPrgrData *tpd)
 	    break;
 	current = val;
     }
-    if (block_count_inc())
-	block_thread(tpd);
-    if (update(tpd))
-	leader_update(tpd);
+
+    if (block_count_inc()) {
+        block_thread(tpd);
+    } else {
+        /* Issue a code barrier if one was requested while thread progress was
+         * blocked. */
+        erts_code_ix_finalize_wait();
+    }
+
+    if (update(tpd)) {
+        leader_update(tpd);
+    }
 }
 
 void
@@ -1061,11 +1095,13 @@ request_wakeup_managed(ErtsThrPrgrData *tpd, ErtsThrPrgrVal value)
 
     /*
      * Only managed threads that aren't in waiting state
-     * are allowed to call this function.
+     * and aren't deep sleepers are allowed to call this
+     * function.
      */
 
     ASSERT(tpd->is_managed);
     ASSERT(tpd->confirmed != ERTS_THR_PRGR_VAL_WAITING);
+    ASSERT(!tpd->is_deep_sleeper);
 
     if (has_reached_wakeup(value)) {
 	wakeup_managed(tpd->id);
@@ -1117,7 +1153,7 @@ request_wakeup_managed(ErtsThrPrgrData *tpd, ErtsThrPrgrVal value)
     ASSERT(!erts_thr_progress_has_reached(value));
 
     /*
-     * This thread is guarranteed to issue a full memory barrier:
+     * This thread is guaranteed to issue a full memory barrier:
      * - after the request has been written, but
      * - before the global thread progress reach the (possibly
      *   increased) requested wakeup value.
@@ -1286,6 +1322,10 @@ block_thread(ErtsThrPrgrData *tpd)
 
     } while (block_count_inc());
 
+    /* Issue a code barrier if one was requested while thread progress was
+     * blocked. */
+    erts_code_ix_finalize_wait();
+
     cbp->finalize_wait(cbp->arg);
 
     return lflgs;
@@ -1334,6 +1374,8 @@ thr_progress_block(ErtsThrPrgrData *tpd, int wait)
 	    bc = erts_atomic32_read_acqb(&intrnl->misc.data.block_count);
 	}
     }
+
+    /* tse event returned in erts_thr_progress_unblock() */
     return bc;
 
 }
@@ -1360,7 +1402,7 @@ erts_thr_progress_fatal_error_block(ErtsThrPrgrData *tmp_tpd_bufp)
 	init_tmp_thr_prgr_data(tpd);
     }
 
-    /* Returns number of threads that have not yes been blocked */
+    /* Returns number of threads that have not yet been blocked */
     return thr_progress_block(tpd, 0);
 }
 
@@ -1374,7 +1416,7 @@ erts_thr_progress_fatal_error_wait(SWord timeout) {
     /*
      * Counting poll intervals may give us a too long timeout
      * if cpu is busy. We use timeout time to try to prevent
-     * this. In case we havn't got time correction this may
+     * this. In case we haven't got time correction this may
      * however fail too...
      */
     timeout_time = erts_get_monotonic_time(esdp);

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2006-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2006-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -239,7 +239,7 @@ static BIF_RETTYPE erlang_length_trap(BIF_ALIST_3)
              * Signal an error. The original argument was tucked away in BIF_ARG_3.
              */
             ERTS_BIF_ERROR_TRAPPED1(BIF_P, BIF_P->freason,
-                                    &bif_trap_export[BIF_length_1], BIF_ARG_3);
+                                    BIF_TRAP_EXPORT(BIF_length_1), BIF_ARG_3);
         }
     }
 }
@@ -289,7 +289,7 @@ Eterm erts_trapping_length_1(Process* p, Eterm* args)
 
     if (is_list(list)) {
         /*
-         * We have exceeded the alloted number of iterations.
+         * We have exceeded the allotted number of iterations.
          * Save the result so far and signal a trap.
          */
         args[0] = list;
@@ -338,6 +338,8 @@ BIF_RETTYPE bit_size_1(BIF_ALIST_1)
     Uint low_bits;
     Uint bytesize;
     Uint high_bits;
+
+    /* NOTE: The JIT has its own implementation of this BIF. */
     if (is_binary(BIF_ARG_1)) {
 	bytesize = binary_size(BIF_ARG_1);
 	high_bits = bytesize >>  ((sizeof(Uint) * 8)-3);
@@ -367,6 +369,7 @@ BIF_RETTYPE bit_size_1(BIF_ALIST_1)
 
 BIF_RETTYPE byte_size_1(BIF_ALIST_1)
 {
+    /* NOTE: The JIT has its own implementation of this BIF. */
     if (is_binary(BIF_ARG_1)) {
 	Uint bytesize = binary_size(BIF_ARG_1);
 	if (binary_bitsize(BIF_ARG_1) > 0) {
@@ -431,9 +434,6 @@ double_to_integer(Process* p, double x)
 	xp[i] = d;        /* store digit */
 	x -= d;           /* remove integer part */
     }
-    while ((ds & (BIG_DIGITS_PER_WORD-1)) != 0) {
-	xp[ds++] = 0;
-    }
 
     if (is_negative) {
 	*hp = make_neg_bignum_header(sz-1);
@@ -464,4 +464,16 @@ BIF_RETTYPE binary_part_2(BIF_ALIST_2)
     return erts_binary_part(BIF_P,BIF_ARG_1,tp[1], tp[2]);
  badarg:
    BIF_ERROR(BIF_P,BADARG);
+}
+
+BIF_RETTYPE min_2(BIF_ALIST_2)
+{
+    /* NOTE: The JIT has its own implementation of this BIF. */
+    return CMP_GT(BIF_ARG_1, BIF_ARG_2) ? BIF_ARG_2 : BIF_ARG_1;
+}
+
+BIF_RETTYPE max_2(BIF_ALIST_2)
+{
+    /* NOTE: The JIT has its own implementation of this BIF. */
+    return CMP_LT(BIF_ARG_1, BIF_ARG_2) ? BIF_ARG_2 : BIF_ARG_1;
 }

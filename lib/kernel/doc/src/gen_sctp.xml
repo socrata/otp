@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2007</year><year>2020</year>
+      <year>2007</year><year>2024</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -69,6 +69,7 @@
   </description>
 
   <datatypes>
+    <datatype_title>Exported data types</datatype_title>
     <datatype>
       <name>assoc_id()</name>
       <desc>
@@ -81,12 +82,32 @@
     <datatype>
       <name name="option"/>
       <desc>
-        <p>One of the
-          <seeerl marker="#options">SCTP Socket Options</seeerl>.</p>
+        <p>
+          One of the
+          <seeerl marker="#options">SCTP Socket Options</seeerl>
+          used to set an option.
+        </p>
       </desc>
     </datatype>
     <datatype>
       <name name="option_name"/>
+      <desc>
+        <p>
+          An option name or one of the
+          <seeerl marker="#options">SCTP Socket Options</seeerl>
+          used to get an option.
+        </p>
+      </desc>
+    </datatype>
+    <datatype>
+      <name name="option_value"/>
+      <desc>
+        <p>
+          One of the
+          <seeerl marker="#options">SCTP Socket Options</seeerl>
+          as returned when getting an option.
+        </p>
+      </desc>
     </datatype>
     <datatype>
       <name>sctp_socket()</name>
@@ -95,6 +116,22 @@
           <seemfa marker="#open/0"><c>open/*</c></seemfa>.</p>
         <marker id="exports"></marker>
       </desc>
+    </datatype>
+  </datatypes>
+
+  <datatypes>
+    <datatype_title>Internal data types</datatype_title>
+    <datatype>
+      <name name="elementary_option"/>
+    </datatype>
+    <datatype>
+      <name name="elementary_option_name"/>
+    </datatype>
+    <datatype>
+      <name name="record_option"/>
+    </datatype>
+    <datatype>
+      <name name="ro_option"/>
     </datatype>
   </datatypes>
 
@@ -128,7 +165,35 @@
     </func>
 
     <func>
-      <name name="connect" arity="4" since=""/>
+      <name name="connect" arity="3" anchor="connect-sockaddr3" since="OTP 24.3"/>
+      <fsummary>Same as <c>connect(Socket, SockAddr, Opts, infinity)</c>.</fsummary>
+      <desc>
+        <p>Same as <c>connect(<anno>Socket</anno>, <anno>SockAddr</anno>,
+	<anno>Opts</anno>, infinity)</c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connect" arity="4" clause_i="1" anchor="connect-sockaddr4" since="OTP 24.3"/>
+      <fsummary>Establish a new association for socket <c>Socket</c>, with a
+      peer (SCTP server socket).</fsummary>
+      <desc>
+	<p>This is conceptually the same as
+	<seeerl marker="#connect-addr-port5"><c>connect/5</c></seeerl>,
+	only with the difference that we use a socket address,
+	<seetype marker="socket#sockaddr_in">
+	<c>socket:sockaddr_in()</c></seetype>
+	or
+	<seetype marker="socket#sockaddr_in6">
+	<c>socket:sockaddr_in6()</c></seetype>
+	instead of
+	an address (inet:ip_address() or inet:hostname()) and port-number.
+	</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connect" arity="4" clause_i="2" anchor="connect-addr-port4" since=""/>
       <fsummary>Same as <c>connect(Socket, Addr, Port, Opts, infinity)</c>.</fsummary>
       <desc>
         <p>Same as <c>connect(<anno>Socket</anno>, <anno>Addr</anno>,
@@ -137,7 +202,7 @@
     </func>
 
     <func>
-      <name name="connect" arity="5" since=""/>
+      <name name="connect" arity="5" anchor="connect-addr-port5" since=""/>
       <fsummary>Establish a new association for socket <c>Socket</c>, with a
         peer (SCTP server socket).</fsummary>
       <desc>
@@ -215,7 +280,34 @@ connect(Socket, Ip, Port>,
     </func>
 
     <func>
-      <name name="connect_init" arity="4" since="OTP R13B04"/>
+      <name name="connect_init" arity="3" anchor="connect_init-sockaddr3" since="OTP 24.3"/>
+      <fsummary>Same as <c>connect_init(Socket, SockAddr, Opts, infinity)</c>.</fsummary>
+      <desc>
+        <p>Same as <c>connect_init(<anno>Socket</anno>, <anno>SockAddr</anno>,
+	<anno>Opts</anno>, infinity)</c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connect_init" arity="4" clause_i="1" anchor="connect_init-sockaddr4" since="OTP 24.3"/>
+      <fsummary>Same as <c>connect_init(Socket, Addr, Port, Opts, infinity)</c>..</fsummary>
+      <desc>
+	<p>This is conceptually the same as
+	<seeerl marker="#connect_init-addr-port5"><c>connect_init/5</c></seeerl>,
+	only with the difference that we use a socket address,
+	<seetype marker="socket#sockaddr_in">
+	<c>socket:sockaddr_in()</c></seetype>
+	or
+	<seetype marker="socket#sockaddr_in6">
+	<c>socket:sockaddr_in6()</c></seetype>
+	instead of
+	an address (inet:ip_address() or inet:hostname()) and port-number.
+	</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connect_init" arity="4" clause_i="2" anchor="connect_init-addr-port4" since="OTP R13B04"/>
       <fsummary>Same as <c>connect_init(Socket, Addr, Port, Opts, infinity)</c>..</fsummary>
       <desc>
         <p>Same as <c>connect_init(<anno>Socket</anno>, <anno>Addr</anno>,
@@ -224,7 +316,7 @@ connect(Socket, Ip, Port>,
     </func>
 
     <func>
-      <name name="connect_init" arity="5" since="OTP R13B04"/>
+      <name name="connect_init" arity="5" anchor="connect_init-addr-port5" since="OTP R13B04"/>
       <fsummary>Initiate a new association for socket <c>Socket</c>, with a
         peer (SCTP server socket).</fsummary>
       <desc>
@@ -246,6 +338,53 @@ connect(Socket, Ip, Port>,
            except the <c><anno>Timeout</anno></c> value.</p>
         <p>The timer associated with <c><anno>Timeout</anno></c> only supervises
           IP resolution of <c><anno>Addr</anno></c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connectx_init" arity="3" since="OTP 25.0"/>
+      <fsummary>Same as <c>connectx_init(Socket, SockAddrs, Opts, infinity)</c>..</fsummary>
+      <desc>
+        <p>Similar to
+        <seemfa marker="#connectx_init/5"><c>connectx_init/5</c></seemfa>
+	except using socket addresses, and not having a <c>Timeout</c>.
+        Since the addresses do not need lookup and the connect
+        is non-blocking this call returns immediately.</p>
+	<p>The value of each socket address <c>port</c>
+        must be the same or zero.  At least one socket address
+        must have a non-zero <c>port</c></p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connectx_init" arity="4" since="OTP 25.0"/>
+      <fsummary>Same as <c>connectx_init(Socket, Addrs, Port, Opts, infinity)</c>..</fsummary>
+      <desc>
+        <p>Same as <c>connectx_init(<anno>Socket</anno>, <anno>Addrs</anno>,
+          <anno>Port</anno>, <anno>Opts</anno>, infinity)</c>.</p>
+      </desc>
+    </func>
+
+    <func>
+      <name name="connectx_init" arity="5" since="OTP 25.0"/>
+      <fsummary>Initiate a new association for socket <c>Socket</c>, with a
+        peer (SCTP server socket).</fsummary>
+      <desc>
+        <p>Initiates a new association for socket <c><anno>Socket</anno></c>,
+          with the peer (SCTP server socket) specified by
+          <c><anno>Addrs</anno></c> and <c><anno>Port</anno></c>.</p>
+        <p>This API is similar to <c>connect_init/*</c> except the
+        underlying OS <c>sctp_connectx(3)</c> system call is used.</p>
+	<p>If successful, the association ID is returned which will be received
+        in a subsequent
+	<seeerl marker="#record-sctp_assoc_change"><c>#sctp_assoc_change{}</c></seeerl>
+        event.</p>
+        <p>The parameters are as described in
+        <seemfa marker="#connect_init/5"><c>connect_init/5</c></seemfa></p>
+        <p>NOTE: This API allows the OS to use all <anno>Addrs</anno>
+        when establishing an association, but does not guarantee it will.
+        Therefore, if the connection fails the user may want to rotate
+        the order of addresses for a subsequent call.</p>
       </desc>
     </func>
 
@@ -314,7 +453,12 @@ connect(Socket, Ip, Port>,
           options (this feature is called SCTP multi-homing). The default
           <c><anno>IP</anno></c> and <c><anno>Port</anno></c> are <c>any</c>
           and <c>0</c>, meaning bind to all local addresses on any
-          free port.</p>
+	free port.</p>
+	<p>It is also possible to use <c>{ifaddr, <anno>SockAddr</anno>}</c>,
+	in which case it takes precedence over the <c>ip</c> and
+	<c>port</c> options. These options can however be used to update
+	the address and port of ifaddr (if they occur after ifaddr in the
+	options list), although this is not recommended. </p>
         <p>Other options:</p>
         <taglist>
           <tag><c>inet6</c></tag>
@@ -419,7 +563,7 @@ connect(Socket, Ip, Port>,
 	    ancillary data
 	  </seetype>
 	  from the socket
-	  <seetype marker="#option">options</seetype>
+	  <seeerl marker="#options">options</seeerl>
 	  <seeerl marker="inet#option-recvtos"><c>recvtos</c></seeerl>,
 	  <seeerl marker="inet#option-recvtclass"><c>recvtclass</c></seeerl>
 	  or
@@ -545,6 +689,18 @@ connect(Socket, Ip, Port>,
           for example, for error identification.
           However, such a fine level of user control is rarely required.
           The function <c>send/4</c> is sufficient for most applications.</p>
+
+	  <note>
+	    <p>
+	      Send is normally blocking, but if the socket option
+	      <seeerl marker="#option_non_block_send">
+	      <c>non_block_send</c></seeerl> is set to
+	      <c>true</c>, the function will return with e.g.
+	      <c>{error, eagain}</c> in the case when the
+	      function would otherwise block. It is then up the user to
+	      try again later.
+	    </p>
+	  </note>
       </desc>
     </func>
 
@@ -555,6 +711,18 @@ connect(Socket, Ip, Port>,
       <desc>
         <p>Sends a <c><anno>Data</anno></c> message over an existing association
           and specified stream.</p>
+
+	  <note>
+	    <p>
+	      Send is normally blocking, but if the socket option
+	      <seeerl marker="#option_non_block_send">
+	      <c>non_block_send</c></seeerl> is set to
+	      <c>true</c>, the function will return with e.g.
+	      <c>{error, eagain}</c> in the case when the
+	      function would otherwise block. It is then up the user to
+	      try again later.
+	    </p>
+	  </note>
       </desc>
     </func>
   </funcs>
@@ -674,6 +842,20 @@ connect(Socket, Ip, Port>,
           Sending errors would occur for datagrams larger than
           <c>val(recbuf)</c>. Setting this option also adjusts
           the size of the driver buffer (see <c>buffer</c> above).</p>
+      </item>
+      <tag><c>{non_block_send, boolean()}</c><marker id="option_non_block_send"></marker></tag>
+      <item>
+	<p>
+	  A send option.
+	</p>
+	<p>
+	  A send call that would otherwise block (hang),
+	  will instead immediately return with e.g. <c>{error, eagain}</c>
+	  <em>if</em> this option has been set to <c>true</c>.
+	</p>
+	<p>
+	  Defaults to <c>false</c>.
+	</p>
       </item>
       <tag><c>{sctp_module, module()}</c></tag>
       <item>
@@ -817,7 +999,7 @@ connect(Socket, Ip, Port>,
           <url href="http://www.rfc-archive.org/getrfc.php?rfc=2960">RFC 2960</url>
           and
           <url href="http://tools.ietf.org/html/draft-ietf-tsvwg-sctpsocket-13">Sockets
-          API Extenstions for SCTP</url>.</p>
+          API Extensions for SCTP</url>.</p>
       </item>
       <tag><c>{sctp_peer_addr_params, #sctp_paddrparams{}}</c></tag>
       <item>
@@ -1195,4 +1377,3 @@ client_loop(S, Peer1, Port1, AssocId1, Peer2, Port2, AssocId2) -&gt;
       API Extensions for SCTP</url></p>
   </section>
 </erlref>
-

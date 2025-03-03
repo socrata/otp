@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -415,6 +415,7 @@ do_remove_filter(Tid,Id,FilterId) ->
 
 default_config(primary) ->
     #{level=>notice,
+      metadata=>#{},
       filters=>[],
       filter_default=>log};
 default_config(Id) ->
@@ -461,6 +462,8 @@ check_config(Owner,[{filter_default,FD}|Config]) ->
 check_config(handler,[{formatter,Formatter}|Config]) ->
     check_formatter(Formatter),
     check_config(handler,Config);
+check_config(primary,[{metadata,Meta}|Config]) when is_map(Meta) ->
+    check_config(primary,Config);
 check_config(primary,[C|_]) ->
     throw({invalid_primary_config,C});
 check_config(handler,[{_,_}|Config]) ->
@@ -620,7 +623,7 @@ do_internal_log(Level,Location,Log,[Report] = Data) ->
 do_internal_log(Level,Location,Log,[Fmt,Args] = Data) ->
     do_internal_log(Level,Location,Log,Data,{Fmt,Args}).
 do_internal_log(Level,Location,Log,Data,Msg) ->
-    Meta = logger:add_default_metadata(maps:merge(Location,maps:get(meta,Log,#{}))),
+    Meta = logger:add_default_metadata(Location),
     %% Spawn these to avoid deadlocks
     case Log of
         #{ meta := #{ internal_log_event := true } } ->

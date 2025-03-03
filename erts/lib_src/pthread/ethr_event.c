@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2009-2016. All Rights Reserved.
+ * Copyright Ericsson AB 2009-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,12 @@
 #  define _DARWIN_UNLIMITED_SELECT
 #endif
 
+/*
+ * According to posix, select() implementations should
+ * support a max timeout value of at least 31 days.
+ */
+#define ETHR_SELECT_MAX_TV_SEC__ (31*24*60*60-1)
+
 #include "ethread.h"
 #undef ETHR_INCLUDE_MONOTONIC_CLOCK__
 #define ETHR_INCLUDE_MONOTONIC_CLOCK__
@@ -46,6 +52,7 @@
 
 #include <sched.h>
 #include <errno.h>
+#include <limits.h>
 
 #define ETHR_YIELD_AFTER_BUSY_LOOPS 50
 
@@ -86,6 +93,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 #ifdef ETHR_HAVE_ETHR_GET_MONOTONIC_TIME
     ethr_sint64_t start = 0; /* SHUT UP annoying faulty warning... */
 #endif
+    int timeout_res = ETIMEDOUT;
 
     if (spincount < 0)
 	ETHR_FATAL_ERROR__(EINVAL);
@@ -125,6 +133,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 	}
 
 	if (timeout >= 0) {
+            ethr_sint64_t sec, nsec;
 #ifdef ETHR_HAVE_ETHR_GET_MONOTONIC_TIME
 	    time = timeout - (ethr_get_monotonic_time() - start);
 #endif
@@ -135,8 +144,18 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 		    goto return_event_on;
 		return ETIMEDOUT;
 	    }
-	    ts.tv_sec = time / (1000*1000*1000);
-	    ts.tv_nsec = time % (1000*1000*1000);
+            sec = time / (1000*1000*1000);
+            nsec = time % (1000*1000*1000);
+            if (sizeof(ts.tv_sec) == 8
+                || sec <= (ethr_sint64_t) INT_MAX) {
+                ts.tv_sec = sec;
+                ts.tv_nsec = nsec;
+            }
+            else {
+                ts.tv_sec = INT_MAX;
+                ts.tv_nsec = 0;
+                timeout_res = EINTR;
+            }
 	}
 
 	if (val != ETHR_EVENT_OFF_WAITER__) {
@@ -154,8 +173,10 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 			   ETHR_EVENT_OFF_WAITER__,
 			   tsp);
 	switch (res) {
-	case EINTR:
 	case ETIMEDOUT:
+            res = timeout_res;
+            /* Fall through... */
+	case EINTR:
 	    return res;
 	case 0:
 	case EWOULDBLOCK:
@@ -183,6 +204,7 @@ return_event_on:
 #include <sys/select.h>
 #include <errno.h>
 #include <string.h>
+#include <limits.h>
 
 #include "erl_misc_utils.h"
 
@@ -352,6 +374,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 #ifdef ETHR_HAVE_ETHR_GET_MONOTONIC_TIME
     ethr_sint64_t timeout_time = 0; /* SHUT UP annoying faulty warning... */
 #endif
+    int timeout_res = ETIMEDOUT;
 
     val = ethr_atomic32_read(&e->state);
     if (val == ETHR_EVENT_ON__)
@@ -361,7 +384,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 	if (spincount == 0)
 	    goto set_event_off_waiter;
     }
-    if (timeout == 0)
+    else if (timeout == 0)
 	return ETIMEDOUT;
     else {
 #ifdef ETHR_HAVE_ETHR_GET_MONOTONIC_TIME
@@ -446,6 +469,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 #ifdef ETHR_HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC
 	    if (timeout > 0) {
 		if (time != timeout_time) {
+                    ethr_sint64_t sec, nsec;
 		    time = timeout_time;
 
 #if ERTS_USE_PREMATURE_TIMEOUT
@@ -461,11 +485,22 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 			time -= ERTS_PREMATURE_TIMEOUT(rtmo, 1000*1000*1000);
 		    }
 #endif
-
-		    cond_timeout.tv_sec = time / (1000*1000*1000);
-		    cond_timeout.tv_nsec = time % (1000*1000*1000);
+                    sec = time / (1000*1000*1000);
+                    nsec = time % (1000*1000*1000);
+                    if (sizeof(cond_timeout.tv_sec) == 8
+                        || sec <= (ethr_sint64_t) INT_MAX) {
+                        cond_timeout.tv_sec = sec;
+                        cond_timeout.tv_nsec = nsec;
+                    }
+                    else {
+                        cond_timeout.tv_sec = INT_MAX;
+                        cond_timeout.tv_nsec = 0;
+                        timeout_res = EINTR;
+                    }
 		}
 		res = pthread_cond_timedwait(&e->cnd, &e->mtx, &cond_timeout);
+                if (res == ETIMEDOUT)
+                    res = timeout_res;
 		if (res == EINTR
 		    || (res == ETIMEDOUT
 #if ERTS_USE_PREMATURE_TIMEOUT
@@ -500,6 +535,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 #endif
 	fd_set *rsetp, *esetp;
 	struct timeval select_timeout;
+        int select_timeout_res;
 
 #ifdef ETHR_HAVE_ETHR_GET_MONOTONIC_TIME
 #if ERTS_USE_PREMATURE_TIMEOUT
@@ -527,7 +563,22 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 #endif
 
 	select_timeout.tv_sec = time / (1000*1000);
-	select_timeout.tv_usec = time % (1000*1000);
+
+        if (select_timeout.tv_sec <= ETHR_SELECT_MAX_TV_SEC__) {
+            select_timeout.tv_usec = time % (1000*1000);
+            select_timeout_res = ETIMEDOUT;
+        }
+        else {
+            select_timeout.tv_sec = ETHR_SELECT_MAX_TV_SEC__;
+            select_timeout.tv_usec = 0;
+            /*
+             * Return EINTR (spurious wakeup) instead of
+             * ETIMEDOUT if we time out on this (huge)
+             * timeout value. Caller is responsible for
+             * restarting the wait...
+             */
+            select_timeout_res = EINTR;
+        }
 
 	ETHR_ASSERT(val != ETHR_EVENT_ON__);
 
@@ -577,7 +628,7 @@ wait__(ethr_event *e, int spincount, ethr_sint64_t timeout)
 
 	sres = select(fd + 1, rsetp, NULL, esetp, &select_timeout);
 	if (sres == 0)
-	    res = ETIMEDOUT;
+            res = select_timeout_res;
 	else {
 	    res = EINTR;
 	    if (sres < 0 && errno != EINTR)

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 1999-2018. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2021. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1052,7 +1052,7 @@ static unsigned int next_array_size(unsigned int need)
 	1342177280UL,
 	2684354560UL
     };
-    int hi = sizeof(tab) / sizeof(Uint) - 1;
+    int hi = sizeof(tab) / sizeof(tab[0]) - 1;
     int lo = 1;
     int cur = 4;
 

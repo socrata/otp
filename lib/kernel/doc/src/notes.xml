@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2004</year><year>2020</year>
+      <year>2004</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -30,6 +30,3542 @@
     <file>notes.xml</file>
   </header>
   <p>This document describes the changes made to the Kernel application.</p>
+
+<section><title>Kernel 9.2.4.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed a couple of bugs that could make <c>global</c>'s
+	    internal state inconsistent when a connection was
+	    reconnected.</p>
+          <p>
+	    Own Id: OTP-19381 Aux Id: PR-9377, GH-9112, GH-9117 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix bug where log printouts would go missing when
+	    <c>application_controller</c> is stopping while log
+	    messages are being sent.</p> <p>This bug was introduced
+	    by OTP-19078 in Erlang/OTP 26.2.5. </p>
+          <p>
+	    Own Id: OTP-19418 Aux Id: GH-9163 PR-9274 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>gen_udp:send on domain local can leak inet_reply
+	    messages.</p>
+          <p>
+	    Own Id: OTP-19332 Aux Id: #8989 </p>
+        </item>
+        <item>
+	    <p>Failure to create an UDP IPv6 socket when inet_backend
+	    = socket with certain IPv6 socket options.</p>
+          <p>
+	    Own Id: OTP-19357 </p>
+        </item>
+        <item>
+	    <p>net:getifaddrs does not properly report the running
+	    flag on windows.</p>
+          <p>
+	    Own Id: OTP-19366 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A bug has been fixed where receiving an SCTP message with
+	    `gen_sctp` could waste the first fragments of a message
+	    and only deliver the last fragment.</p>
+          <p>
+	    This happened with low probability when the OS signaled
+	    that the socket was ready for reading in combination with
+	    an internal time-out retry.</p>
+          <p>
+	    A bug has been fixed with a lingering time-out from after
+	    an SCTP connect that could stop the flow of incoming
+	    messages on an active `gen_tcp` socket.</p>
+          <p>
+	    Own Id: OTP-19235 Aux Id: ERIERL-1133, PR-8837 </p>
+        </item>
+        <item>
+          <p>
+	    An boolean option `non_block_send` for SCTP, has ben
+	    added to be able to achieve the old behaviour to avoid
+	    blocking send operations by passing the OS network stack
+	    error message (`{error,eagain}` through.</p>
+          <p>
+	    Own Id: OTP-19258 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A race in the kTLS flavour of SSL distribution has been
+	    fixed so inet_drv.c doesn't read ahead too much data
+	    which could cause the kTLS encryption to be activated too
+	    late when some encrypted data had already been read into
+	    the inet_drv.c buffer as unencrypted.</p>
+          <p>
+	    Own Id: OTP-19175 Aux Id: GH-8561, PR-8690 </p>
+        </item>
+        <item>
+          <p>
+	    Fix a deadlock when an application crashes during startup
+	    and log messages were sent to standard out. Logger would
+	    fail to print the messages to standard out and instead
+	    print them to standard error.</p>
+          <p>
+	    Own Id: OTP-19205 </p>
+        </item>
+        <item>
+	    <p> Add the stdlib application parameters
+	    <c>shell_redraw_prompt_on_output</c> which when set to
+	    <c>false</c> disables redrawing of the shell prompt if
+	    any other output is done. </p>
+          <p>
+	    Own Id: OTP-19213 Aux Id: PR-8763 ERIERL-1108 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to socket:[recv|recvfrom|recvmsg]/* with Timeout =
+	    0 on Windows could cause a (case clause) crash if data is
+	    immediately available.</p>
+          <p>
+	    Own Id: OTP-19063 Aux Id: OTP-18835 </p>
+        </item>
+        <item>
+	    <p>Open a <c>disk_log</c> file and combining
+	    <c>head_func</c> with <c>rotate</c> options did not
+	    work.</p>
+          <p>
+	    Own Id: OTP-19104 Aux Id: ERIERL-870 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix the shell Job Control Mode to not crash when typing
+	    <c>TAB</c> or <c>CTRL+R</c>.</p>
+          <p>
+	    Own Id: OTP-19072 Aux Id: PR-8391 </p>
+        </item>
+        <item>
+          <p>
+	    Fix calls to blocking <seeerl
+	    marker="application"><c>application</c></seeerl> APIs to
+	    throw an exception with reason <c>terminating</c> if
+	    called when the system is terminating.</p>
+          <p>
+	    This is done in order to avoid deadlocks during shutdown
+	    or restart.</p>
+          <p>
+	    Own Id: OTP-19078 Aux Id: PR-8422 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    When using IPv6, classic gen_udp failed to add (group)
+	    membership (drop was used instead).</p>
+          <p>
+	    Own Id: OTP-19049 Aux Id: #8176 </p>
+        </item>
+        <item>
+          <p>
+	    The check in inet_res of the RD bit has been relaxed
+	    slightly.</p>
+          <p>
+	    Own Id: OTP-19056 Aux Id: PR-8312, OTP-17323 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix performance bug when using <c>io:fread</c> to read
+	    from <c>standard_io</c>. This regression was introduced
+	    in OTP 26.0.</p>
+          <p>
+	    Own Id: OTP-18910 Aux Id: PR-7933 GH-7924 </p>
+        </item>
+        <item>
+          <p>
+	    A bug in the code server could cause it to crash in some
+	    concurrent scenarios. This bug was introduced in 26.1.</p>
+          <p>
+	    Own Id: OTP-18948 Aux Id: PR-8046 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed gen_udp:open/2 type spec to include already
+	    supported module socket address types.</p>
+          <p>
+	    Own Id: OTP-18990 Aux Id: GH-8158 </p>
+        </item>
+        <item>
+          <p>
+	    Fix reading of password for ssh client when in
+	    <c>user_interactive</c> mode.</p>
+          <p>
+	    Own Id: OTP-19007 Aux Id: ERIERL-1049 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix <c>group</c> (that is the shell) to properly handle
+	    when an <c>get_until</c> callback function returned
+	    <c>{done, eof, []}</c> when an <c>eof</c> was detected.</p>
+          <p>
+	    Own Id: OTP-18901 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    For <c>inet_backend = socket</c>, an unexpected receive
+	    error such as <c>etimedout</c> caused the receiving state
+	    machine server to crash. This bug has now been fixed.</p>
+          <p>
+	    Own Id: OTP-18749 Aux Id: GH-7608 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug where reading using <c>file</c> from a unicode
+	    enabled <c>standard_io</c>, <c>standard_error</c> or any
+	    other <c>group</c> backed device would result in
+	    incorrect values being returned or a crash.</p>
+          <p>
+	    Now instead a no_translation error is returned to the
+	    caller when unicode data is read using <c>file</c>. See
+	    <seeguide
+	    marker="stdlib:unicode_usage#escripts-and-non-interactive-i-o">Using
+	    Unicode</seeguide> in the STDLIB User's Guide for more
+	    details on how to correctly read from <c>standard_io</c>.</p>
+          <p>
+	    Own Id: OTP-18800 Aux Id: PR-7714 GH-7591 </p>
+        </item>
+        <item>
+          <p>
+	    The native resolver interface module has gotten a rewrite
+	    of its ETS table handling to minimize term copying, and
+	    also to move the handling of client time-outs to the
+	    clients, which helps the native resolver name server from
+	    digging itself into a tar pit when heavily loaded.</p>
+          <p>
+	    Own Id: OTP-18812 Aux Id: ERIERL-997 </p>
+        </item>
+        <item>
+          <p>
+	    Replaced unintentional Erlang Public License 1.1 headers
+	    in some files with the intended Apache License 2.0
+	    header.</p>
+          <p>
+	    Own Id: OTP-18815 Aux Id: PR-7780 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug in <c>pg</c> if a client process both monitored a
+	    group/scope and joined a group. The termination of such
+	    process resulted in crash of the <c>pg</c> server
+	    process.</p>
+          <p>
+	    Own Id: OTP-18833 Aux Id: GH-7625, PR-7659 </p>
+        </item>
+        <item>
+          <p>
+	    Fix crash when using <c>file:consult</c> and the
+	    underlying file read returns an error while reading.</p>
+          <p>
+	    Own Id: OTP-18873 Aux Id: PR-7831 </p>
+        </item>
+        <item>
+          <p>
+	    Corrected gen_tcp_socket listen option handling.</p>
+          <p>
+	    Own Id: OTP-18883 Aux Id: #7764 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add Windows support for DGRAM socket connect.</p>
+          <p>
+	    Own Id: OTP-18762</p>
+        </item>
+        <item>
+          <p>
+	    Document the, previously opaque, types select_tag() and
+	    completion_tag().</p>
+          <p>
+	    Own Id: OTP-18818 Aux Id: #7337 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed an issue with truncated crash slogans on failed
+	    emulator start.</p>
+          <p>
+	    Own Id: OTP-18623 Aux Id: GH-7344 </p>
+        </item>
+        <item>
+          <p>
+	    Fix shell:start_interactive function specification.</p>
+          <p>
+	    Own Id: OTP-18628 Aux Id: GH-7280 </p>
+        </item>
+        <item>
+          <p>
+	    Fix code:get_doc/1 to return missing, when it can't find
+	    erts instead of crashing.</p>
+          <p>
+	    Own Id: OTP-18654 Aux Id: PR-7404 </p>
+        </item>
+        <item>
+          <p>
+	    Function socket:close/1 could cause a VM crash on
+	    Windows.</p>
+          <p>
+	    Own Id: OTP-18669 Aux Id: OTP-18029 </p>
+        </item>
+        <item>
+          <p>
+	    Fix deadlock when <c>erl.exe</c> is used as part of a
+	    pipe on Windows and trying to set the encoding of the
+	    <c>standard_io</c> device.</p>
+          <p>
+	    Own Id: OTP-18675 Aux Id: PR-7473 GH-7459 </p>
+        </item>
+        <item>
+          <p>
+	    Expanded the documentation about how to use the
+	    <c>standard_io</c>, <c>standard_error</c> and <c>user</c>
+	    I/O devices.</p>
+          <p>
+	    Added the types <c>io:standard_io/0</c>,
+	    <c>io:standard:error/0</c> and <c>io:user/0</c>.</p>
+          <p>
+	    Own Id: OTP-18676 Aux Id: PR-7473 GH-7459 </p>
+        </item>
+        <item>
+          <p>
+	    Fix logger's overload protection mechanism to only fetch
+	    memory used by messages when needed.</p>
+          <p>
+	    Own Id: OTP-18677 Aux Id: PR-7418 GH-7417 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed a number of socket-related issues causing
+	    incompatibilities with gen_tcp and gen_udp respectively.</p>
+          <p>
+	    Own Id: OTP-18685</p>
+        </item>
+        <item>
+          <p>
+	    gen_tcp:connect with socket address and socket (inet-)
+	    backend fails because of missing callback function.</p>
+          <p>
+	    Own Id: OTP-18707 Aux Id: #7530 </p>
+        </item>
+        <item>
+          <p>
+	    The DNS RR cache used by `inet_res` has been fixed to
+	    preserve insert order, which is beneficial when the DNS
+	    server returns RRs in some specific order for e.g load
+	    balancing purposes.</p>
+          <p>
+	    Own Id: OTP-18731 Aux Id: GH-7577, PR-7578 </p>
+        </item>
+        <item>
+          <p>
+	    The options `reuseport`, `reuseport_lb` and
+	    `exclusiveaddruse` were accidentally not allowed for e.g
+	    `gen_udp:open/1,2`, which has now been corrected.</p>
+          <p>
+	    Own Id: OTP-18734 Aux Id: OTP-18344, PR-6522, GH-6461,
+	    GH-7569 </p>
+        </item>
+        <item>
+          <p>
+	    <c>gen_udp:recv/*</c> for Unix Domain Socket in binary
+	    mode and passive mode has been fixed to not crash.</p>
+          <p>
+	    Own Id: OTP-18747 Aux Id: GH-7605 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed issue where cursor would not be placed at the end
+	    of the expression when navigating shell history.</p>
+          <p>
+	    Own Id: OTP-18757 Aux Id: PR-7631 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Update gen_tcp_socket and gen_udp_socket to handle
+	    'completion' (socket on Windows).</p>
+          <p>
+	    Own Id: OTP-18586 Aux Id: OTP-18029 </p>
+        </item>
+        <item>
+          <p>
+	    Add support for Unix Domain Sockets (only for STREAM
+	    sockets) on Windows for 'socket'.</p>
+          <p>
+	    Own Id: OTP-18611 Aux Id: OTP-18029, #5024 </p>
+        </item>
+        <item>
+          <p>
+	    Add basic support for socket ioctl on Windows.</p>
+          <p>
+	    Own Id: OTP-18660</p>
+        </item>
+        <item>
+	    <p>The <c>file:location/0</c> type is now exported.</p>
+          <p>
+	    Own Id: OTP-18681</p>
+        </item>
+        <item>
+          <p>
+	    Add support for (Windows) socket option exclusiveaddruse.</p>
+          <p>
+	    Own Id: OTP-18686</p>
+        </item>
+        <item>
+          <p>
+	    [socket] Add support for the 'nopush' option.</p>
+          <p>
+	    Own Id: OTP-18687</p>
+        </item>
+        <item>
+          <p>
+	    Add support for socket option 'BSP STATE'.</p>
+          <p>
+	    Own Id: OTP-18693</p>
+        </item>
+        <item>
+          <p>
+	    Add tcp socket options 'keepcnt', 'keepidle' and
+	    'keepintvl'.</p>
+          <p>
+	    Own Id: OTP-18698</p>
+        </item>
+        <item>
+          <p>
+	    Add support for misc (Windows) socket options
+	    ('max_msg_size' and 'maxdg').</p>
+          <p>
+	    Own Id: OTP-18710</p>
+        </item>
+        <item>
+          <p>
+	    The keyboard shortcuts for the shell are now
+	    configurable.</p>
+          <p>
+	    Own Id: OTP-18754 Aux Id: PR-7604 PR-7647 </p>
+        </item>
+        <item>
+          <p>
+	    Optimized code_server to reduce repeated work when
+	    loading the same module concurrently.</p>
+          <p>
+	    Own Id: OTP-18755 Aux Id: PR-7503 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug where when you entered Alt+Enter in the terminal,
+	    the cursor would move to the last line, instead of moving
+	    to the next line.</p>
+          <p>
+	    Own Id: OTP-18580 Aux Id: PR-7242 </p>
+        </item>
+        <item>
+          <p>
+	    Fix so that the shell does not crash on startup when
+	    termcap is not available.</p>
+          <p>
+	    Own Id: OTP-18624 Aux Id: GH-7296 </p>
+        </item>
+        <item>
+          <p>
+	    Multiple socket:accept calls issue. When making multiple
+	    accept calls, only the last call is active.</p>
+          <p>
+	    Own Id: OTP-18635 Aux Id: #7328 </p>
+        </item>
+        <item>
+          <p>
+	    Fix the shell to ignore terminal delay when the terminal
+	    capabilities report that they should be used.</p>
+          <p>
+	    Own Id: OTP-18636 Aux Id: PR-7352 GH-7308 </p>
+        </item>
+        <item>
+          <p>
+	    Fix "oldshell" to echo characters while typing on
+	    Windows.</p>
+          <p>
+	    Own Id: OTP-18637 Aux Id: PR-7359 GH-7324 </p>
+        </item>
+        <item>
+          <p>
+	    Fix eof handling when reading from stdin when erlang is
+	    started using <c>-noshell</c>.</p>
+          <p>
+	    Own Id: OTP-18640 Aux Id: PR-7384 GH-7368 GH-7286 GH-6881 </p>
+        </item>
+        <item>
+          <p>
+	    On Windows, a call to the function socket:close, when
+	    there are waiting active calls to read, write or accept
+	    functions, could hang.</p>
+          <p>
+	    Own Id: OTP-18646</p>
+        </item>
+        <item>
+          <p>
+	    Fix issues when reading or configuring <c>standard_io</c>
+	    on Windows when erl.exe is started using <c>-noshell</c>
+	    flag.</p>
+          <p>
+	    Own Id: OTP-18649 Aux Id: GH-7261 PR-7400 </p>
+        </item>
+        <item>
+          <p>
+	    gen_udp:connect with inet_backend = socket fails when the
+	    Address is a hostname (string or atom).</p>
+          <p>
+	    Own Id: OTP-18650</p>
+        </item>
+        <item>
+          <p>
+	    Fixed problem which would cause shell to crash if
+	    particular escape sequence was written to stdout.</p>
+          <p>
+	    Own Id: OTP-18651 Aux Id: PR-7242 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed problem where output would disappear if it was
+	    received after a prompt was written in the shell.</p>
+          <p>
+	    Own Id: OTP-18652 Aux Id: PR-7242 </p>
+        </item>
+        <item>
+          <p>
+	    Fix a crash where the location of erts could not be found
+	    in rebar3 dev builds.</p>
+          <p>
+	    Own Id: OTP-18656 Aux Id: PR-7404 GH-7390 </p>
+        </item>
+        <item>
+          <p>
+	    Introduce the KERNEL application parameter
+	    <c>standard_io_encoding</c> that can be used to set the
+	    default encoding for standard_io. This option needs to be
+	    set to <c>latin1</c> if the application wants to treat
+	    all input data as bytes rather than utf-8 encoded
+	    characters.</p>
+          <p>
+	    Own Id: OTP-18657 Aux Id: GH-7230 PR-7384 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>The POSIX error <c>exdev</c> was sometimes incorrectly
+	    described as "cross domain link" in some error
+	    messages.</p>
+          <p>
+	    Own Id: OTP-18578 Aux Id: GH-7213 </p>
+        </item>
+        <item>
+          <p>
+	    Corrected the socket send function description (send with
+	    Timeout = nowait). The send function(s) could not return
+	    {ok, {RestData, SelectInfo}}</p>
+          <p>
+	    Own Id: OTP-18584 Aux Id: #7238 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.0</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed a bug where duplicate keys were allowed in the .app
+	    file of an application. Duplicate keys are now rejected
+	    and the application will not start if they exist.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18210 Aux Id: GH-5877 PR-5878 </p>
+        </item>
+        <item>
+          <p>
+	    Fix inconsistent handling in logger_formatter of the
+	    branched values in conditional branches. For example
+	    using <c>msg</c> in a conditional branch would not be
+	    formatted as it should before this fix.</p>
+          <p>
+	    Own Id: OTP-18225 Aux Id: PR-6036 </p>
+        </item>
+        <item>
+          <p>
+	    Fix the logger_std_h handler to log to standard_error if
+	    logging to standard_io fails for any reason.</p>
+          <p>
+	    Own Id: OTP-18226 Aux Id: PR-6253 </p>
+        </item>
+        <item>
+          <p>
+	    Fix the TLS distribution to work when starting Erlang in
+	    embedded mode and a connection is done before kernel is
+	    fully started.</p>
+          <p>
+	    Own Id: OTP-18248 Aux Id: PR-6227 GH-6085 </p>
+        </item>
+        <item>
+          <p>
+	    erl <c>-remsh</c> has been improved to provide better
+	    error reasons and work when using a shell without
+	    terminal support (that is an "oldshell").</p>
+          <p>
+	    Own Id: OTP-18271 Aux Id: PR-6279 </p>
+        </item>
+        <item>
+          <p>
+	    Fix logging of log events generated before kernel is
+	    started to not fail if the code for formatting those log
+	    messaged have not yet been loaded.</p>
+          <p>
+	    Own Id: OTP-18286 Aux Id: PR-5955 </p>
+        </item>
+        <item>
+	    <p> <c>proc_lib:start*/*</c> has become synchronous when
+	    the started process fails. This requires that a failing
+	    process use a new function <c>proc_lib:init_fail/2,3</c>,
+	    or exits, to indicate failure. All OTP behaviours have
+	    been fixed to do this. </p><p> All these start functions
+	    now consume the <c>'EXIT'</c> message from a process link
+	    for all error returns. Previously it was only the
+	    <c>start_link/*</c> functions that did this, and only
+	    when the started function exited, not when it used
+	    <c>init_ack/1,2</c> or <c>init_fail/2,3</c> to create the
+	    return value. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18471 Aux Id: GH-6339, PR-6843 </p>
+        </item>
+        <item>
+	    <p>Fixed a bug where <c>file:read(standard_io, ...)</c>
+	    unexpectedly returned <c>eof</c> in binary mode.</p>
+          <p>
+	    Own Id: OTP-18486 Aux Id: PR-6881 </p>
+        </item>
+        <item>
+          <p>
+	    Return type for <c>seq_trace:get_token/1</c> fixed.</p>
+          <p>
+	    Own Id: OTP-18528 Aux Id: PR-7009 </p>
+        </item>
+        <item>
+          <p>
+	    Looking up, connecting to and sending to a host with an
+	    empty name is now handled by trying to look up the
+	    address of the root domain, which fails. Previously some
+	    of these operations caused an internal exception, which
+	    contradicted type specifications.</p>
+          <p>
+	    Own Id: OTP-18543 Aux Id: GH-6353 </p>
+        </item>
+        <item>
+          <p>
+	    Replaced a regex with a special case handling of ANSI
+	    Select Graphic Rendition escape characters, to speed up
+	    io output that make use of these escape sequences.</p>
+          <p>
+	    Own Id: OTP-18547 Aux Id: PR-7092 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>The Erlang shell has been improved to support the
+	    following features:</p> <list> <item>Auto-complete
+	    variables, record names, record field names, map keys,
+	    function parameter types and filenames.</item> <item>Open
+	    external editor in the shell (with C-o) to edit the
+	    current expression in an editor.</item> <item>Support
+	    defining records (with types), functions and function
+	    typespecs, and custom types in the shell.</item> <item>Do
+	    not save pager commands, and input to io:getline in
+	    history.</item> </list>
+          <p>
+	    Own Id: OTP-14835 Aux Id: PR-5924 </p>
+        </item>
+        <item>
+	    <p>The TTY/terminal subsystem has been rewritten by
+	    moving more code to Erlang from the old linked-in driver
+	    and implementing all the I/O primitives needed in a NIF
+	    instead. </p><p> On Unix platforms the user should not
+	    notice a lot of difference, besides better handling of
+	    unicode characters and fixing of some long standing bugs.
+	    </p><p> Windows users will notice that erl.exe has the
+	    same functionality as a normal Unix shell and that
+	    werl.exe has been removed and replaced with a symlink to
+	    erl.exe. This makes the Windows Erlang terminal
+	    experience identical to that of Unix. </p><p> The
+	    re-write brings with it a number of bug fixes and feature
+	    additions:</p> <list> <item>The TTY is now reset when
+	    Erlang exits, fixing zsh to not break when terminating an
+	    Erlang session.</item> <item><c>standard_error</c> now
+	    uses the same unicode mode as <c>standard_io</c>.</item>
+	    <item>Hitting backspace when searching the shell history
+	    with an empty search string no longer breaks the
+	    shell.</item> <item>Tab expansion now works on remote
+	    nodes started using the JCL interface.</item> <item>It is
+	    now possible to configure the shell slogan and the
+	    session slogans (that is the texts that appear when you
+	    start an Erlang shell). See the kernel documentation for
+	    more details.</item> <item>Added shell:start_interactive
+	    for starting the interactive shell from a non-interactive
+	    Erlang session (for example an escript).</item> <item>On
+	    Windows, when starting in detached mode the standard
+	    handler are now set to <c>nul</c> devices instead of
+	    being unset.</item> <item> Standard I/O now always
+	    defaults to <c>unicode</c> mode if supported. Previously
+	    the default was <c>latin1</c> if the runtime system had
+	    been started with <c>-oldshell</c> or <c>-noshell</c>
+	    (for example in an <c>escript</c>). To send raw bytes
+	    over standard out, one now explicitly has to specify
+	    <c>io:setopts(standard_io, [{encoding, latin1}]).</c>
+	    </item> </list>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17932 Aux Id: PR-6144 GH-3150 GH-3390 GH-4343
+	    GH-4225 </p>
+        </item>
+        <item>
+	    <p>Add support for socket on Windows.</p> <list>
+	    <item>Pre release status.</item> <item>Error codes not
+	    finalized.</item> <item>No explicit support for Windows
+	    specific options (socket options, flags for read and
+	    write).</item> <item>New async api for Windows
+	    (completion). See the <c>Asynchronous calls</c> chapter
+	    in the (Socket Usage) Users Guide.</item> <item>To ensure
+	    platform independence, gen_tcp and gen_udp is
+	    <em>intended</em> to be used (not yet updated).</item>
+	    </list>
+          <p>
+	    Own Id: OTP-18029</p>
+        </item>
+        <item>
+	    <p>As announced since the release of OTP 24, support
+	    for:</p> <list> <item><p> version 4 node container types
+	    in the external term format are now mandatory. That is,
+	    references supporting up to 5 32-bit integer identifiers,
+	    and process and port identifiers with support for 64-bit
+	    data storage. The distribution flag <seeguide
+	    marker="erts:erl_dist_protocol#DFLAG_V4_NC"><c>DFLAG_V4_NC</c></seeguide>
+	    is therefor now also mandatory. OTP has since OTP 24
+	    supported this. Also note that the external format
+	    produced by <c>term_to_binary()</c> and
+	    <c>term_to_iovec()</c> will unconditionally produce pids,
+	    ports, and references supporting this larger format.
+	    </p></item> <item><p> the <seeguide
+	    marker="erts:erl_dist_protocol#new_link_protocol">new
+	    link protocol</seeguide> introduced in OTP 23.3 is now
+	    mandatory. The distribution flag <seeguide
+	    marker="erts:erl_dist_protocol#DFLAG_UNLINK_ID"><c>DFLAG_UNLINK_ID</c></seeguide>
+	    is therefor now also mandatory. </p></item> </list>
+	    <p>Due to the above, OTP 26 nodes will refuse to connect
+	    to OTP nodes from releases prior to OTP 24.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18140 Aux Id: PR-6072 </p>
+        </item>
+        <item>
+	    <p> Support for Kernel TLS (kTLS), has been added to the
+	    SSL application, for TLS distribution (<c>-proto_dist
+	    inet_tls</c>), the SSL option <c>{ktls, true}</c>. Using
+	    this for general SSL sockets is uncomfortable,
+	    undocumented and not recommended since it requires very
+	    platform dependent raw options. </p><p> This, for now,
+	    only works for some not too old Linux distributions.
+	    Roughly, a kernel 5.2.0 or later with support for
+	    UserLand Protocols and the kernel module <c>tls</c> is
+	    required. </p>
+          <p>
+	    Own Id: OTP-18235 Aux Id: PR-6104, PR-5840 </p>
+        </item>
+        <item>
+          <p>
+	    Add code:get_doc/2 which adds support to fetch
+	    documentation skeletons of functions using debug_info
+	    chunks instead of eep48 doc chunks.</p>
+          <p>
+	    Own Id: OTP-18261 Aux Id: PR-5924 </p>
+        </item>
+        <item>
+          <p>
+	    The Erlang shell's auto-completion when typing <c>tab</c>
+	    has been changed to happen after the editing current line
+	    instead of before it.</p>
+          <p>
+	    This behaviour can be configured using a the
+	    <c>shell_expand_location</c> STDLIB configuration
+	    parameter.</p>
+          <p>
+	    Own Id: OTP-18278 Aux Id: PR-6260 </p>
+        </item>
+        <item>
+          <p>
+	    Typing <c>Ctrl+L</c> in a shell now clears the screen and
+	    redraws the current line instead of only redrawing the
+	    current line. To only redraw the current line, you must
+	    now type <c>Alt+L</c>. This brings the behaviour of
+	    <c>Ctrl+L</c> closer to how bash and other shells work.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18285 Aux Id: PR-6262 </p>
+        </item>
+        <item>
+          <p>
+	    gen_server optimized by caching callback functions</p>
+          <p>
+	    Own Id: OTP-18305 Aux Id: PR-5831 </p>
+        </item>
+        <item>
+          <p>
+	    Prepare the <c>pg</c> communication protocol for upgrade.
+	    The plan is for OTP-28 nodes to be able to use an
+	    upgraded <c>pg</c> protocol while still being able to
+	    talk with OTP 26 nodes.</p>
+          <p>
+	    Own Id: OTP-18327 Aux Id: PR-6433 </p>
+        </item>
+        <item>
+          <p>
+	    New <c>disk_log</c> log type <c>rotate</c>, where the log
+	    files are compressed upon rotation.</p>
+          <p>
+	    Own Id: OTP-18331 Aux Id: ERIERL-870 </p>
+        </item>
+        <item>
+	    <p>The following <seemfa
+	    marker="kernel:inet#setopts/2"><c>inet:setopts/2</c></seemfa>
+	    options have been introduced:</p> <taglist> <tag><seeerl
+	    marker="kernel:inet#option-reuseport"><c>reuseport</c></seeerl></tag>
+	    <item><p>Reuse of local port. Load balancing may or may
+	    not be provided depending on underlying OS.</p></item>
+	    <tag><seeerl
+	    marker="kernel:inet#option-reuseport_lb"><c>reuseport_lb</c></seeerl></tag>
+	    <item><p>Reuse of local port. Load balancing
+	    provided.</p></item> <tag><seeerl
+	    marker="kernel:inet#option-exclusiveaddruse"><c>exclusiveaddruse</c></seeerl></tag>
+	    <item><p>Exclusive address/port usage on Windows. This
+	    socket option is Windows specific and will silently be
+	    ignored on other systems.</p></item> </taglist> <p>The
+	    behavior of setting <seeerl
+	    marker="kernel:inet#option-reuseaddr"><c>reuseaddr</c></seeerl>
+	    on Windows have changed in a <em>backwards
+	    incompatible</em> way. The underlying <c>SO_REUSEADDR</c>
+	    socket option is now only set if both the <c>reusaddr</c>
+	    and the <c>reuseport</c> <c>inet</c> options have been
+	    set. This since the underlying <c>SO_REUSEADDR</c> socket
+	    option on Windows behaves similar to how BSD behaves if
+	    both the underlying socket options <c>SO_REUSEADDR</c>
+	    and <c>SO_REUSEPORT</c> have been set. See the
+	    documentation of the <c>reuseaddr</c> option for more
+	    information.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18344 Aux Id: PR-6522, PR-6944, OTP-18324,
+	    PR-6481, GH-6461 </p>
+        </item>
+        <item>
+          <p>
+	    Replace size/1 with either tuple_size/1 or byte_size/1</p>
+          <p>
+	    The <c>size/1</c> BIF is not optimized by the JIT, and
+	    its use can result in worse types for Dialyzer.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    tuple, <c>tuple_size/1</c> should always be preferred.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    binary, <c>byte_size/1</c> should be preferred. However,
+	    <c>byte_size/1</c> also accepts a bitstring (rounding up
+	    size to a whole number of bytes), so one must make sure
+	    that the call to <c>byte_size/</c> is preceded by a call
+	    to <c>is_binary/1</c> to ensure that bitstrings are
+	    rejected. Note that the compiler removes redundant calls
+	    to <c>is_binary/1</c>, so if one is not sure whether
+	    previous code had made sure that the argument is a
+	    binary, it does not harm to add an <c>is_binary/1</c>
+	    test immediately before the call to <c>byte_size/1</c>.</p>
+          <p>
+	    Own Id: OTP-18405 Aux Id:
+	    GH-6672,PR-6702,PR-6768,PR-6700,PR-6769,PR-6812,PR-6814 </p>
+        </item>
+        <item>
+	    <p>The function <c>file:pid2name/1</c> is deprecated and
+	    will be removed in Erlang/OTP 27.</p>
+          <p>
+	    Own Id: OTP-18419</p>
+        </item>
+        <item>
+          <p>
+	    The modules Erlang DNS resolver <c>inet_res</c> and
+	    helper modules have been updated for RFC6891; to handle
+	    OPT RR with DNSSEC OK (DO) bit.</p>
+          <p>
+	    Own Id: OTP-18442 Aux Id: PR-6786, GH-6606 </p>
+        </item>
+        <item>
+          <p>
+	    Introduced <seemfa
+	    marker="kernel:application#get_supervisor/1"><c>application:get_supervisor/1</c></seemfa>.</p>
+          <p>
+	    Own Id: OTP-18444 Aux Id: PR-6035 </p>
+        </item>
+        <item>
+	    <p> Handling of <c>on_load</c> modules during boot has
+	    been improved by adding an extra step in the boot order
+	    for embedded mode that runs all <c>on_load</c> handlers,
+	    instead of relying on explicit invocation of them, later,
+	    when the kernel supervision tree starts. </p><p> This is
+	    mostly a code improvement and OTP internal simplification
+	    to avoid future bugs and to simplify code maintenance.
+	    </p>
+          <p>
+	    Own Id: OTP-18447</p>
+        </item>
+        <item>
+          <p>
+	    Reduce contention on the code_server by doing the code
+	    preparation on the client.</p>
+          <p>
+	    Own Id: OTP-18448 Aux Id: PR-6736 </p>
+        </item>
+        <item>
+          <p>
+	    Added a mode to ensure_all_loaded, to start children
+	    application and their dependencies concurrently.</p>
+          <p>
+	    Own Id: OTP-18451 Aux Id: PR-6737 </p>
+        </item>
+        <item>
+          <p>
+	    Cache OTP boot code paths, to limit how many folders that
+	    are being accessed during a module lookup. Can be
+	    disabled with -cache_boot_path false. OTP boot code paths
+	    consists of ERL_LIB environment variables. The various
+	    otp/*/ebin folders. And the {path, ...} clauses in the
+	    init script.</p>
+          <p>
+	    Own Id: OTP-18452 Aux Id: PR-6729 </p>
+        </item>
+        <item>
+          <p>
+	    Erlang distribution code in Kernel and SSL has been
+	    refactored a bit to facilitate debugging and
+	    re-usability, which shouldn't have any noticeable effects
+	    on behaviour or performance.</p>
+          <p>
+	    Own Id: OTP-18456</p>
+        </item>
+        <item>
+          <p>
+	    Add cache attribute to code path apis.</p>
+          <p>
+	    Added an optional cache/nocache argument to all
+	    code:add_path*, code:set_path*, and code:replace_path*
+	    functions. These functions will then avoid doing
+	    file-accesses if they are cached. Cache can be cleared
+	    with code:clear_cache/0. Added code:del_paths/1 to make
+	    it easier to clear multiple paths.</p>
+          <p>
+	    Own Id: OTP-18466 Aux Id: PR-6832 </p>
+        </item>
+        <item>
+          <p>
+	    Deprecates <c>dbg:stop_clear/0</c> because it is simply a
+	    function alias to <c>dbg:stop/0</c></p>
+          <p>
+	    Own Id: OTP-18478 Aux Id: GH-6903 </p>
+        </item>
+        <item>
+          <p>
+	    Improvements to code:ensure_modules_loaded/1: Previously
+	    it would prepare modules and then abandon references to
+	    said modules if they had on_load callbacks. This pull
+	    request makes it so they keep the references around and
+	    then serially load them without having to fetch the
+	    object code and prepare them again.</p>
+          <p>
+	    Own Id: OTP-18484 Aux Id: PR-6844 </p>
+        </item>
+        <item>
+          <p>
+	    The internal DNS resolver has been updated to handle DNS
+	    LOC RR:s (RFC 1876). This is an undocumented module,
+	    although still used by power users. See the source code.</p>
+          <p>
+	    Own Id: OTP-18510 Aux Id: GH-6098, PR-6982 </p>
+        </item>
+        <item>
+          <p>
+	    Reduced memory consumption in <c>global</c> when
+	    informing other nodes about lost connections.</p>
+          <p>
+	    Own Id: OTP-18521 Aux Id: PR-7025 </p>
+        </item>
+        <item>
+          <p>
+	    The <c>net_kernel</c>, <c>global</c>, and
+	    <c>global_group</c> servers now have <seeerl
+	    marker="erts:erlang#process_flag_async_dist"><i>fully
+	    asynchronous distributed signaling</i></seeerl> enabled
+	    all the time which prevents them from ever getting
+	    blocked on send of distributed signals.</p>
+          <p>
+	    Documentation about blocking distributed signals has also
+	    been improved.</p>
+          <p>
+	    Own Id: OTP-18533 Aux Id: PR-7061 </p>
+        </item>
+        <item>
+          <p>
+	    Allow IPv6 addresses as host in <c>http</c> packets
+	    decoded by <c>erlang:decode_packet/3</c> and
+	    <c>gen_tcp</c> packet option. The IPv6 address should be
+	    enclosed within <c>[]</c> according to RFC2732.</p>
+          <p>
+	    Own Id: OTP-18540 Aux Id: PR-6900 </p>
+        </item>
+        <item>
+          <p>
+	    Remove deprecated functions in OTP-26</p>
+          <p>
+	    Own Id: OTP-18542</p>
+        </item>
+        <item>
+          <p>
+	    Removed <c>code:is_module_native/1</c> since HiPE has
+	    been removed. It has since OTP 24 been deprecated and
+	    scheduled for removal in OTP 26. </p>
+          <p>
+	    Removed <c>code:rehash/0</c> since the code path feature
+	    no longer is present. It has since OTP 19 been deprecated
+	    and has since OTP 24 been scheduled for removal in OTP
+	    26.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18551 Aux Id: PR-7106 </p>
+        </item>
+        <item>
+	    <p>Added support for multiple line expressions and
+	    navigation in the shell. Added new keybindings:</p>
+	    <list> <item> navigate up (ctrl+up)/(alt+up) </item>
+	    <item> navigate down (ctrl+down)/(alt+down) </item>
+	    <item> insert newline in middle of line (alt+enter)
+	    </item> <item> navigate top (alt+&lt;)/(alt+shift+up)
+	    </item> <item> navigate bottom
+	    (alt+&gt;)/(alt+shift+down) </item> <item> clear current
+	    expression (alt+c) </item> <item> cancel search (alt+c)
+	    </item> <item> opening editor on mac (option+o)/(alt+o)
+	    </item> </list> <p>Modifies the prompt for new lines to
+	    make it clearer that the prompt has entered multi-line
+	    mode. Supports terminal with small window size, recommend
+	    not go lower than 7 rows and 40 columns. Modifies the
+	    search prompt to support multi-line statements. Redraw
+	    the prompt after continuing from JCL menu. </p>
+          <p>
+	    Own Id: OTP-18575 Aux Id: PR-7169 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.4.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    gen_tcp:connect with socket address and socket (inet-)
+	    backend fails because of missing callback function.</p>
+          <p>
+	    Own Id: OTP-18707 Aux Id: #7530 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Multiple socket:accept calls issue. When making multiple
+	    accept calls, only the last call is active.</p>
+          <p>
+	    Own Id: OTP-18635 Aux Id: #7328 </p>
+        </item>
+        <item>
+          <p>
+	    gen_udp:connect with inet_backend = socket fails when the
+	    Address is a hostname (string or atom).</p>
+          <p>
+	    Own Id: OTP-18650</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed a bug on Windows where
+	    <c>file:read_file_info/1</c> would fail for files with
+	    corrupt metadata.</p>
+          <p>
+	    Own Id: OTP-18348 Aux Id: GH-6356 </p>
+        </item>
+        <item>
+          <p>
+	    Accept connection setup from OTP 23 and 24 nodes that are
+	    not using epmd.</p>
+          <p>
+	    Own Id: OTP-18404 Aux Id: GH-6595, PR-6625 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The tcp connect option 'bind_to_device' could not be used
+	    with inet_backend = 'socket'. 'inet' requires value type
+	    binarry() and 'socket' requires value type 'string()'.</p>
+          <p>
+	    Own Id: OTP-18357 Aux Id: #6509 </p>
+        </item>
+        <item>
+          <p>
+	    Minor issue processing options when calling
+	    gen_tcp:connect with a sockaddr() and inet_backend =
+	    socket.</p>
+          <p>
+	    Own Id: OTP-18358 Aux Id: #6528 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed shutdown crash in gen_tcp socket backend, when the
+	    other end closed the socket.</p>
+          <p>
+	    Own Id: OTP-18270 Aux Id: #6331 </p>
+        </item>
+        <item>
+	    <p><c>erl_tar</c> can now read gzip-compressed tar files
+	    that are padded. There is a new option
+	    <c>compressed_one</c> for <c>file:open/2</c> that will
+	    read a single member from a gzip file,</p>
+          <p>
+	    Own Id: OTP-18289 Aux Id: PR-6343 </p>
+        </item>
+        <item>
+          <p>
+	    Fix <c>os:cmd</c> to not translate all exceptions thrown
+	    to <c>badarg</c>. For example <c>emfile</c> from
+	    <c>erlang:open_port</c> was translated to <c>badarg</c>.</p>
+          <p>
+	    This bug has existed since Erlang/OTP 24.</p>
+          <p>
+	    Own Id: OTP-18291 Aux Id: PR-6382 </p>
+        </item>
+        <item>
+          <p>
+	    Spec for function net:if_names/0 incorrect</p>
+          <p>
+	    Own Id: OTP-18296 Aux Id: OTP-16464 </p>
+        </item>
+        <item>
+          <p>
+	    Missing ctrl option name transation for TOS and TTL (on
+	    FreeBSD) when using gen_udp with the 'socket'
+	    inet_backend.</p>
+          <p>
+	    Own Id: OTP-18315</p>
+        </item>
+        <item>
+          <p>
+	    gen_udp:open/2 with option(s) add_membership or
+	    drop_membership would drop earlier options.</p>
+          <p>
+	    Own Id: OTP-18323 Aux Id: #6476 </p>
+        </item>
+        <item>
+          <p>
+	    The <seemfa
+	    marker="kernel:inet#setopts/2"><c>inet:setopts/2</c></seemfa>
+	    <c>{reuseaddr, true}</c> option will now be ignored on
+	    Windows unless the socket is an UDP socket. For more
+	    information see the documentation of the <c>reuseaddr</c>
+	    option part of the documentation of
+	    <c>inet:setopts/2</c>.</p>
+          <p>
+	    Prior to OTP 25 the <c>{reuseaddr, true}</c> option was
+	    ignored for all sockets on Windows, but as of OTP 25.0
+	    this was changed so that it was not ignored for any
+	    sockets.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18324 Aux Id: GH-6461, PR-6481 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>The distribution socket option handling in
+	    <c>inet_tcp_dist</c> has been cleaned up to clarify which
+	    were mandatory and which just had default values. </p>
+          <p>
+	    Own Id: OTP-18293</p>
+        </item>
+        <item>
+          <p>
+	    Improve warning message format for gen_tcp_socket.</p>
+          <p>
+	    Own Id: OTP-18317</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Listen sockets created with the socket module, leaked
+	    (erlang-) monitors.</p>
+          <p>
+	    Own Id: OTP-18240 Aux Id: #6285 </p>
+        </item>
+        <item>
+          <p>
+	    <seeerl marker="stdlib:peer"><c>peer</c></seeerl> nodes
+	    failed to halt when the process supervising the control
+	    connection crashed. When an alternative control
+	    connection was used, this supervision process also quite
+	    frequently crashed when the <c>peer</c> node was stopped
+	    by the node that started it which caused the <c>peer</c>
+	    node to linger without ever halting.</p>
+          <p>
+	    Own Id: OTP-18249 Aux Id: PR-6301 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed inconsistency bugs in <seeerl
+	    marker="kernel:global"><c>global</c></seeerl> due to
+	    <c>nodeup</c>/<c>nodedown</c> messages not being
+	    delivered before/after traffic over connections. Also
+	    fixed various other inconsistency bugs and deadlocks in
+	    both <seeerl
+	    marker="kernel:global_group"><c>global_group</c></seeerl>
+	    and <c>global</c>.</p>
+          <p>
+	    As building blocks for these fixes, a new BIF <seemfa
+	    marker="erts:erlang#nodes/2"><c>erlang:nodes/2</c></seemfa>
+	    has been introduced and <seemfa
+	    marker="kernel:net_kernel#monitor_nodes/2"><c>net_kernel:monitor_nodes/2</c></seemfa>
+	    has been extended.</p>
+          <p>
+	    The <seecom
+	    marker="erts:erl#hidden"><c>-hidden</c></seecom> and
+	    <seecom
+	    marker="erts:erl#connect_all"><c>-connect_all</c></seecom>
+	    command line arguments did not work if multiple instances
+	    were present on the command line which has been fixed.
+	    The new kernel parameter <seeapp
+	    marker="kernel:kernel_app#connect_all"><c>connect_all</c></seeapp>
+	    has also been introduced in order to replace the
+	    <c>-connect_all</c> command line argument.</p>
+          <p>
+	    Own Id: OTP-17934 Aux Id: PR-6007 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed IPv6 multicast_if and membership socket options.</p>
+          <p>
+	    Own Id: OTP-18091 Aux Id: #5789 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed issue with inet:getifaddrs hanging on pure IPv6
+	    Windows</p>
+          <p>
+	    Own Id: OTP-18102 Aux Id: #5904 </p>
+        </item>
+        <item>
+          <p>
+	    The type specifications for <c>inet:getopts/2</c> and
+	    <c>inet:setopts/2</c> have been corrected regarding SCTP
+	    options.</p>
+          <p>
+	    Own Id: OTP-18115 Aux Id: PR-5939 </p>
+        </item>
+        <item>
+          <p>
+	    The type specifications for <c>inet:parse_*</c> have been
+	    tightened.</p>
+          <p>
+	    Own Id: OTP-18121 Aux Id: PR-5972 </p>
+        </item>
+        <item>
+          <p>
+	    Fix gen_tcp:connect/3 spec to include the inet_backend
+	    option.</p>
+          <p>
+	    Own Id: OTP-18171 Aux Id: PR-6131 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug where using a binary as the format when calling
+	    <c>logger:log(Level, Format, Args)</c> (or any other
+	    logging function) would cause a crash or incorrect
+	    logging.</p>
+          <p>
+	    Own Id: OTP-18229 Aux Id: PR-6212 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add rudimentary debug feature (option) for the
+	    inet-driver based sockets, such as gen_tcp and gen_udp.</p>
+          <p>
+	    Own Id: OTP-18032</p>
+        </item>
+        <item>
+          <p>
+	    Introduced the <c>hidden</c> and <c>dist_listen</c>
+	    options to <seemfa
+	    marker="kernel:net_kernel#start/2"><c>net_kernel:start/2</c></seemfa>.</p>
+          <p>
+	    Also documented the <seecom
+	    marker="erts:erl#dist_listen"><c>-dist_listen</c></seecom>
+	    command line argument which was erroneously documented as
+	    a <c>kernel</c> parameter and not as a command line
+	    argument.</p>
+          <p>
+	    Own Id: OTP-18107 Aux Id: PR-6009 </p>
+        </item>
+        <item>
+          <p>
+	    Scope and group monitoring have been introduced in
+	    <seeerl marker="kernel:pg"><c>pg</c></seeerl>. For more
+	    information see the documentation of <seemfa
+	    marker="kernel:pg#monitor_scope/0"><c>pg:monitor_scope()</c></seemfa>,
+	    <seemfa
+	    marker="kernel:pg#monitor/1"><c>pg:monitor()</c></seemfa>,
+	    and <seemfa
+	    marker="kernel:pg#demonitor/1"><c>pg:demonitor()</c></seemfa>.</p>
+          <p>
+	    Own Id: OTP-18163 Aux Id: PR-6058, PR-6275 </p>
+        </item>
+        <item>
+          <p>
+	    A new function <seemfa
+	    marker="kernel:global#disconnect/0"><c>global:disconnect/0</c></seemfa>
+	    has been introduced with which one can cleanly disconnect
+	    a node from all other nodes in a cluster of <c>global</c>
+	    nodes.</p>
+          <p>
+	    Own Id: OTP-18232 Aux Id: OTP-17843, PR-6264 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.4.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to <seemfa
+	    marker="net_kernel#setopts/2"><c>net_kernel:setopts(new,
+	    Opts)</c></seemfa> at the same time as a connection was
+	    being set up could cause a deadlock between the
+	    <c>net_kernel</c> process and the process setting up the
+	    connection.</p>
+          <p>
+	    Own Id: OTP-18198 Aux Id: GH-6129, PR-6216 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The DNS resolver <c>inet_res</c> has been fixed to ignore
+	    trailing dot difference in the request domain between the
+	    sent request and the received response, when validating a
+	    response.</p>
+          <p>
+	    Own Id: OTP-18112 Aux Id: ERIERL-811 </p>
+        </item>
+        <item>
+          <p>
+	    A bug in <c>inet_res</c> has been fixed where a missing
+	    internal <c>{ok,_}</c> wrapper caused
+	    <c>inet_res:resolve/*</c> to return a calculated host
+	    name instead of an `<c>{ok,Msg}</c> tuple, when resolving
+	    an IP address or a host name that is an IP address
+	    string.</p>
+          <p>
+	    Own Id: OTP-18122 Aux Id: GH-6015, PR-6020 </p>
+        </item>
+        <item>
+          <p>
+	    The <c>erlang:is_alive()</c> BIF could return <c>true</c>
+	    before configured distribution service was available.
+	    This bug was introduced in OTP 25.0 ERTS version 13.0.</p>
+          <p>
+	    The <c>erlang:monitor_node()</c> and
+	    <c>erlang:monitor()</c> BIFs could erroneously fail even
+	    though configured distribution service was available.
+	    This occurred if these BIFs were called after the
+	    distribution had been started using dynamic node name
+	    assignment but before the name had been assigned.</p>
+          <p>
+	    Own Id: OTP-18124 Aux Id: OTP-17558, PR-6032 </p>
+        </item>
+        <item>
+          <p>
+	    Added the missing mandatory <c>address/0</c> callback in
+	    the <c>gen_tcp_dist</c> example.</p>
+          <p>
+	    Own Id: OTP-18136</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The DNS resolver implementation has been rewritten to
+	    validate replies more thoroughly, and a bit optimized to
+	    create less garbage.</p>
+          <p>
+	    Own Id: OTP-17323</p>
+        </item>
+        <item>
+          <p>
+	    The socket option 'reuseaddr' is *no longer* ignored on
+	    Windows.</p>
+          <p>
+	    Own Id: OTP-17447 Aux Id: GH-4819 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug where using the atoms <c>string</c> or
+	    <c>report</c> as the format when calling
+	    <c>logger:log(Level, Format, Args)</c> (or any other
+	    logging function) would cause a crash or incorrect
+	    logging.</p>
+          <p>
+	    Own Id: OTP-17551 Aux Id: GH-5071 PR-5075 </p>
+        </item>
+        <item>
+	    <p> As of OTP 25, <c>global</c> will by default prevent
+	    overlapping partitions due to network issues by actively
+	    disconnecting from nodes that reports that they have lost
+	    connections to other nodes. This will cause fully
+	    connected partitions to form instead of leaving the
+	    network in a state with overlapping partitions. </p> <p>
+	    Prevention of overlapping partitions can be disabled
+	    using the <seeapp
+	    marker="kernel_app#prevent_overlapping_partitions"><c>prevent_overlapping_partitions</c></seeapp>
+	    <c>kernel(6)</c> parameter, making <c>global</c> behave
+	    like it used to do. This is, however, problematic for all
+	    applications expecting a fully connected network to be
+	    provided, such as for example <c>mnesia</c>, but also for
+	    <c>global</c> itself. A network of overlapping partitions
+	    might cause the internal state of <c>global</c> to become
+	    inconsistent. Such an inconsistency can remain even after
+	    such partitions have been brought together to form a
+	    fully connected network again. The effect on other
+	    applications that expects that a fully connected network
+	    is maintained may vary, but they might misbehave in very
+	    subtle hard to detect ways during such a partitioning.
+	    Since you might get hard to detect issues without this
+	    fix, you are <i>strongly</i> advised <i>not</i> to
+	    disable this fix. Also note that this fix <i>has</i> to
+	    be enabled on <i>all</i> nodes in the network in order to
+	    work properly. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17911 Aux Id: PR-5687, PR-5611, OTP-17843 </p>
+        </item>
+        <item>
+	    <p> Starting the helper program for name resolving;
+	    <c>inet_gethost</c>, has been improved to use an absolute
+	    file system path to ensure that the right program is
+	    started. </p><p> If the helper program can not be started
+	    - the system now halts, to avoid running with a silently
+	    broken name resolver. </p>
+          <p>
+	    Own Id: OTP-17958 Aux Id: OTP-17978 </p>
+        </item>
+        <item>
+          <p>
+	    The type specification for <c>inet_res:getbyname/2,3</c>
+	    has been corrected to reflect that it can return peculiar
+	    <c>#hostent{}</c> records.</p>
+          <p>
+	    Own Id: OTP-17986 Aux Id: PR-5412, PR-5803 </p>
+        </item>
+        <item>
+	    <p><c>code:module_status/1</c> would always report BEAM
+	    files loaded from an archive as <c>modified</c>, and
+	    <c>code:modified_modules/0</c> would always return the
+	    name of all modules loaded from archives.</p>
+          <p>
+	    Own Id: OTP-17990 Aux Id: GH-5801 </p>
+        </item>
+        <item>
+          <p>
+	    In logger fix file handler shutdown delay by using erlang
+	    timers instead of the timer module's timers.</p>
+          <p>
+	    Own Id: OTP-18001 Aux Id: GH-5780 PR-5829 </p>
+        </item>
+        <item>
+          <p>
+	    Fix the meta data in log events generated by logger on
+	    failure to not contain the original log event's meta
+	    data.</p>
+          <p>
+	    Own Id: OTP-18003 Aux Id: PR-5771 </p>
+        </item>
+        <item>
+          <p>
+	    Fix logger file backend to re-create the log folder if it
+	    has been deleted.</p>
+          <p>
+	    Own Id: OTP-18015 Aux Id: GH-5828 PR-5845 </p>
+        </item>
+        <item>
+          <p>
+	    [socket] Encode of sockaddr has been improved.</p>
+          <p>
+	    Own Id: OTP-18020</p>
+        </item>
+        <item>
+          <p>
+	    Fix <c>put_chars</c> requests to the io server with
+	    incomplete unicode data to exit with
+	    <c>no_translation</c> error.</p>
+          <p>
+	    Own Id: OTP-18070 Aux Id: PR-5885 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    The net module now works on Windows.</p>
+          <p>
+	    Own Id: OTP-16464</p>
+        </item>
+        <item>
+          <p>
+	    An Erlang installation directory is now relocatable on
+	    the file system given that the paths in the
+	    installation's <c>RELEASES</c> file are paths that are
+	    relative to the installations root directory. The
+	    <c>`release_handler:create_RELEASES/4</c> function can
+	    generate a <c>RELEASES</c> file with relative paths if
+	    its <c>RootDir</c> parameter is set to the empty string.</p>
+          <p>
+	    Own Id: OTP-17304</p>
+        </item>
+        <item>
+	    <p>The following distribution flags are now mandatory:
+	    <c>DFLAG_BIT_BINARIES</c>, <c>DFLAG_EXPORT_PTR_TAG</c>,
+	    <c>DFLAG_MAP_TAGS</c>, <c>DFLAG_NEW_FLOATS</c>, and
+	    <c>DFLAG_FUN_TAGS</c>. This mainly concerns libraries or
+	    application that implement the distribution protocol
+	    themselves.</p>
+          <p>
+	    Own Id: OTP-17318 Aux Id: PR-4972 </p>
+        </item>
+        <item>
+          <p>
+	    Fix <c>os:cmd</c> to work on Android OS.</p>
+          <p>
+	    Own Id: OTP-17479 Aux Id: PR-4917 </p>
+        </item>
+        <item>
+          <p>
+	    The configuration files <seecom
+	    marker="erts:erl"><c>.erlang</c></seecom>, <seeguide
+	    marker="system/reference_manual:distributed"><c>.erlang.cookie</c></seeguide>
+	    and <seeerl
+	    marker="stdlib:beam_lib#.erlang.crypt"><c>.erlang.crypt</c></seeerl>
+	    can now be located in the XDG Config Home directory.</p>
+          <p>
+	    See the documentation for each file and
+	    <c>filename:basedir/2</c> for more details.</p>
+          <p>
+	    Own Id: OTP-17554 Aux Id: GH-5016 PR-5408 OTP-17821 </p>
+        </item>
+        <item>
+          <p>
+	    Dynamic node name improvements: <c>erlang:is_alive/0</c>
+	    changed to return true for pending dynamic node name and
+	    new function <c>net_kernel:get_state/0</c>.</p>
+          <p>
+	    Own Id: OTP-17558 Aux Id: OTP-17538, PR-5111, GH-5402 </p>
+        </item>
+        <item>
+          <p>
+	    The types for callback result types in <c>gen_statem</c>
+	    has bee augmented with arity 2 types where it is possible
+	    for a callback module to specify the type of the callback
+	    data, so the callback module can get type validation of
+	    it.</p>
+          <p>
+	    Own Id: OTP-17589 Aux Id: PR-4926 </p>
+        </item>
+        <item>
+          <p>
+	    The tagged tuple tests and fun-calls have been optimized
+	    and are now a little bit cheaper than previously.</p>
+          <p>
+	    These optimizations become possible after making sure
+	    that all boxed terms have at least one word allocated
+	    after the arity word. This has been accomplished by
+	    letting all empty tuples refer to the same empty tuple
+	    literal which also reduces memory usage for empty tuples.</p>
+          <p>
+	    Own Id: OTP-17608</p>
+        </item>
+        <item>
+          <p>
+	    A <seeapp
+	    marker="kernel:kernel_app#net_ticker_spawn_options"><c>net_ticker_spawn_options</c></seeapp>
+	    <c>kernel</c> configuration parameter with which one can
+	    set spawn options for the distribution channel ticker
+	    processes has been introduced.</p>
+          <p>
+	    Own Id: OTP-17617 Aux Id: PR-5069 </p>
+        </item>
+        <item>
+          <p>
+	    The most, or at least the most used, <seeerl
+	    marker="kernel:rpc"><c>rpc</c></seeerl> operations now
+	    require <seeerl marker="kernel:erpc"><c>erpc</c></seeerl>
+	    support in order to communicate with other Erlang nodes.
+	    <c>erpc</c> was introduced in OTP 23. That is, <c>rpc</c>
+	    operations against Erlang nodes of releases prior to OTP
+	    23 will fail.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17681 Aux Id: PR-5307 </p>
+        </item>
+        <item>
+          <p>
+	    The new module <c>peer</c> supersedes the <c>slave</c>
+	    module. The <c>slave</c> module is now deprecated and
+	    will be removed in OTP 27.</p>
+          <p>
+	    <c>peer</c> contains an extended and more robust API for
+	    starting erlang nodes.</p>
+          <p>
+	    Own Id: OTP-17720 Aux Id: PR-5162 </p>
+        </item>
+        <item>
+          <p>
+	    In order to make it easier for the user to manage
+	    multiple outstanding asynchronous <c>call</c> requests,
+	    new functionality utilizing request identifier
+	    collections have been introduced in <seetype
+	    marker="kernel:erpc#request_id_collection"><c>erpc</c></seetype>,
+	    <seetype
+	    marker="stdlib:gen_server#request_id_collection"><c>gen_server</c></seetype>,
+	    <seetype
+	    marker="stdlib:gen_statem#request_id_collection"><c>gen_statem</c></seetype>,
+	    and <seetype
+	    marker="stdlib:gen_event#request_id_collection"><c>gen_event</c></seetype>.</p>
+          <p>
+	    Own Id: OTP-17784 Aux Id: PR-5792 </p>
+        </item>
+        <item>
+	    <p>Type specifications have been added to the
+	    <c>gen_server</c>, and the documentation has been updated
+	    to utilize this. </p><p>This surfaced a few type
+	    violations that has been corrected in <c>global</c>,
+	    <c>logger_olp</c> and <c>rpc</c>. </p>
+          <p>
+	    Own Id: OTP-17915 Aux Id: PR-5751, GH-2375, GH-2690 </p>
+        </item>
+        <item>
+          <p>
+	    IP address validation functions <c>is_ipv4_address/1</c>,
+	    <c>is_ipv6_address/1</c> and <c>is_ip_address/1</c> have
+	    been added to the module <c>inet</c> in Kernel.</p>
+          <p>
+	    Own Id: OTP-17923 Aux Id: PR-5646 </p>
+        </item>
+        <item>
+          <p>
+	    An API for multihomed SCTP connect has been added in the
+	    guise of <c>gen_sctp:connectx_init/*</c></p>
+          <p>
+	    Own Id: OTP-17951 Aux Id: PR-5656 </p>
+        </item>
+        <item>
+          <p>
+	    [socket] Add encoding of the field hatype of the type
+	    sockaddr_ll (family 'packet').</p>
+          <p>
+	    Own Id: OTP-17968 Aux Id: OTP-16464 </p>
+        </item>
+        <item>
+          <p>
+	    Added support for configurable features as described in
+	    EEP-60. Features can be enabled/disabled during
+	    compilation with options (<c>-enable-feature Feature</c>,
+	    <c>-disable-feature Feature</c> and <c>+{feature,
+	    Feature, enable|disable}</c>) to <c>erlc</c> as well as
+	    with directives (<c>-feature(Feature,
+	    enable|disable).</c>) in the file. Similar options can be
+	    used to <c>erl</c> for enabling/disabling features
+	    allowed at runtime. The new <c>maybe</c> expression
+	    (EEP-49) is fully supported as the feature
+	    <c>maybe_expr</c>. The features support is documented in
+	    the reference manual.</p>
+          <p>
+	    Own Id: OTP-17988</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    gen_tcp:connect with socket address and socket (inet-)
+	    backend fails because of missing callback function.</p>
+          <p>
+	    Own Id: OTP-18707 Aux Id: #7530 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Spec for function net:if_names/0 incorrect</p>
+          <p>
+	    Own Id: OTP-18296 Aux Id: OTP-16464 </p>
+        </item>
+        <item>
+          <p>
+	    Missing ctrl option name transation for TOS and TTL (on
+	    FreeBSD) when using gen_udp with the 'socket'
+	    inet_backend.</p>
+          <p>
+	    Own Id: OTP-18315</p>
+        </item>
+        <item>
+          <p>
+	    The tcp connect option 'bind_to_device' could not be used
+	    with inet_backend = 'socket'. 'inet' requires value type
+	    binarry() and 'socket' requires value type 'string()'.</p>
+          <p>
+	    Own Id: OTP-18357 Aux Id: #6509 </p>
+        </item>
+        <item>
+          <p>
+	    Minor issue processing options when calling
+	    gen_tcp:connect with a sockaddr() and inet_backend =
+	    socket.</p>
+          <p>
+	    Own Id: OTP-18358 Aux Id: #6528 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Improve warning message format for gen_tcp_socket.</p>
+          <p>
+	    Own Id: OTP-18317</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    A new function <seemfa
+	    marker="kernel:global#disconnect/0"><c>global:disconnect/0</c></seemfa>
+	    has been introduced with which one can cleanly disconnect
+	    a node from all other nodes in a cluster of <c>global</c>
+	    nodes.</p>
+          <p>
+	    Own Id: OTP-18232 Aux Id: OTP-17843, PR-6264 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to <seemfa
+	    marker="net_kernel#setopts/2"><c>net_kernel:setopts(new,
+	    Opts)</c></seemfa> at the same time as a connection was
+	    being set up could cause a deadlock between the
+	    <c>net_kernel</c> process and the process setting up the
+	    connection.</p>
+          <p>
+	    Own Id: OTP-18198 Aux Id: GH-6129, PR-6216 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    inet:getopts/2 for the 'raw' option for a socket created
+	    with inet-backend 'socket' failed.</p>
+          <p>
+	    Own Id: OTP-18078 Aux Id: GH-5930 </p>
+        </item>
+        <item>
+          <p>
+	    Corrected the behaviour of the shutdown function when
+	    using with the inet_backend = socket. It was not
+	    sufficiently compatible with the "old" gen_tcp.</p>
+          <p>
+	    Own Id: OTP-18080 Aux Id: GH-5930 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix failed accepted connection setup after previous
+	    established connection from same node closed down
+	    silently.</p>
+          <p>
+	    Own Id: OTP-17979 Aux Id: ERIERL-780 </p>
+        </item>
+        <item>
+	    <p>Fixed a problem where typing Ctrl-R in the shell could
+	    hang if there were some problem with the history log
+	    file.</p>
+          <p>
+	    Own Id: OTP-17981 Aux Id: PR-5791 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Handling of <c>send_timeout</c> for <c>gen_tcp</c> has
+	    been corrected so that the timeout is honored also when
+	    sending 0 bytes.</p>
+          <p>
+	    Own Id: OTP-17840</p>
+        </item>
+        <item>
+	    <p> By default <c>global</c> does <i>not</i> take any
+	    actions to restore a fully connected network when
+	    connections are lost due to network issues. This is
+	    problematic for all applications expecting a fully
+	    connected network to be provided, such as for example
+	    <c>mnesia</c>, but also for <c>global</c> itself. A
+	    network of overlapping partitions might cause the
+	    internal state of <c>global</c> to become inconsistent.
+	    Such an inconsistency can remain even after such
+	    partitions have been brought together to form a fully
+	    connected network again. The effect on other applications
+	    that expects that a fully connected network is maintained
+	    may vary, but they might misbehave in very subtle hard to
+	    detect ways during such a partitioning. </p> <p> In order
+	    to prevent such issues, we have introduced a <i>prevent
+	    overlapping partitions</i> fix which can be enabled using
+	    the <seeapp
+	    marker="kernel:kernel_app#prevent_overlapping_partitions"><c>prevent_overlapping_partitions</c></seeapp>
+	    <c>kernel(6)</c> parameter. When this fix has been
+	    enabled, <c>global</c> will actively disconnect from
+	    nodes that reports that they have lost connections to
+	    other nodes. This will cause fully connected partitions
+	    to form instead of leaving the network in a state with
+	    overlapping partitions. Note that this fix <i>has</i> to
+	    be enabled on <i>all</i> nodes in the network in order to
+	    work properly. Since this quite substantially changes the
+	    behavior, this fix is currently disabled by default.
+	    Since you might get hard to detect issues without this
+	    fix you are, however, <i>strongly</i> advised to enable
+	    this fix in order to avoid issues such as the ones
+	    described above. As of OTP 25 this fix will become
+	    enabled by default. </p>
+          <p>
+	    Own Id: OTP-17843 Aux Id: ERIERL-732, PR-5611 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug where <c>logger</c> would crash when logging a
+	    report including improper lists.</p>
+          <p>
+	    Own Id: OTP-17851</p>
+        </item>
+        <item>
+          <p>
+	    Make <c>erlang:set_cookie</c> work for dynamic node
+	    names.</p>
+          <p>
+	    Own Id: OTP-17902 Aux Id: GH-5402, PR-5670 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add support for using socket:sockaddr_in() and
+	    socket:sockaddr_in6() when using gen_sctp, gen_tcp and
+	    gen_udp. This will make it possible to use Link Local
+	    IPv6 addresses.</p>
+          <p>
+	    Own Id: OTP-17455 Aux Id: GH-4852 </p>
+        </item>
+        <item>
+          <p>
+	    A <seeapp
+	    marker="kernel:kernel_app#net_tickintensity"><c>net_tickintensity</c></seeapp>
+	    <c>kernel</c> parameter has been introduced. It can be
+	    used to control the amount of ticks during a <seeapp
+	    marker="kernel:kernel_app#net_ticktime"><c>net_ticktime</c></seeapp>
+	    period.</p>
+          <p>
+	    A new <seemfa
+	    marker="kernel:net_kernel#start/2"><c>net_kernel:start/2</c></seemfa>
+	    function has also been introduced in order to make it
+	    easier to add new options. The use of <seemfa
+	    marker="kernel:net_kernel#start/1"><c>net_kernel:start/1</c></seemfa>
+	    has been deprecated.</p>
+          <p>
+	    Own Id: OTP-17905 Aux Id: ERIERL-732, PR-5740 </p>
+        </item>
+        <item>
+          <p>
+	    Improve documentation for the dynamic node name feature.</p>
+          <p>
+	    Own Id: OTP-17918</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    socket:which_sockets( pid() ) uses wrong keyword when
+	    looking up socket owner ('ctrl' instead of 'owner').</p>
+          <p>
+	    Own Id: OTP-17716</p>
+        </item>
+        <item>
+          <p>
+	    In epmd_ntop, the #if defined(EPMD6) conditional was
+	    inverted and it was only including the IPv6-specific code
+	    when EPMD6 was undefined. This was causing IPv6 addrs to
+	    be interpreted as IPv4 addrs and generating nonsense IPv4
+	    addresses as output.</p>
+          <p>
+	    Several places were incorrectly using 'num_sockets'
+	    instead of 'i' to index into the iserv_addr array during
+	    error logging. This would result in a read into
+	    uninitialized data in the iserv_addr array.</p>
+          <p>
+	    Thanks to John Eckersberg for providing this fix.</p>
+          <p>
+	    Own Id: OTP-17730</p>
+        </item>
+        <item>
+          <p>
+	    Minor fix of the <c>erl_uds_dist</c> distribution module
+	    example.</p>
+          <p>
+	    Own Id: OTP-17765 Aux Id: PR-5289 </p>
+        </item>
+        <item>
+          <p>
+	    A bug has been fixed for the legacy TCP socket adaption
+	    module <c>gen_tcp_socket</c> where it did bind to a
+	    socket address when given a file descriptor, but should
+	    not.</p>
+          <p>
+	    Own Id: OTP-17793 Aux Id: PR-5348, OTP-17451, PR-4787,
+	    GH-4680, PR-2989, OTP-17216 </p>
+        </item>
+        <item>
+          <p>
+	    Improve the error printout when <c>open_port/2</c> fails
+	    because of invalid arguments.</p>
+          <p>
+	    Own Id: OTP-17805 Aux Id: PR-5406 </p>
+        </item>
+        <item>
+          <p>
+	    Calling socket:monitor/1 on an already closed socket
+	    should succeed and result in an immediate DOWN message.
+	    This has now been fixed.</p>
+          <p>
+	    Own Id: OTP-17806</p>
+        </item>
+        <item>
+          <p>
+	    Fix the configuration option <c>logger_metadata</c> to
+	    work.</p>
+          <p>
+	    Own Id: OTP-17807 Aux Id: PR-5418 </p>
+        </item>
+        <item>
+          <p>
+	    Fix tls and non-tls distribution to use
+	    erl_epmd:address_please to figure out if IPv4 or IPv6
+	    addresses should be used when connecting to the remote
+	    node.</p>
+          <p>
+	    Before this fix, a dns lookup of the remote node hostname
+	    determined which IP version was to be used which meant
+	    that the hostname had to resolve to a valid ip address.</p>
+          <p>
+	    Own Id: OTP-17809 Aux Id: PR-5337 GH-5334 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add <c>logger:reconfigure/0</c>.</p>
+          <p>
+	    Own Id: OTP-17375 Aux Id: PR-4663 PR-5186 </p>
+        </item>
+        <item>
+          <p>
+	    Add socket function ioctl/2,3,4 for socket device
+	    control.</p>
+          <p>
+	    Own Id: OTP-17528</p>
+        </item>
+        <item>
+          <p>
+	    Add simple support for socknames/1 for gen_tcp_socket and
+	    gen_udp_socket.</p>
+          <p>
+	    Own Id: OTP-17531</p>
+        </item>
+        <item>
+          <p>
+	    The types for callback result types in <c>gen_statem</c>
+	    has bee augmented with arity 2 types where it is possible
+	    for a callback module to specify the type of the callback
+	    data, so the callback module can get type validation of
+	    it.</p>
+          <p>
+	    Own Id: OTP-17738 Aux Id: PR-4926, OTP-17589 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.1.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>The internal, undocumented, but used, module
+	    <c>inet_dns</c> has been fixed to handle mDNS high bit
+	    usage of the Class field. </p><p> Code that uses the
+	    previously obsolete, undocumented and unused record field
+	    <c>#dns_rr.func</c> will need to be updated since that
+	    field is now used as a boolean flag for the mDNS high
+	    Class bit. Code that uses the also undocumented record
+	    <c>#dns_query</c> will need to be recompiled since a
+	    boolean field <c>#dns_query.unicast_response</c> has been
+	    added for the mDNS high Class bit. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17734 Aux Id: GH-5327, OTP-17659 </p>
+        </item>
+        <item>
+	    <p> The fix for Linux's behaviour when reconnecting an
+	    UDP socket in PR-5120 released in OTP-24.1.2 has been
+	    refined to only dissolve the socket's connection before a
+	    connect if the socket is already connected, that is: only
+	    for a reconnect. </p><p> This allows code to open a
+	    socket with an ephemeral port, get the port number and
+	    connect; without the port number changing (on Linux).
+	    This turned out to have at least one valid use case
+	    (besides test cases). </p><p> Should one reconnect the
+	    socket then the port number may change, on Linux; it is a
+	    known quirk, which can be worked around by binding to a
+	    specific port number when opening the socket. If you can
+	    do without an ephemeral port, that is... </p>
+          <p>
+	    Own Id: OTP-17736 Aux Id: GH-5279, PR-5120, OTP-17559 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.1.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> The undocumented DNS encode/decode module
+	    <c>inet_dns</c> has been cleaned up to handle the
+	    difference between "symbolic" and "raw" records in a more
+	    consistent manner. </p><p> PR-5145/OTP-17584 introduced a
+	    change that contributed to an already existing confusion,
+	    which this correction should remedy. </p>
+          <p>
+	    Own Id: OTP-17659 Aux Id: ERIERL-702 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Add more info about the socket 'type' ('socket' or
+	    'port') for the DOWN message when monitoring sockets.</p>
+          <p>
+	    Own Id: OTP-17640</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>The extended error information has been corrected and
+	    improved for the following BIFs:
+	    <c>binary_to_existing_atom/2</c>,
+	    <c>list_to_existing_atom/1</c>,
+	    <c>erlang:send_after/{3,4}</c>, and
+	    <c>erlang:start_timer/{3,4}</c>.</p>
+          <p>
+	    Own Id: OTP-17449 Aux Id: GH-4900 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed rare bug that could cause net_kernel process to
+	    hang for ever. Have seen to happen with massive number of
+	    TLS connections while remote nodes are restarting. Bug
+	    exists since OTP-22.0.</p>
+          <p>
+	    Own Id: OTP-17476 Aux Id: GH-4931, PR-4934 </p>
+        </item>
+        <item>
+          <p>
+	    Improve handling of closed sockets for inet:info/1.</p>
+          <p>
+	    Own Id: OTP-17492</p>
+        </item>
+        <item>
+          <p>
+	    This change fixes a performance problem introduced in
+	    pull-request #2675. Pull-request #2675 made so the system
+	    tried to start children of already started applications
+	    which is unnecessary. This change fixes this performance
+	    problem.</p>
+          <p>
+	    Own Id: OTP-17519</p>
+        </item>
+        <item>
+          <p>
+	    Fix code:get_doc/1 to not crash when module is located in
+	    an escript.</p>
+          <p>
+	    Own Id: OTP-17570 Aux Id: PR-5139 GH-4256 ERL-1261 </p>
+        </item>
+        <item>
+          <p>
+	    Parsing of the result value in the native DNS resolver
+	    has been made more defensive against incorrect results.</p>
+          <p>
+	    Own Id: OTP-17578 Aux Id: ERIERL-683 </p>
+        </item>
+        <item>
+          <p>
+	    A bug in the option handling for the legacy socket
+	    adaptor, that is; when using <c>inet_backend =
+	    socket</c>, has been fixed. Now socket options are set
+	    before the bind() call so options regarding, for example
+	    address reuse have the desired effect.</p>
+          <p>
+	    Own Id: OTP-17580 Aux Id: GH-5122 </p>
+        </item>
+        <item>
+          <p>
+	    <c>inet:ntoa/1</c> has been fixed to not accept invalid
+	    numerical addresses.</p>
+          <p>
+	    Own Id: OTP-17583 Aux Id: GH-5136 </p>
+        </item>
+        <item>
+          <p>
+	    Parsing of DNS records has been improved for records of
+	    known types to not accept and present malformed ones in
+	    raw format.</p>
+          <p>
+	    Own Id: OTP-17584 Aux Id: PR-5145 </p>
+        </item>
+        <item>
+          <p>
+	    The <c>ip_mreq()</c> type for the
+	    <c>{ip,add_membership}</c> and
+	    <c>{ip,drop_membership}</c> socket options has been
+	    corrected to have an <c>interface</c> field instead of,
+	    incorrectly, an <c>address</c> field.</p>
+          <p>
+	    Own Id: OTP-17590 Aux Id: PR-5170 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add simple utility function to display existing sockets i
+	    the erlang shell (socket:i/0).</p>
+          <p>
+	    Own Id: OTP-17376 Aux Id: OTP-17157 </p>
+        </item>
+        <item>
+          <p>
+	    gen_udp can now be configured to use the socket
+	    inet-backend (in the same way as gen_tcp).</p>
+          <p>
+	    Own Id: OTP-17410</p>
+        </item>
+        <item>
+	    <p>Functions <c>erlang:set_cookie(Cookie)</c> and
+	    <c>erlang:get_cookie(Node)</c> have been added for
+	    completeness and to facilitate configuring distributed
+	    nodes with different cookies. </p><p> The documentation
+	    regarding distribution cookies has been improved to be
+	    less vague. </p>
+          <p>
+	    Own Id: OTP-17538 Aux Id: GH-5063, PR-5111 </p>
+        </item>
+        <item>
+	    <p>A workaround has been implemented for Linux's quirky
+	    behaviour to not adjust the source IP address when
+	    connecting a connected (reconnecing) UDP socket. </p><p>
+	    The workaround is to, on Linux, always dissolve any
+	    connection before connecting an UDP socket. </p>
+          <p>
+	    Own Id: OTP-17559 Aux Id: GH-5092, PR-5120 </p>
+        </item>
+        <item>
+	    <p>Documented our recommendation against opening
+	    NFS-mounted files, FIFOs, devices, and similar using
+	    <c>file:open/2</c>.</p>
+          <p>
+	    Own Id: OTP-17576 Aux Id: ERIERL-685 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.0.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>For <c>gen_tcp:connect/3,4</c> it is possible to
+	    specify a specific source port, which should be enough to
+	    bind the socket to an address with that port before
+	    connecting. </p><p>Unfortunately that feature was lost in
+	    OTP-17216 that made it mandatory to specify the source
+	    address to get an address binding, and ignored a
+	    specified source port if no source address was specified.
+	    </p><p>That bug has now been corrected. </p>
+          <p>
+	    Own Id: OTP-17536 Aux Id: OTP-17216, ERIERL-677 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.0.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix a race condition in Global.</p>
+          <p>
+	    Own Id: OTP-16033 Aux Id: ERIERL-329, ERL-1414, GH-4448,
+	    ERL-885, GH-3923 </p>
+        </item>
+        <item>
+	    <p> After a node restart with <c>init:restart/0,1</c>,
+	    the module <c>socket</c> was not usable because
+	    supporting tables had been cleared and not
+	    re-initialized. This has now been fixed. </p><p> Handling
+	    of the "." domain as a search domain was incorrect and
+	    caused a crash in the DNS resolver <c>inet_res</c>, which
+	    has now been fixed. </p>
+          <p>
+	    Own Id: OTP-17439 Aux Id: GH-4827, PR-4888, GH-4838 </p>
+        </item>
+        <item>
+          <p>
+	    Handling of combinations of the <c>fd</c> option and
+	    binding to an address has been corrected, especially for
+	    the <c>local</c> address family.</p>
+          <p>
+	    Own Id: OTP-17451 Aux Id: OTP-17374 </p>
+        </item>
+        <item>
+	    <p> Bug fixes and code cleanup for the new <c>socket</c>
+	    implementation, such as: </p><p> Assertions on the result
+	    of demonitoring has been added in the NIF code, where
+	    appropriate. </p><p> Internal state handling for socket
+	    close in the NIF code has been reviewed. </p><p> Looping
+	    over <c>close()</c> for <c>EINTR</c> in the NIF code has
+	    been removed, since it is strongly discouraged on Linux
+	    and Posix is not clear about if it is allowed. </p><p>
+	    The <c>inet_backend</c> temporary socket option for
+	    legacy <c>gen_tcp</c> sockets has been documented.
+	    </p><p> The return value from <c>net:getaddrinfo/2</c>
+	    has been corrected: the <c>protocol</c> field is now an
+	    <c>atom()</c>, instead of, incorrectly,
+	    <c>list(atom())</c>. The documentation has also been
+	    corrected about this return type. </p><p> Deferred close
+	    of a <c>socket:sendfile/*</c> file was broken and has
+	    been corrected. </p><p> Some debug code, not enabled by
+	    default, in the socket NIF has been corrected to not
+	    accidentally core dump for debug printouts of more or
+	    less innocent events. </p>
+          <p>
+	    Own Id: OTP-17452</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 8.0</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A bug has been fixed for the internal <c>inet_res</c>
+	    resolver cache that handled a resolver configuration file
+	    status timer incorrectly and caused performance problems
+	    due to many unnecessary file system accesses.</p>
+          <p>
+	    Own Id: OTP-14700 Aux Id: PR-2848 </p>
+        </item>
+        <item>
+          <p>
+	    Change the value of the tag <c>head</c> returned by
+	    <c>disk_log:info/1</c> from <c>{ok, Head}</c> to just
+	    <c>Head</c>.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16809 Aux Id: ERL-1313 </p>
+        </item>
+        <item>
+          <p>
+	    Two options have been added to <c>erl_call</c>. The
+	    <c>-fetch_stdout</c> option fetches stdout data resulting
+	    from the code invoked by <c>erl_call</c>. The
+	    <c>-fetch_stdout</c> option disables printing of the
+	    result term. In order to implement the first of these two
+	    options a new function called <c>ei_xrpc_from</c> has
+	    been added to erl_interface. For details see the
+	    <c>erl_call</c> documentation and <c>erl_interface</c>
+	    documentation.</p>
+          <p>
+	    Own Id: OTP-17132</p>
+        </item>
+        <item>
+	    <p>Missing runtime dependencies has been added to this
+	    application.</p>
+          <p>
+	    Own Id: OTP-17243 Aux Id: PR-4557 </p>
+        </item>
+        <item>
+          <p>
+	    <c>inet:get_rc/0</c> has been corrected to return host
+	    entries as separate entries instead of (incorrectly) in a
+	    list within the list. This bug was introduced by
+	    OTP-16487 in OTP-23.0-rc1.</p>
+          <p>
+	    Own Id: OTP-17262 Aux Id: GH-4588, PR-4604, OTP-16487 </p>
+        </item>
+        <item>
+          <p>
+	    The type gen_tcp:option_name() had a duplicate pktoptions
+	    value.</p>
+          <p>
+	    Own Id: OTP-17277</p>
+        </item>
+        <item>
+          <p>
+	    Fixed removal of empty groups from internal state in
+	    <c>pg</c>.</p>
+          <p>
+	    Own Id: OTP-17286 Aux Id: PR-4619 </p>
+        </item>
+        <item>
+          <p>
+	    <c>erl -remsh</c> now prints an error message when it
+	    fails to connect to the remote node.</p>
+          <p>
+	    Own Id: OTP-17287 Aux Id: PR-4581 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bugs related to corrupt shell history files.</p>
+          <p>
+	    Error messages printed by shell history are now logged as
+	    logger error reports instead of written to standard
+	    error.</p>
+          <p>
+	    Own Id: OTP-17288 Aux Id: PR-4581 </p>
+        </item>
+        <item>
+          <p>
+	    A logger warning is now issues when too many arguments
+	    are given to <c>-name</c> or <c>-sname</c>. Example:
+	    <c>erl -name a b</c>.</p>
+          <p>
+	    Own Id: OTP-17315 Aux Id: GH-4626 </p>
+        </item>
+        <item>
+          <p>
+	    The cache used by <c>inet_res</c> now, again, can handle
+	    multiple IP addresses per domain name, and thus fixes a
+	    bug introduced in PR-3041 (OTP-13126) and PR-2891
+	    (OTP-14485).</p>
+          <p>
+	    Own Id: OTP-17344 Aux Id: PR-4633, GH-4631, OTP-14485,
+	    OTP-12136 </p>
+        </item>
+        <item>
+          <p>
+	    Sockets created with socket:accept not counted
+	    (socket:info/0).</p>
+          <p>
+	    Own Id: OTP-17372</p>
+        </item>
+        <item>
+          <p>
+	    The <c>{fd, Fd}</c> option to <c>gen_tcp:listen/2</c> did
+	    not work for <c>inet_backend</c> <c>socket</c>, which has
+	    been fixed.</p>
+          <p>
+	    Own Id: OTP-17374 Aux Id: PR-4787, GH-4680, PR-2989,
+	    OTP-17216 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    The cache used by the DNS resolver <c>inet_res</c> has
+	    been improved to use ETS lookups instead of server calls.
+	    This is a considerable speed improvement for cache hits.</p>
+          <p>
+	    Own Id: OTP-13126 Aux Id: PR-3041 </p>
+        </item>
+        <item>
+          <p>
+	    The cache ETS table type for the internal DNS resolver
+	    <c>inet_res</c> has changed type (internally) to get
+	    better speed and atomicity.</p>
+          <p>
+	    Own Id: OTP-14485 Aux Id: PR-2891 </p>
+        </item>
+        <item>
+          <p>
+	    The experimental <c>socket</c> module can now use any
+	    protocol (by name) the OS supports. Suggested in PR-2641,
+	    implemented in PR-2670.</p>
+          <p>
+	    Own Id: OTP-14601 Aux Id: PR-2641, PR-2670, OTP-16749 </p>
+        </item>
+        <item>
+          <p>
+	    The DNS resolver <c>inet_res</c> has been updated to
+	    support CAA (RFC 6844) and URI (RFC 7553) records.</p>
+          <p>
+	    Own Id: OTP-16517 Aux Id: PR-2827 </p>
+        </item>
+        <item>
+          <p>
+	    A compatibility adaptor for <c>gen_tcp</c> to use the new
+	    <c>socket</c> API has been implemented
+	    (<c>gen_tcp_socket</c>). Used when setting the kernel
+	    application variable <c>inet_backend = socket</c>.</p>
+          <p>
+	    Own Id: OTP-16611 Aux Id: OTP-16749 </p>
+        </item>
+        <item>
+          <p>
+	    Extended error information for failing BIF calls as
+	    proposed in <url
+	    href="https://github.com/erlang/eep/blob/master/eeps/eep-0054.md">EEP
+	    54</url> has been implemented.</p>
+          <p>
+	    When a BIF call from the Erlang shell fails, more
+	    information about which argument or arguments that were
+	    in error will be printed. The same extended error
+	    information will by <c>proc_lib</c>, <c>common_test</c>,
+	    and <c>qlc</c> when BIF calls fail.</p>
+          <p>
+	    For applications that wish to provide the same extended
+	    error information, there are new functions
+	    <c>erl_error:format_exception/3</c> and
+	    <c>erl_error:format_exception/4</c>.</p>
+          <p>
+	    There is a new <c>error/3</c> BIF that allows
+	    applications or libraries to provide extended error
+	    information in the same way for their own exceptions.</p>
+          <p>
+	    Own Id: OTP-16686</p>
+        </item>
+        <item>
+	    <p>The file server can now be bypassed in
+	    <c>file:delete/1,2</c> with the <c>raw</c> option.</p>
+          <p>
+	    Own Id: OTP-16698 Aux Id: PR-2634 </p>
+        </item>
+        <item>
+          <p>
+	    An example implementation of Erlang distribution over UDS
+	    using distribution processes has been introduced.</p>
+          <p>
+	    Thanks to Jérôme de Bretagne</p>
+          <p>
+	    Own Id: OTP-16703 Aux Id: PR-2620 </p>
+        </item>
+        <item>
+          <p>
+	    The <seeguide
+	    marker="system/reference_manual:processes#process-aliases"><i>process
+	    alias</i></seeguide> feature as outlined by <url
+	    href="https://github.com/erlang/eep/blob/master/eeps/eep-0053.md">EEP
+	    53</url> has been introduced. It is introduced in order
+	    to provide a lightweight mechanism that can prevent late
+	    replies after timeout or connection loss. For more
+	    information, see EEP 53 and the documentation of the new
+	    <seemfa
+	    marker="erts:erlang#alias/1"><c>alias/1</c></seemfa> BIF
+	    and the new options to the <seemfa
+	    marker="erts:erlang#monitor/3"><c>monitor/3</c></seemfa>
+	    BIF.</p>
+          <p>
+	    The <c>call</c> operation in the framework used by
+	    <c>gen_server</c>, <c>gen_statem</c>, and
+	    <c>gen_event</c> has been updated to utilize alias in
+	    order to prevent late responses. The <c>gen_statem</c>
+	    behavior still use a proxy process in the distributed
+	    case, since it has always prevented late replies and
+	    aliases won't work against pre OTP 24 nodes. The proxy
+	    process can be removed in OTP 26.</p>
+          <p>
+	    The alias feature also made it possible to introduce new
+	    functions similar to the <seemfa
+	    marker="kernel:erpc#receive_response/2"><c>erpc:receive_response()</c></seemfa>
+	    function in the gen behaviors, so the new functions
+	    <seemfa
+	    marker="stdlib:gen_server#receive_response/2"><c>gen_server:receive_response()</c></seemfa>,
+	    <seemfa
+	    marker="stdlib:gen_statem#receive_response/2"><c>gen_statem:receive_response()</c></seemfa>,
+	    <seemfa
+	    marker="stdlib:gen_event#receive_response/2"><c>gen_event:receive_response()</c></seemfa>
+	    have also been introduced.</p>
+          <p>
+	    Own Id: OTP-16718 Aux Id: PR-2735 </p>
+        </item>
+        <item>
+	    <p> The experimental new socket API has been further
+	    developed. Some backwards incompatible changes with
+	    respect to OTP 23 have been made. </p><p> The control
+	    message format has been changed so a decoded value is now
+	    in the 'value' field instead of in the 'data' field. The
+	    'data' field now always contains binary data. </p><p>
+	    Some type names have been changed regarding message
+	    headers and control message headers. </p><p>
+	    <c>socket:bind/2</c> now returns plain <c>ok</c> instead
+	    of <c>{ok, Port}</c> which was only relevant for the
+	    <c>inet</c> and <c>inet6</c> address families and often
+	    not interesting. To find out which port was chosen use
+	    <c>socket:sockname/1</c>. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16749 Aux Id: OTP-14601 </p>
+        </item>
+        <item>
+          <p>
+	    New function <c>os:env/0</c> returns all OS environment
+	    variables as a list of 2-tuples.</p>
+          <p>
+	    Own Id: OTP-16793 Aux Id: ERL-1332, PR-2740 </p>
+        </item>
+        <item>
+          <p>
+	    Remove the support for distributed disk logs. The new
+	    function <c>disk_log:all/0</c> is to be used instead of
+	    <c>disk_log:accessible_logs/0</c>. The function
+	    <c>disk_log:close/1</c> is to be used instead of
+	    <c>disk_log:lclose/1,2</c>.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16811</p>
+        </item>
+        <item>
+          <p>
+	    Expand the spec for <c>erl_epmd:listen_port_please/2</c>
+	    to mirror <c>erl_epmd:port_please/2</c>.</p>
+          <p>
+	    Own Id: OTP-16947 Aux Id: PR-2781 </p>
+        </item>
+        <item>
+          <p>
+	    A new erl parameter for specifying a file descriptor with
+	    configuration data has been added. This makes it possible
+	    to pass the parameter "-configfd FD" when executing the
+	    erl command. When this option is given, the system will
+	    try to read and parse configuration parameters from the
+	    file descriptor.</p>
+          <p>
+	    Own Id: OTP-16952</p>
+        </item>
+        <item>
+	    <p>The experimental HiPE application has been removed,
+	    together with all related functionality in other
+	    applications.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16963</p>
+        </item>
+        <item>
+	    <p>The <c>pg2</c> module has been removed.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-16968</p>
+        </item>
+        <item>
+          <p>
+	    Accept references up to a size of 160-bits from remote
+	    nodes. This is the first step in an upgrade path toward
+	    using references up to 160-bits in a future OTP release.</p>
+          <p>
+	    Own Id: OTP-17005 Aux Id: OTP-16718 </p>
+        </item>
+        <item>
+          <p>
+	    Allow utf-8 binaries as parts of logger_formatter
+	    template.</p>
+          <p>
+	    Own Id: OTP-17015</p>
+        </item>
+        <item>
+          <p>
+	    Let <c>disk_log:open/1</c> change the size if a wrap log
+	    is opened for the first time, that is, the disk log
+	    process does not exist, and the value of option
+	    <c>size</c> does not match the current size of the disk
+	    log.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17062 Aux Id: ERL-1418, GH-4469, ERIERL-537 </p>
+        </item>
+        <item>
+          <p>
+	    Allow the shell history of an erlang node to be fetched
+	    and stores using a custom callback module. See
+	    <c>shell_history</c> configuration parameter in the
+	    <seeapp marker="kernel:kernel_app">kernel
+	    documentation</seeapp> for more details.</p>
+          <p>
+	    Own Id: OTP-17103 Aux Id: PR-2949 </p>
+        </item>
+        <item>
+          <p>
+	    The simple logger (used to log events that happen before
+	    kernel has been started) has been improved to print
+	    prettier error messages.</p>
+          <p>
+	    Own Id: OTP-17106 Aux Id: PR-2885 </p>
+        </item>
+        <item>
+          <p>
+	    <c>socket:sendfile/2,3,4,5</c> has been implemented, for
+	    platforms that support the underlying socket library
+	    call.</p>
+          <p>
+	    Own Id: OTP-17154 Aux Id: OTP-16749 </p>
+        </item>
+        <item>
+          <p>
+	    Add socket monitor(s) for all types sockets.</p>
+          <p>
+	    Own Id: OTP-17155</p>
+        </item>
+        <item>
+          <p>
+	    Fix various issues with the gen_tcp_socket. Including
+	    documenting some incompatibilities.</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17156</p>
+        </item>
+        <item>
+          <p>
+	    inet:i/0 now also shows existing gen_tcp compatibility
+	    sockets (based on 'socket').</p>
+          <p>
+	    Own Id: OTP-17157</p>
+        </item>
+        <item>
+          <p>
+	    Added support in logger for setting primary metadata. The
+	    primary metadata is passed as a base metadata to all log
+	    events in the system. See <seeguide
+	    marker="logger_chapter#metadata">Metadata</seeguide> in
+	    the Logger chapter of the Kernel User's Guide for more
+	    details.</p>
+          <p>
+	    Own Id: OTP-17181 Aux Id: PR-2457 </p>
+        </item>
+        <item>
+          <p>
+	    Recognize new key 'optional_applications' in application
+	    resource files.</p>
+          <p>
+	    Own Id: OTP-17189 Aux Id: PR-2675 </p>
+        </item>
+        <item>
+          <p>
+	    The <c>Fun</c>'s passed to logger:log/2,3,4 can now
+	    return metadata that will only be fetched when needed.
+	    See <seemfa
+	    marker="logger#log/2"><c>logger:log/2,3,4</c></seemfa>
+	    for more details.</p>
+          <p>
+	    Own Id: OTP-17198 Aux Id: PR-2721 </p>
+        </item>
+        <item>
+          <p>
+	    <c>erpc:multicall()</c> has been rewritten to be able to
+	    utilize the newly introduced and improved selective
+	    receive optimization.</p>
+          <p>
+	    Own Id: OTP-17201 Aux Id: PR-4534 </p>
+        </item>
+        <item>
+          <p>
+	    Add utility fiunction inet:info/1 to provide
+	    miscellaneous info about a socket.</p>
+          <p>
+	    Own Id: OTP-17203 Aux Id: OTP-17156 </p>
+        </item>
+        <item>
+	    <p> The behaviour for <c>gen_tcp:connect/3,4</c> has been
+	    changed to not per default bind to an address, which
+	    allows the network stack to delay the address and port
+	    selection to when the remote address is known. This
+	    allows better port re-use, and thus enables far more
+	    outgoing connections, since the ephemeral port range no
+	    longer has to be a hard limit. </p><p> There is a
+	    theoretical possibility that this behaviour change can
+	    affect the set of possible error values, or have other
+	    small implications on some platforms. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17216 Aux Id: PR-2989 </p>
+        </item>
+        <item>
+          <p>
+	    An option <c>{nxdomain_reply, boolean()}</c> has been
+	    implemented in the DNS resolver <c>inet_res</c>. It is
+	    useful since an <c>nxdomain</c> error from a name server
+	    does contain the SOA record if the domain exists at all.
+	    This record is useful to determine a TTL for negative
+	    caching of the failed entry.</p>
+          <p>
+	    Own Id: OTP-17266 Aux Id: PR-4564 </p>
+        </item>
+        <item>
+          <p>
+	    Optimized lookup of local processes part of groups in
+	    <c>pg</c>.</p>
+          <p>
+	    Own Id: OTP-17284 Aux Id: PR-4615 </p>
+        </item>
+        <item>
+	    <p> The return values from module <c>socket</c> functions
+	    <c>send()</c>, <c>sendto()</c>, <c>sendmsg()</c>,
+	    <c>sendfile()</c> and <c>recv()</c> has been changed to
+	    return a tuple tagged with <c>select</c> when a
+	    <c>SelectInfo</c> was returned, and not sometimes tagged
+	    with <c>ok</c>. </p><p>This is a backwards incompatible
+	    change that improves usability for code using
+	    asynchronous operations. </p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17355 Aux Id: OTP-17154 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed warnings in code matching on underscore prefixed
+	    variables.</p>
+          <p>
+	    Own Id: OTP-17385 Aux Id: OTP-17123 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.7</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    A new function <seemfa
+	    marker="kernel:global#disconnect/0"><c>global:disconnect/0</c></seemfa>
+	    has been introduced with which one can cleanly disconnect
+	    a node from all other nodes in a cluster of <c>global</c>
+	    nodes.</p>
+          <p>
+	    Own Id: OTP-18232 Aux Id: OTP-17843, PR-6264 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to <seemfa
+	    marker="net_kernel#setopts/2"><c>net_kernel:setopts(new,
+	    Opts)</c></seemfa> at the same time as a connection was
+	    being set up could cause a deadlock between the
+	    <c>net_kernel</c> process and the process setting up the
+	    connection.</p>
+          <p>
+	    Own Id: OTP-18198 Aux Id: GH-6129, PR-6216 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> By default <c>global</c> does <i>not</i> take any
+	    actions to restore a fully connected network when
+	    connections are lost due to network issues. This is
+	    problematic for all applications expecting a fully
+	    connected network to be provided, such as for example
+	    <c>mnesia</c>, but also for <c>global</c> itself. A
+	    network of overlapping partitions might cause the
+	    internal state of <c>global</c> to become inconsistent.
+	    Such an inconsistency can remain even after such
+	    partitions have been brought together to form a fully
+	    connected network again. The effect on other applications
+	    that expects that a fully connected network is maintained
+	    may vary, but they might misbehave in very subtle hard to
+	    detect ways during such a partitioning. </p> <p> In order
+	    to prevent such issues, we have introduced a <i>prevent
+	    overlapping partitions</i> fix which can be enabled using
+	    the <seeapp
+	    marker="kernel:kernel_app#prevent_overlapping_partitions"><c>prevent_overlapping_partitions</c></seeapp>
+	    <c>kernel(6)</c> parameter. When this fix has been
+	    enabled, <c>global</c> will actively disconnect from
+	    nodes that reports that they have lost connections to
+	    other nodes. This will cause fully connected partitions
+	    to form instead of leaving the network in a state with
+	    overlapping partitions. Note that this fix <i>has</i> to
+	    be enabled on <i>all</i> nodes in the network in order to
+	    work properly. Since this quite substantially changes the
+	    behavior, this fix is currently disabled by default.
+	    Since you might get hard to detect issues without this
+	    fix you are, however, <i>strongly</i> advised to enable
+	    this fix in order to avoid issues such as the ones
+	    described above. As of OTP 25 this fix will become
+	    enabled by default. </p>
+          <p>
+	    Own Id: OTP-17843 Aux Id: ERIERL-732, PR-5611 </p>
+        </item>
+        <item>
+          <p>
+	    Fix failed accepted connection setup after previous
+	    established connection from same node closed down
+	    silently.</p>
+          <p>
+	    Own Id: OTP-17979 Aux Id: ERIERL-780 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    A <seeapp
+	    marker="kernel:kernel_app#net_tickintensity"><c>net_tickintensity</c></seeapp>
+	    <c>kernel</c> parameter has been introduced. It can be
+	    used to control the amount of ticks during a <seeapp
+	    marker="kernel:kernel_app#net_ticktime"><c>net_ticktime</c></seeapp>
+	    period.</p>
+          <p>
+	    A new <seemfa
+	    marker="kernel:net_kernel#start/2"><c>net_kernel:start/2</c></seemfa>
+	    function has also been introduced in order to make it
+	    easier to add new options. The use of <seemfa
+	    marker="kernel:net_kernel#start/1"><c>net_kernel:start/1</c></seemfa>
+	    has been deprecated.</p>
+          <p>
+	    Own Id: OTP-17905 Aux Id: ERIERL-732, PR-5740 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Parsing of the result value in the native DNS resolver
+	    has been made more defensive against incorrect results.</p>
+          <p>
+	    Own Id: OTP-17578 Aux Id: ERIERL-683 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix code:get_doc/1 to not crash when module is located in
+	    an escript.</p>
+          <p>
+	    Own Id: OTP-17570 Aux Id: PR-5139 GH-4256 ERL-1261 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Handling of the "." domain as a search domain was
+	    incorrect and caused a crash in the DNS resolver
+	    <c>inet_res</c>, which has now been fixed.</p>
+          <p>
+	    Own Id: OTP-17473 Aux Id: GH-4838, OTP-17439 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed rare bug that could cause net_kernel process to
+	    hang for ever. Have seen to happen with massive number of
+	    TLS connections while remote nodes are restarting. Bug
+	    exists since OTP-22.0.</p>
+          <p>
+	    Own Id: OTP-17476 Aux Id: GH-4931, PR-4934 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix a race condition in Global.</p>
+          <p>
+	    Own Id: OTP-16033 Aux Id: ERIERL-329, ERL-1414, GH-4448,
+	    ERL-885, GH-3923 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A bug in the Erlang DNS resolver has been fixed, where it
+	    could be made to bring down the kernel supervisor and
+	    thereby the whole node, when getting an incorrect (IN A
+	    reply to an IN CNAME query) reply from the DNS server and
+	    used the reply record's value without verifying its type.</p>
+          <p>
+	    Own Id: OTP-17361</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The range check for compression pointers in DNS encoding
+	    was faulty, which caused incorrect label compression
+	    encoding for very large DNS messages; larger than about
+	    16 kBytes, such as AXFR responses. This more than 11 year
+	    old bug has now been corrected.</p>
+          <p>
+	    Own Id: OTP-13641 Aux Id: PR-2959 </p>
+        </item>
+        <item>
+          <p>
+	    Fix of internal links in the <c>erpc</c> documentation.</p>
+          <p>
+	    Own Id: OTP-17202 Aux Id: PR-4516 </p>
+        </item>
+        <item>
+          <p>
+	    Fix bug where complex seq_trace tokens (that is lists,
+	    tuples, maps etc) could becomes corrupted by the GC. The
+	    bug was introduced in OTP-21.</p>
+          <p>
+	    Own Id: OTP-17209 Aux Id: PR-3039 </p>
+        </item>
+        <item>
+	    <p>When running Xref in the <c>modules</c> mode, the
+	    Debugger application would show up as a dependency for the
+	    Kernel applications.</p>
+          <p>
+	    Own Id: OTP-17223 Aux Id: GH-4546, PR-4554 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    <seeerl marker="erl_epmd"><c>erl_epmd</c></seeerl> (the
+	    epmd client) will now try to reconnect to the local EPMD
+	    if the connection is broken.</p>
+          <p>
+	    Own Id: OTP-17178 Aux Id: PR-3003 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    When using the DNS resolver option
+	    <c>servfail_retry_timeout</c> it did not honour the
+	    overall call time-out in e.g <c>inet_res:getbyname/3</c>.
+	    This misbehaviour has now been fixed. Also, the
+	    <c>servfail_retry_timeout</c> behaviour has been improved
+	    to only be enforced for servers that gives a servfail
+	    answer.</p>
+          <p>
+	    Own Id: OTP-12960 Aux Id: ERIERL-598, PR-4509 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The <c>apply</c> call's in <c>logger.hrl</c> are now
+	    called with <c>erlang</c> prefix to avoid clashed with
+	    local <c>apply/3</c> functions.</p>
+          <p>
+	    Own Id: OTP-16976 Aux Id: PR-2807 </p>
+        </item>
+        <item>
+          <p>
+	    Fix memory leak in <c>pg</c>.</p>
+          <p>
+	    Own Id: OTP-17034 Aux Id: PR-2866 </p>
+        </item>
+        <item>
+          <p>
+	    Fix crash in <c>logger_proxy</c> due to stray
+	    <c>gen_server:call</c> replies not being handled. The
+	    stray replies come when logger is under heavy load and
+	    the flow control mechanism is reaching its limit.</p>
+          <p>
+	    Own Id: OTP-17038</p>
+        </item>
+        <item>
+          <p>
+	    Fixed a bug in <c>erl_epmd:names()</c> that caused it to
+	    return the illegal return value <c>noport</c> instead of
+	    <c>{error, Reason}</c> where <c>Reason</c> is the actual
+	    error reason. This bug also propagated to
+	    <c>net_adm:names()</c>.</p>
+          <p>
+	    This bug was introduced in <c>kernel</c> version 7.1 (OTP
+	    23.1).</p>
+          <p>
+	    Own Id: OTP-17054 Aux Id: ERL-1424 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add export of some resolver documented types.</p>
+          <p>
+	    Own Id: OTP-16954 Aux Id: ERIERL-544 </p>
+        </item>
+        <item>
+          <p>
+	    Add configurable retry timeout for resolver lookups.</p>
+          <p>
+	    Own Id: OTP-16956 Aux Id: ERIERL-547 </p>
+        </item>
+        <item>
+          <p>
+	    <c>gen_server:multi_call()</c> has been optimized in the
+	    special case of only calling the local node with timeout
+	    set to <c>infinity</c>.</p>
+          <p>
+	    Own Id: OTP-17058 Aux Id: PR-2887 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 7.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A fallback has been implemented for file:sendfile when
+	    using inet_backend socket</p>
+          <p>
+	    Own Id: OTP-15187 Aux Id: ERL-1293 </p>
+        </item>
+        <item>
+          <p>
+	    Make default TCP distribution honour option
+	    <c>backlog</c> in <c>inet_dist_listen_options</c>.</p>
+          <p>
+	    Own Id: OTP-16694 Aux Id: PR-2625 </p>
+        </item>
+        <item>
+          <p>
+	    Raw option handling for the experimental
+	    <c>gen_tcp_socket</c> backend was broken so that all raw
+	    options were ignored by for example
+	    <c>gen_tcp:listen/2</c>, a bug that now has been fixed.
+	    Reported by Jan Uhlig.</p>
+          <p>
+	    Own Id: OTP-16743 Aux Id: ERL-1287 </p>
+        </item>
+        <item>
+          <p>
+	    Accept fails with inet-backend socket.</p>
+          <p>
+	    Own Id: OTP-16748 Aux Id: ERL-1284 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed various minor errors in the socket backend of
+	    gen_tcp.</p>
+          <p>
+	    Own Id: OTP-16754</p>
+        </item>
+        <item>
+          <p>
+	    Correct <c>disk_log:truncate/1</c> to count the header.
+	    Also correct the documentation to state that
+	    <c>disk_log:truncate/1</c> can be used with external disk
+	    logs.</p>
+          <p>
+	    Own Id: OTP-16768 Aux Id: ERL-1312 </p>
+        </item>
+        <item>
+          <p>
+	    Fix erl_epmd:port_please/2,3 type specs to include all
+	    possible error values.</p>
+          <p>
+	    Own Id: OTP-16783</p>
+        </item>
+        <item>
+          <p>
+	    Fix <c>erl -erl_epmd_port</c> to work properly. Before
+	    this fix it did not work at all.</p>
+          <p>
+	    Own Id: OTP-16785</p>
+        </item>
+        <item>
+          <p>
+	    Fix typespec for internal function
+	    <c>erlang:seq_trace_info/1</c> to allow <c>term()</c> as
+	    returned label. This in turn fixes so that calls to
+	    <c>seq_trace:get_token/1</c> can be correctly analyzer by
+	    dialyzer.</p>
+          <p>
+	    Own Id: OTP-16823 Aux Id: PR-2722 </p>
+        </item>
+        <item>
+          <p>
+	    Fix erroneous double registration of processes in
+	    <c>pg</c> when distribution is dynamically started.</p>
+          <p>
+	    Own Id: OTP-16832 Aux Id: PR-2738 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Make (use of) the socket registry optional (still enabled
+	    by default). Its now possible to build OTP with the
+	    socket registry turned off, turn it off by setting an
+	    environment variable and controlling in runtime (via
+	    function calls and arguments when creating sockets).</p>
+          <p>
+	    Own Id: OTP-16763</p>
+        </item>
+        <item>
+          <p>
+	    <c>erl -remsh nodename</c> no longer requires the
+	    hostname to be given when used together with dynamic
+	    nodenames.</p>
+          <p>
+	    Own Id: OTP-16784</p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Kernel 7.0</title>
 
@@ -299,7 +3835,7 @@
 	    Own Id: OTP-16453 Aux Id: PR-2524 </p>
         </item>
         <item>
-	    <p> The <seeerl marker="kernel:pg2"><c>pg2</c></seeerl>
+	    <p> The <c>pg2</c>
 	    module has been deprecated. It has also been scheduled
 	    for removal in OTP 24. </p><p> You are advised to replace
 	    the usage of <c>pg2</c> with the newly introduced <seeerl
@@ -408,6 +3944,135 @@
 	    Reported by Maksim Lapshin on bugs.erlang.org ERL-1234</p>
           <p>
 	    Own Id: OTP-16632 Aux Id: ERL-1234 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 6.5.2.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> By default <c>global</c> does <i>not</i> take any
+	    actions to restore a fully connected network when
+	    connections are lost due to network issues. This is
+	    problematic for all applications expecting a fully
+	    connected network to be provided, such as for example
+	    <c>mnesia</c>, but also for <c>global</c> itself. A
+	    network of overlapping partitions might cause the
+	    internal state of <c>global</c> to become inconsistent.
+	    Such an inconsistency can remain even after such
+	    partitions have been brought together to form a fully
+	    connected network again. The effect on other applications
+	    that expects that a fully connected network is maintained
+	    may vary, but they might misbehave in very subtle hard to
+	    detect ways during such a partitioning. </p> <p> In order
+	    to prevent such issues, we have introduced a <i>prevent
+	    overlapping partitions</i> fix which can be enabled using
+	    the <c>prevent_overlapping_partitions</c>
+	    <c>kernel(6)</c> parameter. When this fix has been
+	    enabled, <c>global</c> will actively disconnect from
+	    nodes that reports that they have lost connections to
+	    other nodes. This will cause fully connected partitions
+	    to form instead of leaving the network in a state with
+	    overlapping partitions. Note that this fix <i>has</i> to
+	    be enabled on <i>all</i> nodes in the network in order to
+	    work properly. Since this quite substantially changes the
+	    behavior, this fix is currently disabled by default.
+	    Since you might get hard to detect issues without this
+	    fix you are, however, <i>strongly</i> advised to enable
+	    this fix in order to avoid issues such as the ones
+	    described above. As of OTP 25 this fix will become
+	    enabled by default. </p>
+          <p>
+	    Own Id: OTP-17843 Aux Id: ERIERL-732, PR-5611 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    A <c>net_tickintensity</c> <c>kernel</c> parameter has
+	    been introduced. It can be used to control the amount of
+	    ticks during a <c>net_ticktime</c> period.</p>
+          <p>
+	    A new <c>net_kernel:start/2</c> function has also been
+	    introduced in order to make it easier to add new options.
+	    The use of <c>net_kernel:start/1</c> has been deprecated.</p>
+          <p>
+	    Own Id: OTP-17905 Aux Id: ERIERL-732, PR-5740 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 6.5.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fixed rare bug that could cause net_kernel process to
+	    hang for ever. Have seen to happen with massive number of
+	    TLS connections while remote nodes are restarting. Bug
+	    exists since OTP-22.0.</p>
+          <p>
+	    Own Id: OTP-17476 Aux Id: GH-4931, PR-4934 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 6.5.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix a race condition in Global.</p>
+          <p>
+	    Own Id: OTP-16033 Aux Id: ERIERL-329, ERL-1414, GH-4448,
+	    ERL-885, GH-3923 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 6.5.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>When running Xref in the <c>modules</c> mode, the
+	    Debugger application would show up as a dependency for the
+	    Kernel applications.</p>
+          <p>
+	    Own Id: OTP-17223 Aux Id: GH-4546, PR-4554 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 6.5.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix bug in <c>application:loaded_applications/0</c> that
+	    could cause it to fail with <c>badarg</c> if for example
+	    a concurrent upgrade/downgrade is running.</p>
+          <p>
+	    Own Id: OTP-16627 Aux Id: PR-2601 </p>
         </item>
       </list>
     </section>
@@ -950,7 +4615,7 @@
 	    The default value is 0, which means that this check is
 	    done prior to each write operation. Setting a higher
 	    number may improve performance, but adds the risk of
-	    loosing log events.</p>
+	    losing log events.</p>
           <p>
 	    Own Id: OTP-15663</p>
         </item>
@@ -2870,11 +6535,11 @@
 	    Characteristics impact: A call to the
 	    <c>garbage_collect/1</c> BIF or the
 	    <c>check_process_code/2</c> BIF will normally take longer
-	    time to complete while the system as a whole wont be as
+	    time to complete while the system as a whole won't be as
 	    much negatively effected by the operation as before. A
 	    call to <c>code:purge/1</c> and <c>code:soft_purge/1</c>
 	    may complete faster or slower depending on the state of
-	    the system while the system as a whole wont be as much
+	    the system while the system as a whole won't be as much
 	    negatively effected by the operation as before.</p>
           <p>
 	    Own Id: OTP-11388 Aux Id: OTP-11535, OTP-11648 </p>
@@ -3235,7 +6900,7 @@
         <item>
           <p>
 	    Change printout of application crash message on startup
-	    to formated strings (Thanks to Serge Aleynikov)</p>
+	    to formatted strings (Thanks to Serge Aleynikov)</p>
           <p>
 	    Own Id: OTP-10620</p>
         </item>
@@ -4017,7 +7682,7 @@
         </item>
         <item>
           <p>
-	    - Add spec for function that does not return - Strenghen
+	    - Add spec for function that does not return - Strengthen
 	    spec - Introduce types to avoid duplication in specs -
 	    Add specs for functions that do not return - Add specs
 	    for behaviour callbacks - Simplify two specs</p>
@@ -4397,7 +8062,7 @@
 	    app-vsn/ebin/mod.beam file, the file info for the app-vsn
 	    and app-vsn/ebin directories are faked using the file
 	    info from the archive file as origin. The virtual
-	    direcories can also be listed. For short, the top
+	    directories can also be listed. For short, the top
 	    directories are virtual if they does not exist.</p>
           <p>
 	    Own Id: OTP-8387</p>

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,7 +35,8 @@
 	 index2suffix/1,
 	 get_record_name_prefix/1,
 	 conform_value/2,
-	 named_bitstring_value/2]).
+	 named_bitstring_value/2,
+         complist_as_tuple/1]).
 -export([pgen/3,
 	 mk_var/1, 
 	 un_hyphen_var/1]).
@@ -100,17 +101,29 @@ pgen_typeorval(Erules, N2nConvEnums, Code) ->
           objects=Objects,objsets=ObjectSets} = Code,
     Rtmod = ct_gen_module(Erules),
     pgen_types(Rtmod,Erules,N2nConvEnums,Module,Types),
-    pgen_values(Values, Module),
-    pgen_objects(Rtmod,Erules,Module,Objects),
-    pgen_objectsets(Rtmod,Erules,Module,ObjectSets),
+    case Erules of
+        #gen{erule=jer} ->
+            pgen_objects(Rtmod, Erules, Module, Objects),
+            pgen_objectsets(Rtmod, Erules, Module, ObjectSets),
+            emit(["typeinfo(Type) ->",nl,
+                  "  exit({error,{asn1,{undefined_type,Type}}}).",nl,nl]),
+            pgen_values(Values, Module);
+        #gen{} ->
+            pgen_values(Values, Module),
+            pgen_objects(Rtmod, Erules, Module, Objects),
+            pgen_objectsets(Rtmod, Erules, Module, ObjectSets)
+    end,
     pgen_partial_decode(Rtmod,Erules,Module),
-        %% If the encoding rule is ber, per or uper and jer is also given as option
+    %% If the encoding rule is ber, per or uper and jer is also given as option
     %% then we generate "extra" support for jer in the same file
     case Erules#gen.jer of 
         true ->
             NewErules = Erules#gen{erule=jer,jer=false},
             JER_Rtmod = ct_gen_module(NewErules),
-            pgen_types(JER_Rtmod,Erules#gen{erule=jer,jer=false},[],Module,Types);
+            pgen_types(JER_Rtmod, Erules#gen{erule=jer,jer=false},
+                       [], Module, Types),
+            emit(["typeinfo(Type) ->",nl,
+                  "  exit({error,{asn1,{undefined_type,Type}}}).",nl,nl]);
         false ->
             ok
     end.
@@ -128,7 +141,7 @@ pgen_values([], _) ->
     ok.
 
 pgen_types(_, _, _, _, []) ->
-    true;
+    ok;
 pgen_types(Rtmod,Erules,N2nConvEnums,Module,[H|T]) ->
     asn1ct_name:clear(),
     Typedef = asn1_db:dbget(Module,H),
@@ -263,7 +276,7 @@ gen_partial_inc_dec_refed_funcs(Rtmod, #gen{erule=ber}=Gen) ->
 
 pgen_partial_dec(_Rtmod,Erules,_Module) ->
     Type_pattern = asn1ct:get_gen_state_field(type_pattern),
-    %% Get the typedef of the top type and follow into the choosen
+    %% Get the typedef of the top type and follow into the chosen
     %% components until the last type/component.
     pgen_partial_types(Erules,Type_pattern),
     ok.
@@ -659,32 +672,24 @@ pgen_exports(#gen{options=Options}=Gen, Code) ->
 	  "         legacy_erlang_types/0]).",nl]),
     emit(["-export([",{asis,?SUPPRESSION_FUNC},"/1]).",nl]),
     case Gen of
+        #gen{erule=Erule,jer=Jer} when Erule =:= jer; Jer ->
+            emit(["-export([typeinfo/1]).",nl]);
+        #gen{} ->
+            ok
+    end,
+    case Gen of
         #gen{erule=ber} ->
             gen_exports(Types, "enc_", 2),
             gen_exports(Types, "dec_", 2),
             gen_exports(Objects, "enc_", 3),
             gen_exports(Objects, "dec_", 3),
             gen_exports(ObjectSets, "getenc_", 1),
-            gen_exports(ObjectSets, "getdec_", 1),
-            case Gen#gen.jer of
-                true ->
-                    gen_exports(Types, "typeinfo_", 0);
-                _ ->
-                    true
-            end;
+            gen_exports(ObjectSets, "getdec_", 1);
         #gen{erule=per} ->
             gen_exports(Types, "enc_", 1),
-            gen_exports(Types, "dec_", 1),
-            case Gen#gen.jer of
-                true ->
-                    gen_exports(Types, "typeinfo_", 0);
-                _ ->
-                    true
-            end;
+            gen_exports(Types, "dec_", 1);
         #gen{erule=jer} ->
-            gen_exports(Types, "typeinfo_", 0),
-            gen_exports(ObjectSets, "typeinfo_", 0)
-%%            gen_exports(Types, "dec_", 1)
+            ok
     end,
 
     A2nNames = [X || {n2n,X} <- Options],
@@ -757,10 +762,7 @@ pgen_dispatcher(Gen, Types) ->
 	       #gen{erule=ber} ->
 		   "iolist_to_binary(element(1, encode_disp(Type, Data)))";
                #gen{erule=jer} ->
-                   ["?JSON_ENCODE(",
-                    {call,jer,encode_jer,[CurrMod,
-                                          "list_to_existing_atom(lists:concat([typeinfo_,Type]))",
-                                          "Data"]},")"];
+                   ["?JSON_ENCODE(",{call,jer,encode_jer,[CurrMod,"Type","Data"]},")"];
 	       #gen{erule=per,aligned=false} when NoFinalPadding ->
 		   asn1ct_func:need({uper,complete_NFP,1}),
 		   "complete_NFP(encode_disp(Type, Data))";
@@ -784,11 +786,7 @@ pgen_dispatcher(Gen, Types) ->
     case Gen#gen.jer of
         true ->
             emit(["jer_encode(Type, Data) ->",nl]),
-            JerCall = ["?JSON_ENCODE(",
-                    {call,jer,encode_jer,
-                     [CurrMod,
-                      "list_to_existing_atom(lists:concat([typeinfo_,Type]))",
-                      "Data"]},")"],
+            JerCall = ["?JSON_ENCODE(",{call,jer,encode_jer,[CurrMod,"Type","Data"]},")"],
             case NoOkWrapper of
                 true ->
                     emit(["  ",JerCall,"."]);
@@ -842,9 +840,7 @@ pgen_dispatcher(Gen, Types) ->
 	    emit(["   Result = ",DecodeDisp,",",nl]),
             result_line(NoOkWrapper, ["Result"]);
 	{#gen{erule=jer},false} ->
-	    emit(["   Result = ",{call,jer,decode_jer,[ CurrMod,
-                                                        "list_to_existing_atom(lists:concat([typeinfo_,Type]))", 
-                                                        DecWrap]},",",nl]),
+	    emit(["   Result = ",{call,jer,decode_jer,[CurrMod,"Type",DecWrap]},",",nl]),
             result_line(NoOkWrapper, ["Result"]);
 
 
@@ -874,9 +870,7 @@ pgen_dispatcher(Gen, Types) ->
 	    emit(["   Result = ",
                   {call,jer,
                    decode_jer,
-                   [CurrMod,
-                    "list_to_existing_atom(lists:concat([typeinfo_,Type]))", 
-                    JerDecWrap]},",",nl]),
+                   [CurrMod,"Type",JerDecWrap]},",",nl]),
             result_line(false, ["Result"]),
             case NoOkWrapper of
                 false ->
@@ -1138,17 +1132,17 @@ pgen_hrl(#gen{pack=record}=Gen, Code) ->
 		X
 	end,
     case Ret of
-	0 ->
-	    0;
-	Y ->
-	    Protector = hrl_protector(get(outfile)),
-	    emit(["-endif. %% ",Protector,"\n"]),
-	    close_output_file(),
-	    asn1ct:verbose("--~p--~n",
-			   [{generated,lists:concat([get(outfile),".hrl"])}],
-			   Gen),
-	    Y
-    end;
+        0 ->
+            0;
+        Y ->
+            Protector = hrl_protector(get(outfile)),
+            emit(["-endif. %% ",Protector,"\n"]),
+            close_output_file(),
+            asn1ct:verbose("--~p--~n",
+                           [{generated,lists:concat([get(outfile),".hrl"])}],
+                           Gen),
+            Y
+    end;    
 pgen_hrl(#gen{pack=map}, _) ->
     0.
 
@@ -1252,19 +1246,24 @@ gen_record(Gen, TorPtype, Name, #type{}=Type, Num) ->
 gen_record(_, _, _, _, NumRecords) ->        % skip CLASS etc for now.
      NumRecords.
 
+do_gen_record(Gen, Name, CL0) when is_list(CL0) ->
+    do_gen_record_0(Gen, Name, complist_as_tuple(CL0));
 do_gen_record(Gen, Name, CL0) ->
+    do_gen_record_0(Gen, Name, CL0).
+
+do_gen_record_0(Gen, Name, CL0) ->
     CL = case CL0 of
              {Root,[]} ->
                  Root ++ [{comment,"with extension mark"}];
              {Root,Ext} ->
-                 Root ++ [{comment,"with exensions"}] ++
+                 Root ++ [{comment,"with extensions"}] ++
                      only_components(Ext);
              {Root1,Ext,Root2} ->
-                 Root1 ++ [{comment,"with exensions"}] ++
+                 Root1 ++ [{comment,"with extensions"}] ++
                      only_components(Ext) ++
                      [{comment,"end of extensions"}] ++ Root2;
              _ when is_list(CL0) ->
-                 CL0
+                 only_components(CL0)
          end,
     Prefix = get_record_name_prefix(Gen),
     emit(["-record('",Prefix,list2name(Name),"', {"] ++
@@ -1321,9 +1320,25 @@ gen_head(#gen{options=Options}=Gen, Mod, Hrl) ->
 	0 -> ok;
 	_ -> emit(["-include(\"",Mod,".hrl\").",nl])
     end,
+    Deterministic = proplists:get_bool(deterministic, Options),
+    Options1 =
+        case Deterministic of
+            true ->
+                %% compile:keep_compile_option will filter some of these
+                %% out of generated .beam files, but this will keep
+                %% them out of the generated .erl files
+                lists:filter(
+                    fun({cwd, _}) -> false;
+                       ({outdir, _}) -> false;
+                       ({i, _}) -> false;
+                       (_) -> true end,
+                    Options);
+            false ->
+                Options
+         end,
     emit(["-asn1_info([{vsn,'",asn1ct:vsn(),"'},",nl,
 	  "            {module,'",Mod,"'},",nl,
-	  "            {options,",io_lib:format("~p",[Options]),"}]).",nl,nl]),
+	  "            {options,",io_lib:format("~p",[Options1]),"}]).",nl,nl]),
     JerDefines = case Gen of
                      #gen{erule=jer} ->
                          true;
@@ -1593,6 +1608,27 @@ list2rname1([H|_T]) ->
 list2rname1([]) ->
     [].
 
+%%
+%% convert a complist to a [Components] or a {Root,Ext} or a {Root,Ext,Ext2}
+complist_as_tuple(CompList) ->
+    complist_as_tuple(CompList, [], [], [], root).
+
+complist_as_tuple([#'EXTENSIONMARK'{}|T], Acc, Ext, Acc2, root) ->
+    complist_as_tuple(T, Acc, Ext, Acc2, ext);
+complist_as_tuple([#'EXTENSIONMARK'{}|T], Acc, Ext, Acc2, ext) ->
+    complist_as_tuple(T, Acc, Ext, Acc2, root2);
+complist_as_tuple([C|T], Acc, Ext, Acc2, root) ->
+    complist_as_tuple(T, [C|Acc], Ext, Acc2, root);
+complist_as_tuple([C|T], Acc, Ext, Acc2, ext) ->
+    complist_as_tuple(T, Acc, [C|Ext], Acc2, ext);
+complist_as_tuple([C|T], Acc, Ext, Acc2, root2) ->
+    complist_as_tuple(T, Acc, Ext, [C|Acc2], root2);
+complist_as_tuple([], Acc, _Ext, _Acc2, root) ->
+    lists:reverse(Acc);
+complist_as_tuple([], Acc, Ext, _Acc2, ext) ->
+    {lists:reverse(Acc),lists:reverse(Ext)};
+complist_as_tuple([], Acc, Ext, Acc2, root2) ->
+    {lists:reverse(Acc),lists:reverse(Ext),lists:reverse(Acc2)}.
 
 
 constructed_suffix(_,#'SEQUENCE'{pname=Ptypename}) when Ptypename =/= false ->

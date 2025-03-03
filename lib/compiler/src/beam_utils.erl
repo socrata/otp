@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2018. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 %%
 
 -module(beam_utils).
--export([replace_labels/4,is_pure_test/1,split_even/1]).
+-export([replace_labels/4,split_even/1]).
 
 -export_type([code_index/0,module_code/0,instruction/0]).
 
@@ -39,11 +39,6 @@
 -type module_code() ::
         {module(),[_],[_],[int_function()],pos_integer()}.
 
-%% Internal types.
--type fail() :: beam_asm:fail() | 'fail'.
--type test() :: {'test',atom(),fail(),[beam_asm:src()]} |
-		{'test',atom(),fail(),integer(),list(),beam_asm:reg()}.
-
 %% replace_labels(FunctionIs, Tail, ReplaceDb, Fallback) -> FunctionIs.
 %%  Replace all labels in instructions according to the ReplaceDb.
 %%  If label is not found the Fallback is called with the label to
@@ -55,28 +50,6 @@
                      fun((beam_asm:label()) -> term())) -> [instruction()].
 replace_labels(Is, Acc, D, Fb) ->
     replace_labels_1(Is, Acc, D, Fb).
-
-%% is_pure_test({test,Op,Fail,Ops}) -> true|false.
-%%  Return 'true' if the test instruction does not modify any
-%%  registers and/or bit syntax matching state.
-%%
-
--spec is_pure_test(test()) -> boolean().
-
-is_pure_test({test,is_eq,_,[_,_]}) -> true;
-is_pure_test({test,is_ne,_,[_,_]}) -> true;
-is_pure_test({test,is_eq_exact,_,[_,_]}) -> true;
-is_pure_test({test,is_ne_exact,_,[_,_]}) -> true;
-is_pure_test({test,is_ge,_,[_,_]}) -> true;
-is_pure_test({test,is_lt,_,[_,_]}) -> true;
-is_pure_test({test,is_nonempty_list,_,[_]}) -> true;
-is_pure_test({test,is_tagged_tuple,_,[_,_,_]}) -> true;
-is_pure_test({test,test_arity,_,[_,_]}) -> true;
-is_pure_test({test,has_map_fields,_,[_|_]}) -> true;
-is_pure_test({test,is_bitstr,_,[_]}) -> true;
-is_pure_test({test,is_function2,_,[_,_]}) -> true;
-is_pure_test({test,Op,_,Ops}) ->
-    erl_internal:new_type_test(Op, length(Ops)).
 
 %% split_even/1
 %% [1,2,3,4,5,6] -> {[1,3,5],[2,4,6]}
@@ -114,18 +87,22 @@ replace_labels_1([{wait,{f,Lbl}}|Is], Acc, D, Fb) ->
     replace_labels_1(Is, [{wait,{f,label(Lbl, D, Fb)}}|Acc], D, Fb);
 replace_labels_1([{wait_timeout,{f,Lbl},To}|Is], Acc, D, Fb) ->
     replace_labels_1(Is, [{wait_timeout,{f,label(Lbl, D, Fb)},To}|Acc], D, Fb);
-replace_labels_1([{recv_mark=Op,{f,Lbl}}|Is], Acc, D, Fb) ->
-    replace_labels_1(Is, [{Op,{f,label(Lbl, D, Fb)}}|Acc], D, Fb);
-replace_labels_1([{recv_set=Op,{f,Lbl}}|Is], Acc, D, Fb) ->
-    replace_labels_1(Is, [{Op,{f,label(Lbl, D, Fb)}}|Acc], D, Fb);
 replace_labels_1([{bif,Name,{f,Lbl},As,R}|Is], Acc, D, Fb) when Lbl =/= 0 ->
     replace_labels_1(Is, [{bif,Name,{f,label(Lbl, D, Fb)},As,R}|Acc], D, Fb);
 replace_labels_1([{gc_bif,Name,{f,Lbl},Live,As,R}|Is], Acc, D, Fb) when Lbl =/= 0 ->
     replace_labels_1(Is, [{gc_bif,Name,{f,label(Lbl, D, Fb)},Live,As,R}|Acc], D, Fb);
 replace_labels_1([{call,Ar,{f,Lbl}}|Is], Acc, D, Fb) ->
     replace_labels_1(Is, [{call,Ar,{f,label(Lbl, D, Fb)}}|Acc], D, Fb);
+replace_labels_1([{call_fun2,{f,Lbl},Ar,Func}|Is], Acc, D, Fb) ->
+    replace_labels_1(Is, [{call_fun2,{f,label(Lbl, D, Fb)},Ar,Func}|Acc], D, Fb);
 replace_labels_1([{make_fun2,{f,Lbl},U1,U2,U3}|Is], Acc, D, Fb) ->
     replace_labels_1(Is, [{make_fun2,{f,label(Lbl, D, Fb)},U1,U2,U3}|Acc], D, Fb);
+replace_labels_1([{make_fun3,{f,Lbl},U1,U2,U3,U4}|Is], Acc, D, Fb) ->
+    replace_labels_1(Is, [{make_fun3,{f,label(Lbl, D, Fb)},U1,U2,U3,U4}|Acc], D, Fb);
+replace_labels_1([{bs_create_bin,{f,Lbl},Alloc,Live,Unit,Dst,{list,List}}|Is], Acc, D, Fb)
+  when Lbl =/= 0 ->
+    replace_labels_1(Is, [{bs_create_bin,{f,label(Lbl, D, Fb)},
+                           Alloc,Live,Unit,Dst,{list,List}}|Acc], D, Fb);
 replace_labels_1([{bs_init,{f,Lbl},Info,Live,Ss,Dst}|Is], Acc, D, Fb) when Lbl =/= 0 ->
     replace_labels_1(Is, [{bs_init,{f,label(Lbl, D, Fb)},Info,Live,Ss,Dst}|Acc], D, Fb);
 replace_labels_1([{bs_put,{f,Lbl},Info,Ss}|Is], Acc, D, Fb) when Lbl =/= 0 ->
@@ -137,6 +114,9 @@ replace_labels_1([{get_map_elements=I,{f,Lbl},Src,List}|Is], Acc, D, Fb) when Lb
     replace_labels_1(Is, [{I,{f,label(Lbl, D, Fb)},Src,List}|Acc], D, Fb);
 replace_labels_1([{bs_start_match4,{f,Lbl},Live,Src,Dst}|Is], Acc, D, Fb) ->
     I = {bs_start_match4,{f,label(Lbl, D, Fb)},Live,Src,Dst},
+    replace_labels_1(Is, [I | Acc], D, Fb);
+replace_labels_1([{bs_match,{f,Lbl},Ctx,List}|Is], Acc, D, Fb) ->
+    I = {bs_match,{f,label(Lbl, D, Fb)},Ctx,List},
     replace_labels_1(Is, [I | Acc], D, Fb);
 replace_labels_1([I|Is], Acc, D, Fb) ->
     replace_labels_1(Is, [I|Acc], D, Fb);

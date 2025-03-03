@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB and Kjell Winblad 1998-2020. All Rights Reserved.
+ * Copyright Ericsson AB and Kjell Winblad 1998-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,6 +79,7 @@
 #include "erl_db_catree.h"
 #include "erl_db_tree.h"
 #include "erl_db_tree_util.h"
+#include "erl_global_literals.h"
 
 #ifdef DEBUG
 #  define IF_DEBUG(X) X
@@ -219,7 +220,7 @@ DbTableMethod db_catree =
     db_lookup_dbterm_catree,
     db_finalize_dbterm_catree,
     db_eterm_to_dbterm_tree_common,
-    db_dbterm_list_prepend_tree_common,
+    db_dbterm_list_append_tree_common,
     db_dbterm_list_remove_first_tree_common,
     db_put_dbterm_catree,
     db_free_dbterm_tree_common,
@@ -370,6 +371,7 @@ TreeDbTerm* insert_TreeDbTerm(DbTableCATree *tb,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RR rotation */
+                    ASSERT(p1->right);
 		    p2 = p1->right;
 		    p1->right = p2->left;
 		    p2->left = p1;
@@ -400,6 +402,7 @@ TreeDbTerm* insert_TreeDbTerm(DbTableCATree *tb,
 		    p->balance = 0;
 		    (*this) = p1;
 		} else { /* Double RL rotation */
+                    ASSERT(p1->left);
 		    p2 = p1->left;
 		    p1->left = p2->right;
 		    p2->right = p1;
@@ -465,8 +468,10 @@ static ERTS_INLINE int compute_tree_hight(TreeDbTerm * root)
         int hight_so_far = 1;
         while (current_node->left != NULL || current_node->right != NULL) {
             if (current_node->balance == -1) {
+                ASSERT(current_node->left != NULL);
                 current_node = current_node->left;
             } else {
+                ASSERT(current_node->right != NULL);
                 current_node = current_node->right;
             }
             hight_so_far = hight_so_far + 1;
@@ -628,6 +633,7 @@ static TreeDbTerm* join_trees(TreeDbTerm *left_root_param,
                     p->balance = 0;
                     (*this) = p1;
                 } else { /* Double RR rotation */
+                    ASSERT(p1->right);
                     p2 = p1->right;
                     p1->right = p2->left;
                     p2->left = p1;
@@ -658,6 +664,7 @@ static TreeDbTerm* join_trees(TreeDbTerm *left_root_param,
                     p->balance = 0;
                     (*this) = p1;
                 } else { /* Double RL rotation */
+                    ASSERT(p1->left);
                     p2 = p1->left;
                     p1->left = p2->right;
                     p2->right = p1;
@@ -867,7 +874,8 @@ Eterm copy_route_key(DbRouteKey* dst, Eterm key, Uint key_size)
         dst->oh = tmp_offheap.first;
     }
     else {
-        ASSERT(is_immed(key));
+        ASSERT(is_immed(key) ||
+               key == ERTS_GLOBAL_LIT_EMPTY_TUPLE);
         dst->term = key;
         dst->oh = NULL;
     }
@@ -1026,6 +1034,7 @@ static DbTableCATreeNode *create_base_node(DbTableCATree *tb,
                         "erl_db_catree_base_node",
                         NIL,
                         ERTS_LOCK_FLAGS_CATEGORY_DB);
+    ERTS_DB_ALC_MEM_UPDATE_((DbTable *) tb, 0, erts_rwmtx_size(&p->u.base.lock));
     BASE_NODE_STAT_SET(p, ((tb->common.status & DB_CATREE_FORCE_SPLIT)
                            ? INT_MAX : 0));
     p->u.base.is_valid = 1;
@@ -1084,7 +1093,7 @@ static void do_free_base_node(void* vptr)
 static void free_catree_base_node(DbTableCATree* tb, DbTableCATreeNode* p)
 {
     ASSERT(p->is_base_node);
-    ERTS_DB_ALC_MEM_UPDATE_(tb, sizeof_base_node(), 0);
+    ERTS_DB_ALC_MEM_UPDATE_(tb, sizeof_base_node() + erts_rwmtx_size(&p->u.base.lock), 0);
     do_free_base_node(p);
 }
 
@@ -1196,7 +1205,7 @@ static void join_catree(DbTableCATree *tb,
     DbTableCATreeNode *neighbor_parent;
 
     ASSERT(thiz->is_base_node);
-    if (parent == NULL) {
+    if (parent == NULL || ERTS_IS_CRASH_DUMPING) {
         BASE_NODE_STAT_SET(thiz, 0);
         wunlock_base_node(thiz);
         return;
@@ -1251,7 +1260,7 @@ static void join_catree(DbTableCATree *tb,
                 neighbor_parent = leftmost_route_node(GET_RIGHT(parent));
             }
         }
-    } else { /* Symetric case */
+    } else { /* Symmetric case */
         ASSERT(GET_RIGHT(parent) == thiz);
         neighbor = rightmost_base_node(GET_LEFT_ACQB(parent));
         if (try_wlock_base_node(&neighbor->u.base)) {
@@ -1326,11 +1335,13 @@ static void join_catree(DbTableCATree *tb,
                           thiz,
                           &thiz->u.base.free_item,
                           sizeof_base_node());
+    ERTS_DB_ALC_MEM_UPDATE_(tb, erts_rwmtx_size(&thiz->u.base.lock), 0);
     erts_schedule_db_free(&tb->common,
                           do_free_base_node,
                           neighbor,
                           &neighbor->u.base.free_item,
                           sizeof_base_node());
+    ERTS_DB_ALC_MEM_UPDATE_(tb, erts_rwmtx_size(&neighbor->u.base.lock), 0);
 }
 
 static void split_catree(DbTableCATree *tb,
@@ -1342,7 +1353,7 @@ static void split_catree(DbTableCATree *tb,
     DbTableCATreeNode* ERTS_RESTRICT new_right;
     DbTableCATreeNode* ERTS_RESTRICT new_route;
 
-    if (less_than_two_elements(base->u.base.root)) {
+    if (less_than_two_elements(base->u.base.root) || ERTS_IS_CRASH_DUMPING) {
         if (!(tb->common.status & DB_CATREE_FORCE_SPLIT))
             BASE_NODE_STAT_SET(base, 0);
         wunlock_base_node(base);
@@ -1375,6 +1386,7 @@ static void split_catree(DbTableCATree *tb,
                               base,
                               &base->u.base.free_item,
                               sizeof_base_node());
+        ERTS_DB_ALC_MEM_UPDATE_(tb, erts_rwmtx_size(&base->u.base.lock), 0);
     }
 }
 

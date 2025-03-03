@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -271,7 +271,7 @@ void erts_init_binary(void);
 
 byte* erts_get_aligned_binary_bytes_extra(Eterm, byte**, ErtsAlcType_t, unsigned extra);
 /* Used by unicode module */
-Eterm erts_bin_bytes_to_list(Eterm previous, Eterm* hp, byte* bytes, Uint size, Uint bitoffs);
+Eterm erts_bin_bytes_to_list(Eterm previous, Eterm* hp, const byte* bytes, Uint size, Uint bitoffs);
 
 /*
  * Common implementation for erlang:list_to_binary/1 and binary:list_to_bin/1
@@ -281,14 +281,7 @@ BIF_RETTYPE erts_list_to_binary_bif(Process *p, Eterm arg, Export *bif);
 BIF_RETTYPE erts_binary_part(Process *p, Eterm binary, Eterm epos, Eterm elen);
 
 
-typedef union {
-    /*
-     * These two are almost always of
-     * the same size, but when fallback
-     * atomics are used they might
-     * differ in size.
-     */
-    erts_atomic_t smp_atomic_word;
+typedef struct {
     erts_atomic_t atomic_word;
 } ErtsMagicIndirectionWord;
 
@@ -328,6 +321,16 @@ ERTS_GLB_INLINE Binary *erts_create_magic_indirection(int (*destructor)(Binary *
 ERTS_GLB_INLINE erts_atomic_t *erts_binary_to_magic_indirection(Binary *bp);
 ERTS_GLB_INLINE erts_atomic_t *erts_binary_to_magic_indirection(Binary *bp);
 
+/* A binary's size in bits must fit into a word for matching to work. We used
+ * to allow creating larger binaries than this, but they acted really strangely
+ * in Erlang code and were pretty much only usable in drivers and NIFs.
+ *
+ * This check also ensures, indirectly, that there won't be an overflow when
+ * the size is bumped by CHICKEN_PAD and the binary struct itself. */
+#define IS_BINARY_SIZE_OK(BYTE_SIZE) \
+    ERTS_LIKELY(BYTE_SIZE <= ERTS_UWORD_MAX / CHAR_BIT)
+
+
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
 
 #include <stddef.h> /* offsetof */
@@ -352,24 +355,11 @@ erts_free_aligned_binary_bytes(byte* buf)
     erts_free_aligned_binary_bytes_extra(buf,ERTS_ALC_T_TMP);
 }
 
-/* A binary's size in bits must fit into a word for matching to work. We used
- * to allow creating larger binaries than this, but they acted really strangely
- * in Erlang code and were pretty much only usable in drivers and NIFs.
- *
- * This check also ensures, indirectly, that there won't be an overflow when
- * the size is bumped by CHICKEN_PAD and the binary struct itself. */
-#define BINARY_OVERFLOW_CHECK(BYTE_SIZE) \
-    do { \
-         if (ERTS_UNLIKELY(BYTE_SIZE > ERTS_UWORD_MAX / CHAR_BIT)) { \
-             return NULL; \
-         } \
-    } while(0)
-
 /* Explicit extra bytes allocated to counter buggy drivers.
 ** These extra bytes where earlier (< R13B04) added by an alignment-bug
 ** in this code. Do we dare remove this in some major release (R14?) maybe?
 */
-#if defined(DEBUG) || defined(VALGRIND)
+#if defined(DEBUG) || defined(VALGRIND) || defined(ADDRESS_SANITIZER)
 #  define CHICKEN_PAD 0
 #else
 #  define CHICKEN_PAD (sizeof(void*) - 1)
@@ -381,10 +371,11 @@ erts_bin_drv_alloc_fnf(Uint size)
     Binary *res;
     Uint bsize;
 
-    BINARY_OVERFLOW_CHECK(size);
+    if (!IS_BINARY_SIZE_OK(size))
+        return NULL;
     bsize = ERTS_SIZEOF_Binary(size) + CHICKEN_PAD;
 
-    res = erts_alloc_fnf(ERTS_ALC_T_DRV_BINARY, bsize);
+    res = (Binary *)erts_alloc_fnf(ERTS_ALC_T_DRV_BINARY, bsize);
     ERTS_CHK_BIN_ALIGNMENT(res);
 
     if (res) {
@@ -414,10 +405,11 @@ erts_bin_nrml_alloc_fnf(Uint size)
     Binary *res;
     Uint bsize;
 
-    BINARY_OVERFLOW_CHECK(size);
-    bsize = ERTS_SIZEOF_Binary(size) + CHICKEN_PAD;
+    if (!IS_BINARY_SIZE_OK(size))
+        return NULL;
+    bsize = ERTS_SIZEOF_Binary(size);
 
-    res = erts_alloc_fnf(ERTS_ALC_T_BINARY, bsize);
+    res = (Binary *)erts_alloc_fnf(ERTS_ALC_T_BINARY, bsize);
     ERTS_CHK_BIN_ALIGNMENT(res);
 
     if (res) {
@@ -432,7 +424,7 @@ erts_bin_nrml_alloc_fnf(Uint size)
 ERTS_GLB_INLINE Binary *
 erts_bin_nrml_alloc(Uint size)
 {
-    Binary *res = erts_bin_drv_alloc_fnf(size);
+    Binary *res = erts_bin_nrml_alloc_fnf(size);
 
     if (res) {
         return res;
@@ -448,14 +440,20 @@ erts_bin_realloc_fnf(Binary *bp, Uint size)
     Binary *nbp;
     Uint bsize;
     
-    type = (bp->intern.flags & BIN_FLAG_DRV) ? ERTS_ALC_T_DRV_BINARY
-                                             : ERTS_ALC_T_BINARY;
     ASSERT((bp->intern.flags & BIN_FLAG_MAGIC) == 0);
+    if (!IS_BINARY_SIZE_OK(size))
+        return NULL;
+    bsize = ERTS_SIZEOF_Binary(size);
 
-    BINARY_OVERFLOW_CHECK(size);
-    bsize = ERTS_SIZEOF_Binary(size) + CHICKEN_PAD;
+    if (bp->intern.flags & BIN_FLAG_DRV) {
+        type = ERTS_ALC_T_DRV_BINARY;
+        bsize += CHICKEN_PAD;
+    }
+    else {
+        type = ERTS_ALC_T_BINARY;
+    }
 
-    nbp = erts_realloc_fnf(type, (void *) bp, bsize);
+    nbp = (Binary *)erts_realloc_fnf(type, (void *) bp, bsize);
     ERTS_CHK_BIN_ALIGNMENT(nbp);
 
     if (nbp) {
@@ -519,7 +517,7 @@ erts_create_magic_binary_x(Uint size, int (*destructor)(Binary *),
 {
     Uint bsize = unaligned ? ERTS_MAGIC_BIN_UNALIGNED_SIZE(size)
                            : ERTS_MAGIC_BIN_SIZE(size);
-    Binary* bptr = erts_alloc_fnf(alloc_type, bsize);
+    Binary* bptr = (Binary *)erts_alloc_fnf(alloc_type, bsize);
     ASSERT(bsize > size);
     if (!bptr)
 	erts_alloc_n_enomem(ERTS_ALC_T2N(alloc_type), bsize);
@@ -557,8 +555,8 @@ erts_binary_to_magic_indirection(Binary *bp)
     ErtsMagicIndirectionWord *mip;
     ASSERT(bp->intern.flags & BIN_FLAG_MAGIC);
     ASSERT(ERTS_MAGIC_BIN_ATYPE(bp) == ERTS_ALC_T_MINDIRECTION);
-    mip = ERTS_MAGIC_BIN_UNALIGNED_DATA(bp);
-    return &mip->smp_atomic_word;
+    mip = (ErtsMagicIndirectionWord*)ERTS_MAGIC_BIN_UNALIGNED_DATA(bp);
+    return &mip->atomic_word;
 }
 
 #endif /* #if ERTS_GLB_INLINE_INCL_FUNC_DEF */

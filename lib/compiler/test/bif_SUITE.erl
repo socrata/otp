@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2016-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2016-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,7 +23,11 @@
 
 -export([all/0,suite/0,groups/0,init_per_suite/1,end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
-	 beam_validator/1,trunc_and_friends/1,cover_safe_and_pure_bifs/1]).
+         unsafe_get_list/1,
+	 beam_validator/1,trunc_and_friends/1,cover_safe_and_pure_bifs/1,
+         cover_trim/1,
+         head_tail/1,
+         min_max/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]}].
@@ -32,10 +36,14 @@ all() ->
     [{group,p}].
 
 groups() ->
-    [{p,[parallel],
+    [{p,test_lib:parallel(),
       [beam_validator,
+       unsafe_get_list,
        trunc_and_friends,
-       cover_safe_and_pure_bifs
+       cover_safe_and_pure_bifs,
+       cover_trim,
+       head_tail,
+       min_max
       ]}].
 
 init_per_suite(Config) ->
@@ -50,6 +58,21 @@ init_per_group(_GroupName, Config) ->
 
 end_per_group(_GroupName, Config) ->
     Config.
+
+unsafe_get_list(_Config) ->
+    [[1], [1], [1]] = create_rows(id(3)),
+    ok.
+
+create_rows(Num) -> create_rows(Num, [[1]]).
+
+create_rows(1, Rows) ->
+    Rows;
+create_rows(Num, [PrevRow | _] = Rows) ->
+    [_PrevRowH | PrevRowT] = PrevRow,
+    [] = first(PrevRowT, PrevRow),
+    create_rows(Num - 1, [[1] | Rows]).
+
+first(Fst, _Snd) -> Fst.
 
 %% Cover code in beam_validator.
 
@@ -122,3 +145,106 @@ cover_safe_and_pure_bifs(Config) ->
     a = binary_to_atom(atom_to_binary(a)),
 
     ok.
+
+cover_trim(_Config) ->
+    ok = cover_trim_1(<<"abc">>, id([42])),
+    ok = cover_trim_1({a,b,c}, id([42])),
+
+    true = cover_trim_2("keep-alive", "1"),
+    false = cover_trim_2("keep-alive", "0"),
+    false = cover_trim_2("other", "1"),
+    false = cover_trim_2("other", "0"),
+
+    true = cover_trim_3("keep-alive", -1),
+    false = cover_trim_3("keep-alive", 100),
+    false = cover_trim_3("other", -10),
+    false = cover_trim_3("other", -100),
+
+    ok.
+
+cover_trim_1(Something, V) ->
+    id(Something),
+    id(Something),
+    if
+        hd(V) =:= 42 ->
+            ok
+    end.
+
+cover_trim_2(Header, NList)->
+    id(0),
+    case id(Header) of
+        "keep-alive" when hd(NList) >= $1 ->
+            true;
+        _Connect ->
+            false
+    end.
+
+cover_trim_3(Header, N)->
+    id(0),
+    case id(Header) of
+        "keep-alive" when abs(N) < 42 ->
+            true;
+        _Connect ->
+            false
+    end.
+
+%% GH-7024: The loader transformations for hd/1 and tl/1 were incorrect and
+%% failed when certain optimizations were turned off.
+head_tail(_Config) ->
+    {1, ok} = head_case(),
+    {1, ok} = tail_case(),
+
+    1 = hd(id([1])),
+    [] = tl(id([1])),
+
+    ok.
+
+head_case() ->
+    case 1 of
+        X when hd(X) -> blurf;
+        X -> {X, ok}
+    end.
+
+tail_case() ->
+    case 1 of
+        X when tl(X) -> blurf;
+        X -> {X, ok}
+    end.
+
+min_max(_Config) ->
+    False = id(false),
+    True = id(true),
+
+    false = bool_min_false(False, False),
+    false = bool_min_false(False, True),
+    false = bool_min_false(True, False),
+    true = bool_min_true(True, True),
+
+    false = bool_max_false(False, False),
+    true = bool_max_true(False, True),
+    true = bool_max_true(True, False),
+    true = bool_max_true(True, True),
+
+    ok.
+
+%% GH-7170: The following functions would cause a crash in
+%% beam_ssa_codegen.
+
+bool_min_false(A, B) when is_boolean(A), is_boolean(B) ->
+    false = min(A, B).
+
+bool_min_true(A, B) when is_boolean(A), is_boolean(B) ->
+    true = min(A, B).
+
+bool_max_false(A, B) when is_boolean(A), is_boolean(B) ->
+    false = max(A, B).
+
+bool_max_true(A, B) when is_boolean(A), is_boolean(B) ->
+    true = max(A, B).
+
+%%%
+%%% Common utilities.
+%%%
+
+id(I) ->
+    I.

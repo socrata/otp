@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2020. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 %% File utilities.
 -export([wildcard/1, wildcard/2, is_dir/1, is_file/1, is_regular/1]).
--export([fold_files/5, last_modified/1, file_size/1, ensure_dir/1]).
+-export([fold_files/5, last_modified/1, file_size/1, ensure_dir/1, ensure_path/1]).
 -export([wildcard/3, is_dir/2, is_file/2, is_regular/2]).
 -export([fold_files/6, last_modified/2, file_size/2]).
 -export([find_file/2, find_file/3, find_source/1, find_source/2, find_source/3]).
@@ -218,6 +218,7 @@ do_file_size(File, Mod) ->
 	    0
     end.
 
+
 %%----------------------------------------------------------------------
 %% +type ensure_dir(X) -> ok | {error, Reason}.
 %% +type X = filename() | dirname()
@@ -230,27 +231,37 @@ ensure_dir("/") ->
     ok;
 ensure_dir(F) ->
     Dir = filename:dirname(F),
-    case do_is_dir(Dir, file) of
-	true ->
-	    ok;
-	false when Dir =:= F ->
-	    %% Protect against infinite loop
-	    {error,einval};
-	false ->
-	    _ = ensure_dir(Dir),
-	    case file:make_dir(Dir) of
-		{error,eexist}=EExist ->
-		    case do_is_dir(Dir, file) of
-			true ->
-			    ok;
-			false ->
-			    EExist
-		    end;
-		Err ->
-		    Err
-	    end
-    end.
+    ensure_path(Dir).
 
+-spec ensure_path(Path) -> 'ok' | {'error', Reason} when
+      Path :: dirname_all(),
+      Reason :: file:posix().
+ensure_path("/") ->
+    ok;
+
+ensure_path(Path) -> 
+    case do_is_dir(Path, file) of
+        true -> 
+            ok;
+        false -> 
+            case filename:dirname(Path) of 
+                Parent when Parent =:= Path -> 
+                    {error,einval};
+                Parent -> 
+                     _ = ensure_path(Parent),
+                    case file:make_dir(Path) of
+                        {error,eexist}=EExist ->
+                            case do_is_dir(Path, file) of
+                                true -> 
+                                    ok;
+                                false -> 
+                                    EExist 
+                            end;
+                        Other ->
+                            Other
+                    end
+            end
+    end.
 
 %%%
 %%% Pattern matching using a compiled wildcard.
@@ -268,9 +279,9 @@ do_wildcard(Pattern, Cwd, Mod) ->
     lists:sort(Files).
 
 do_wildcard_1({exists,File}, Mod) ->
-    case eval_read_link_info(File, Mod) of
-	{ok,_} -> [File];
-	_ -> []
+    case exists(File, Mod) of
+	true -> [File];
+	false -> []
     end;
 do_wildcard_1([Base|Rest], Mod) ->
     do_wildcard_2([Base], Rest, [], Mod).
@@ -562,6 +573,36 @@ wrap_escapes([]) ->
 badpattern(Reason) ->
     error({badpattern,Reason}).
 
+exists(File, Mod) ->
+    case eval_read_link_info(File, Mod) of
+        {error, _} ->
+            false;
+        {ok, _Info} ->
+            case os:type() of
+                {win32,_} ->
+                    do_exists(filename:split(File), Mod, []);
+                _ ->
+                    true
+            end
+    end.
+
+do_exists([P,".."|Ps], Mod, Acc) ->
+    %% On Windows, "pathname/.." will seem to exist even if pathname
+    %% does not refer to a directory.
+    Path = case Acc of
+               [] -> P;
+               _ -> filename:join(lists:reverse(Acc, [P]))
+           end,
+    case eval_read_link_info(Path, Mod) of
+        {ok, #file_info{type=directory}} ->
+            do_exists(Ps, Mod, Acc);
+        _ ->
+            false
+    end;
+do_exists([P|Ps], Mod, Acc) ->
+    do_exists(Ps, Mod, [P|Acc]);
+do_exists([], _, _) -> true.
+
 eval_read_file_info(File, file) ->
     file:read_file_info(File);
 eval_read_file_info(File, erl_prim_loader) ->
@@ -616,6 +657,7 @@ default_search_rules() ->
      {".o", ".c", c_source_search_rules()},
      {"", ".c", c_source_search_rules()},
      {"", ".in", basic_source_search_rules()},
+     {".beam", ".asn1", asn1_source_search_rules()},
      %% plain old directory rules, backwards compatible
      {"", ""}] ++ erl_source_search_rules().
 
@@ -630,6 +672,9 @@ erl_source_search_rules() ->
 
 c_source_search_rules() ->
     [{"priv","c_src"}, {"priv","src"}, {"bin","c_src"}, {"bin","src"}, {"", "src"}].
+
+asn1_source_search_rules() ->
+    [{"ebin","src"},{"ebin","asn1"}].
 
 %% Looks for a file relative to a given directory
 
@@ -725,65 +770,65 @@ find_regular_file([File|Files]) ->
       Cwd :: filename_all(),
       SafeFilename :: filename_all().
 
+safe_relative_path(Path, "") ->
+    safe_relative_path(Path, ".");
 safe_relative_path(Path, Cwd) ->
-    case filename:pathtype(Path) of
-        relative -> safe_relative_path(filename:split(Path), Cwd, [], "");
-        _ -> unsafe
-    end.
+    srp_path(filename:split(Path),
+             Cwd,
+             sets:new([{version, 2}]),
+             []).
 
-safe_relative_path([], _Cwd, _PrevLinks, Acc) ->
-    Acc;
-
-safe_relative_path([Segment | Segments], Cwd, PrevLinks, Acc) ->
-    AccSegment = join(Acc, Segment),
-    case safe_relative_path(AccSegment) of
-        unsafe ->
-            unsafe;
-        SafeAccSegment ->
-            case file:read_link(join(Cwd, SafeAccSegment)) of
-                {ok, LinkPath} ->
-                    case lists:member(LinkPath, PrevLinks) of
-                        true ->
-                            unsafe;
-                        false ->
-                            case safe_relative_path(filename:split(LinkPath), Cwd, [LinkPath | PrevLinks], Acc) of
-                                unsafe -> unsafe;
-                                NewAcc -> safe_relative_path(Segments, Cwd, [], NewAcc)
-                            end
-                    end;
-                {error, _} ->
-                    safe_relative_path(Segments, Cwd, PrevLinks, SafeAccSegment)
-            end
-  end.
-
-join([], Path) -> Path;
-join(Left, Right) -> filename:join(Left, Right).
-
-safe_relative_path(Path) ->
-    case filename:pathtype(Path) of
+srp_path([], _Cwd, _Seen, []) ->
+    "";
+srp_path([], _Cwd, _Seen, Acc) ->
+    filename:join(Acc);
+srp_path(["."|Segs], Cwd, Seen, Acc) ->
+    srp_path(Segs, Cwd, Seen, Acc);
+srp_path([<<".">>|Segs], Cwd, Seen, Acc) ->
+    srp_path(Segs, Cwd, Seen, Acc);
+srp_path([".."|_Segs], _Cwd, _Seen, []) ->
+    unsafe;
+srp_path([".."|Segs], Cwd, Seen, [_|_]=Acc) ->
+    srp_path(Segs, Cwd, Seen, lists:droplast(Acc));
+srp_path([<<"..">>|_Segs], _Cwd, _Seen, []) ->
+    unsafe;
+srp_path([<<"..">>|Segs], Cwd, Seen, [_|_]=Acc) ->
+    srp_path(Segs, Cwd, Seen, lists:droplast(Acc));
+srp_path([clear|Segs], Cwd, _Seen, Acc) ->
+    srp_path(Segs, Cwd, sets:new([{version, 2}]), Acc);
+srp_path([Seg|_]=Segs, Cwd, Seen, Acc) ->
+    case filename:pathtype(Seg) of
         relative ->
-            Cs0 = filename:split(Path),
-            safe_relative_path_1(Cs0, []);
+            srp_segment(Segs, Cwd, Seen, Acc);
         _ ->
             unsafe
     end.
 
-safe_relative_path_1(["."|T], Acc) ->
-    safe_relative_path_1(T, Acc);
-safe_relative_path_1([<<".">>|T], Acc) ->
-    safe_relative_path_1(T, Acc);
-safe_relative_path_1([".."|T], Acc) ->
-    climb(T, Acc);
-safe_relative_path_1([<<"..">>|T], Acc) ->
-    climb(T, Acc);
-safe_relative_path_1([H|T], Acc) ->
-    safe_relative_path_1(T, [H|Acc]);
-safe_relative_path_1([], []) ->
-    [];
-safe_relative_path_1([], Acc) ->
-    filename:join(lists:reverse(Acc)).
+srp_segment([Seg|Segs], Cwd, Seen, Acc) ->
+    Path = filename:join([Cwd|Acc]),
+    case file:read_link(filename:join(Path, Seg)) of
+        {ok, LinkPath} ->
+            srp_link(Path,
+                     LinkPath,
+                     Segs,
+                     Cwd,
+                     Seen,
+                     Acc);
+        {error, _} ->
+            srp_path(Segs,
+                     Cwd,
+                     Seen,
+                     Acc++[Seg])
+    end.
 
-climb(_, []) ->
-    unsafe;
-climb(T, [_|Acc]) ->
-    safe_relative_path_1(T, Acc).
+srp_link(Path, LinkPath, Segs, Cwd, Seen, Acc) ->
+    FullLinkPath = filename:join(Path, LinkPath),
+    case sets:is_element(FullLinkPath, Seen) of
+        true ->
+            unsafe;
+        false ->
+            srp_path(filename:split(LinkPath)++[clear|Segs],
+                     Cwd,
+                     sets:add_element(FullLinkPath, Seen),
+                     Acc)
+    end.

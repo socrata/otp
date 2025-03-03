@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2019. All Rights Reserved.
+ * Copyright Ericsson AB 2019-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ void erts_flxctr_dec(ErtsFlxCtr* c,
  * @param c The ErtsFlxCtr instance to operate on
  * @param counter_nr The number of the counter within c to operate on
  *
- * @return A snapshot of the specifed counter if c is centralized or a
+ * @return A snapshot of the specified counter if c is centralized or a
  *         possibly incorrect estimate of the counter value if c is
  *         decentralized
  */
@@ -290,7 +290,7 @@ int erts_flxctr_suspend_until_thr_prg_if_snapshot_ongoing(ErtsFlxCtr* c, Process
 
 /**
  * @brief This function returns the number of bytes that are allocated
- * for for the given FlxCtr.
+ * for the given FlxCtr.
  *
  * @return nr of bytes allocated for the FlxCtr
  */

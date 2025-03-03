@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2015-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2015-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ fresh_crl(#'DistributionPoint'{distributionPoint = {fullName, Names}}, CRL) ->
     case get_crls(Names, undefined) of
 	not_available ->
 	    CRL;
-	[NewCRL] ->
+	NewCRL ->
 	    NewCRL
     end.
 
@@ -72,22 +72,38 @@ fresh_crl(#'DistributionPoint'{distributionPoint = {fullName, Names}}, CRL) ->
 %% API 
 %%====================================================================
 
-insert(CRLs) ->
-    insert(?NO_DIST_POINT, CRLs).
+%%--------------------------------------------------------------------
+-spec insert(CRLSrc) -> ok | {error, Reason} when
+      CRLSrc :: crl_src(),
+      Reason :: term().
+%%--------------------------------------------------------------------
+insert(CRLSrc) ->
+    insert(?NO_DIST_POINT, CRLSrc).
 
-insert(URI, {file, File}) when is_list(URI) ->				     
+%%--------------------------------------------------------------------
+-spec insert(DistPointURI, CRLSrc) -> ok | {error, Reason} when
+      DistPointURI :: uri_string:uri_string(),
+      CRLSrc :: crl_src(),
+      Reason :: term().
+%%--------------------------------------------------------------------
+insert(DistPointURI, {file, File}) when is_list(DistPointURI) ->
     case file:read_file(File) of
 	{ok, PemBin} ->
 	    PemEntries = public_key:pem_decode(PemBin),
 	    CRLs = [ CRL || {'CertificateList', CRL, not_encrypted} 
 				<- PemEntries],
-	    do_insert(URI, CRLs);
+	    do_insert(DistPointURI, CRLs);
 	Error ->
 	    Error
     end;
-insert(URI, {der, CRLs}) ->	
-    do_insert(URI, CRLs).
+insert(DistPointURI, {der, CRLs}) ->	
+    do_insert(DistPointURI, CRLs).
 
+%%--------------------------------------------------------------------
+-spec delete(Entries) -> ok | {error, Reason} when
+      Entries :: crl_src() | uri_string:uri_string(),
+      Reason :: term().
+%%--------------------------------------------------------------------
 delete({file, File}) ->
     case file:read_file(File) of
 	{ok, PemBin} ->
@@ -175,7 +191,7 @@ cache_lookup(URL, {{Cache, _}, _}) ->
     case ssl_pkix_db:lookup(string:trim(Path, leading, "/"), Cache) of
 	undefined ->
 	    [];
-	CRLs ->
+	[CRLs] ->
 	    CRLs
     end.
 

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2020. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -443,7 +443,7 @@ get_suite_name(Mod, _) ->
 %% Check that alias names are not already in use
 check_for_clashes(TCInfo, [CurrGrInfo|Path], SuiteInfo) ->
     ReqNames = fun(Info) -> [element(2,R) || R <- Info,
-					     size(R) == 3,
+                                             tuple_size(R) == 3,
 					     require == element(1,R)]
 	       end,
     ExistingNames = lists:flatten([ReqNames(L)  || L <- [SuiteInfo|Path]]),
@@ -663,6 +663,10 @@ end_tc(Mod, Fun, Args) ->
     %% Have to keep end_tc/3 for backwards compatibility issues
     end_tc(Mod, Fun, Args, '$end_tc_dummy').
 end_tc(?MODULE,error_in_suite,{Result,[Args]},Return) ->
+    case proplists:get_value(force_failed, Args) of
+		undefined -> ok;
+		_ -> add_to_stats(failed)
+    end,
     %% this clause gets called if CT has encountered a suite that
     %% can't be executed
     FinalNotify =
@@ -735,7 +739,7 @@ end_tc(Mod,Func00,TCPid,Result,Args,Return) ->
 	    %% clean up any saved comments
 	    ct_util:match_delete_testdata({comment,'_'});
        true ->
-	    %% attemp to delete any saved comment for this TC
+	    %% attempt to delete any saved comment for this TC
 	    case process_info(TCPid, group_leader) of
 		{group_leader,TCGL} ->
 		    ct_util:delete_testdata({comment,TCGL});
@@ -1219,9 +1223,9 @@ get_all(Mod, ConfTests) ->
                     expand_tests(Mod, Tests)
             catch
                 throw:{error,Error} ->
-                    [{?MODULE,error_in_suite,[[{error,Error}]]}];
+                    [{?MODULE,error_in_suite,[[{error,Error},{force_failed,true}]]}];
                 _:Error:S ->
-                    [{?MODULE,error_in_suite,[[{error,{Error,S}}]]}]
+                    [{?MODULE,error_in_suite,[[{error,{Error,S}},{force_failed,true}]]}]
             end;
         Skip = {skip,_Reason} ->
 	    Skip;
@@ -1412,11 +1416,11 @@ end_per_group(GroupName, _) ->
 report(What,Data) ->
     case What of
 	loginfo ->
-	    %% logfiles and direcories have been created for a test and the
+	    %% logfiles and directories have been created for a test and the
 	    %% top level test index page needs to be refreshed
 	    TestName = filename:basename(?val(topdir, Data), ".logs"),
 	    RunDir = ?val(rundir, Data),
-	    _ = ct_logs:make_all_suites_index({TestName,RunDir}),
+	    _ = ct_logs:make_all_suites_index({TestName,RunDir},unknown),
 	    ok;
 	tests_start ->
 	    ok;
